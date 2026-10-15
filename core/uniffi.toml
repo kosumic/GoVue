@@ -1,0 +1,9 @@
+[bindings.kotlin]
+package_name = "io.github.kaminarios.lingoplay.core"
+cdylib_name = "lingoplay_core"
+android = true
+
+[bindings.swift]
+module_name = "LingoPlayRust"
+ffi_module_name = "LingoPlayRustFFI"
+generate_module_map = true

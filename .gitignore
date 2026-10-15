@@ -1,0 +1,17 @@
+node_modules/
+.expo/
+dist/
+/android/
+/ios/
+*.tsbuildinfo
+.direnv/
+.env*.local
+result
+target/
+modules/lingoplay-core/generated/
+modules/lingoplay-core/android/src/main/jniLibs/
+modules/lingoplay-core/ios/LingoPlayRust.xcframework/
+modules/lingoplay-core/ios/generated/
+.cache/
+.gradle/
+modules/lingoplay-core/android/build/
