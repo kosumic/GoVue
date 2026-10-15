@@ -1,0 +1,7 @@
+[workspace]
+members = ["core", "tools/bindgen"]
+resolver = "2"
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
