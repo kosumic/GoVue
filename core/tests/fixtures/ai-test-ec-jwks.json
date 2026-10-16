@@ -1,0 +1,13 @@
+{
+  "keys": [
+    {
+      "kty": "EC",
+      "x": "J4yweyjsn09_00aQ_JOP23uEZmrGE7sqsL2XV-FP7ZY",
+      "y": "YIlVALEQOq5kqR3Z5316ntcL9bQgNzVmd32IfUpezwA",
+      "crv": "P-256",
+      "kid": "lingoplay-ec-test",
+      "alg": "ES256",
+      "use": "sig"
+    }
+  ]
+}

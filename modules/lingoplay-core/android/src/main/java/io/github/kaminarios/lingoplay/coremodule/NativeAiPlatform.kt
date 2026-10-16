@@ -25,7 +25,7 @@ internal class NativeAiPlatform(context: Context) : AiPlatform {
   private val alias = "io.github.kaminarios.lingoplay.ai"
   private val cancellation = Executors.newSingleThreadScheduledExecutor { runnable -> Thread(runnable, "LingoPlay AI cancellation").apply { isDaemon = true } }
   private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
-    .readTimeout(180, TimeUnit.SECONDS).callTimeout(300, TimeUnit.SECONDS)
+    .readTimeout(600, TimeUnit.SECONDS).callTimeout(900, TimeUnit.SECONDS)
     .followRedirects(false).followSslRedirects(false).build()
 
   @Synchronized private fun encryptionKey(): SecretKey {
@@ -62,7 +62,9 @@ internal class NativeAiPlatform(context: Context) : AiPlatform {
 
   override fun request(request: AiHttpRequest, response: AiResponse) {
     try {
-      require(request.url.startsWith("https://"))
+      val address = java.net.URI(request.url)
+      require(address.scheme == "https" || (address.scheme == "http" && address.host in setOf("127.0.0.1", "localhost")))
+      require(address.userInfo == null)
       val builder = Request.Builder().url(request.url)
       for (header in request.headers) builder.header(header.name, header.value)
       if (request.method == "POST") builder.post(request.body.toByteArray(Charsets.UTF_8).toRequestBody())

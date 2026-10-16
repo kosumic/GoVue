@@ -3,16 +3,19 @@ import { AppState } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { aiRequest } from '../../modules/lingoplay-core';
 
-export type ProviderKind = 'chatgpt' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'custom';
-export type Provider = { id: string; label: string; kind: ProviderKind; baseUrl: string; model: string; connected: boolean; account?: string; planEnabled: boolean; credentialError?: string };
-export type ProviderDraft = Pick<Provider, 'id' | 'label' | 'kind' | 'baseUrl' | 'model'>;
-type Config = { providers: Provider[]; activeId: string | null };
-type Task = { status: 'running' | 'completed' | 'failed' | 'cancelled'; text: string; message?: string; error?: string; result?: { models?: Model[]; planEnabled?: boolean; revoked?: boolean } };
-export type Model = { id: string; name: string };
+export type ProviderKind = 'chatgpt' | 'codex' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'xai' | 'kimi' | 'copilot' | 'custom';
+export type Model = { id: string; name: string; hidden?: boolean; contextWindow?: number | null; maxOutputTokens?: number | null; reasoning?: string; reasoningEfforts?: string[]; temperature?: number | null; topP?: number | null; inputModalities?: string[]; outputModalities?: string[] };
+export type ProviderDraft = { id: string; label: string; kind: ProviderKind; baseUrl: string; model: string; enabled?: boolean; auth?: string; protocol?: string; azure?: boolean; models?: Model[] };
+export type Provider = ProviderDraft & { enabled: boolean; models: Model[]; connected: boolean; account?: string; planEnabled: boolean; needsReauth?: boolean; credentialError?: string };
+export type Group = { id: string; name: string; members: { providerId: string; model: string }[]; strategy: 'fallback' | 'loadBalance'; fallbackOnAnyError: boolean; reasoning: string; contextLimit: number | null; connected?: boolean };
+export type ProviderChoice = { kind: ProviderKind; name: string; auth: string[]; description: string };
+type Config = { providers: Provider[]; groups: Group[]; choices: ProviderChoice[]; activeId: string | null };
+type Login = { url: string; returnUrl?: string; mode: 'browser' | 'device'; userCode?: string };
+type Task = { status: 'running' | 'completed' | 'failed' | 'cancelled'; text: string; message?: string; error?: string; login?: Login; result?: { models?: Model[]; planEnabled?: boolean; revoked?: boolean; connected?: boolean } };
 type Started = { taskId: string; url?: string; returnUrl?: string };
 
 export function useAi(visible: boolean, contextId: string) {
-  const [config, setConfig] = useState<Config>({ providers: [], activeId: null });
+  const [config, setConfig] = useState<Config>({ providers: [], groups: [], choices: [], activeId: null });
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState('');
   const [text, setText] = useState('');
@@ -58,22 +61,33 @@ export function useAi(visible: boolean, contextId: string) {
     if (kind === 'chat') setText('');
     let started: Started | undefined;
     const browser: { result?: WebBrowser.WebBrowserAuthSessionResult; failed?: boolean } = {};
-    try {
-      started = await aiRequest<Started>({ op: kind === 'login' ? 'ai_login' : 'ai_start', kind, id, ...extra });
-      if (version !== epoch.current) { await aiRequest({ op: 'ai_cancel', taskId: started.taskId }); return; }
-      task.current = { id: started.taskId, kind };
-      if (started.url) {
-        if (!started.returnUrl) throw new Error('The sign-in return address is missing. Please rebuild the app.');
-        void WebBrowser.openAuthSessionAsync(started.url, started.returnUrl, {
+    let opened = false;
+    let expectedReturn: string | undefined;
+    function open(login: Login) {
+      if (opened) return;
+      opened = true; expectedReturn = login.returnUrl;
+      if (login.mode === 'device') {
+        setNotice(`Enter code ${login.userCode || ''} in the browser, then return here.`);
+        void WebBrowser.openBrowserAsync(login.url, { createTask: false, showInRecents: false }).catch(() => { browser.failed = true; });
+      } else {
+        if (!login.returnUrl) throw new Error('The sign-in return address is missing. Please rebuild the app.');
+        void WebBrowser.openAuthSessionAsync(login.url, login.returnUrl, {
           createTask: false, showInRecents: false, showTitle: true,
           toolbarColor: '#F5F4EE', preferEphemeralSession: false,
         }).then(result => { browser.result = result; }).catch(() => { browser.failed = true; });
       }
+    }
+    try {
+      started = await aiRequest<Started>({ op: kind === 'login' ? 'ai_login' : 'ai_start', kind, id, ...extra });
+      if (version !== epoch.current) { await aiRequest({ op: 'ai_cancel', taskId: started.taskId }); return; }
+      task.current = { id: started.taskId, kind };
+      if (started.url) open({ url: started.url, returnUrl: started.returnUrl, mode: 'browser' });
       while (version === epoch.current) {
         if (browser.failed) throw new Error('Could not open the in-app sign-in window. Please try again.');
-        if (browser.result && (browser.result.type !== 'success' || browser.result.url !== started.returnUrl)) throw new Error('Sign-in was cancelled or returned an unexpected address.');
+        if (browser.result && (browser.result.type !== 'success' || browser.result.url !== expectedReturn)) throw new Error('Sign-in was cancelled or returned an unexpected address.');
         const state = await aiRequest<Task>({ op: 'ai_poll', taskId: started.taskId });
         if (version !== epoch.current) return;
+        if (state.login) open(state.login);
         if (kind === 'chat') setText(state.text);
         if (state.message) setNotice(state.message);
         if (state.status === 'failed') throw new Error(state.error || 'The provider request failed.');
@@ -82,8 +96,8 @@ export function useAi(visible: boolean, contextId: string) {
           const fresh = await aiRequest<Config>({ op: 'ai_config' });
           if (version !== epoch.current) return;
           setConfig(fresh);
-          if (kind === 'login') setNotice(state.result?.planEnabled ? 'Connected. Choose a model to use your ChatGPT plan.' : 'Account connected. ChatGPT plan usage was not granted; reconnect to enable it.');
-          else if (kind === 'disconnect' || kind === 'remove') setNotice(state.result?.revoked === false ? 'Disconnected on this device. Remote revocation could not be confirmed; disconnect LingoPlay in ChatGPT settings too.' : 'Provider disconnected.');
+          if (kind === 'login') setNotice(state.result?.connected ? 'Account connected. Refresh models to see account access.' : state.result?.planEnabled ? 'Connected. Choose a model to use your ChatGPT plan.' : 'Account connected. ChatGPT plan usage was not granted; reconnect to enable it.');
+          else if (kind === 'disconnect' || kind === 'remove') setNotice(state.result?.revoked === false ? 'Disconnected on this device. You can also revoke access in your provider’s account settings.' : 'Provider disconnected.');
           else setNotice('');
           return state.result;
         }
@@ -106,10 +120,17 @@ export function useAi(visible: boolean, contextId: string) {
     try { const next = await aiRequest<Config>({ op: 'ai_save', provider, ...(key?.trim() ? { key } : {}) }); setConfig(next); return next; }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not save provider.'); return null; }
   }
-  async function select(id: string) {
+  async function select(id: string, model?: string) {
     stop(); setText(''); setError(''); setNotice('');
-    try { setConfig(await aiRequest<Config>({ op: 'ai_select', id })); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not select provider.'); }
+    try { setConfig(await aiRequest<Config>({ op: 'ai_select', id, ...(model ? { model } : {}) })); return true; }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not select provider.'); return false; }
   }
-  return { ...config, ready, busy, text, error, notice, run, save, select, stop, clear: () => { setText(''); setError(''); setNotice(''); } };
+  async function mutate(command: Record<string, unknown>) {
+    setBusy('settings'); setError(''); setNotice('');
+    try { const next = await aiRequest<Config>(command); setConfig(next); return next; }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not save settings.'); return null; }
+    finally { setBusy(''); }
+  }
+  return { ...config, ready, busy, text, error, notice, run, save, select, mutate, stop, clear: () => { setText(''); setError(''); setNotice(''); } };
 }
+export type AiController = ReturnType<typeof useAi>;
