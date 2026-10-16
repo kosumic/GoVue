@@ -21,6 +21,7 @@ import { mediaSettingsScript } from './src/youtube/mediaBridge';
 import { PLAYER_DECODER } from './src/youtube/generated/playerDecoder';
 import { PlayerRuntime, type PlayerRuntimeHandle } from './src/media/PlayerRuntime';
 import { embeddedPlayerFrame } from './src/media/playerLayout';
+import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 
 type PendingRequest = { id: string; videoId: string; timer: ReturnType<typeof setTimeout> };
 
@@ -53,6 +54,7 @@ function Browser() {
   const downloads = useDownloads();
   const playerRuntime = useRef<PlayerRuntimeHandle>(null);
   const media = useMediaBrowser(webView, youtubeVideoId(url), pageAgent, playerRuntime);
+  const transcriptPlayback = useTranscriptPosition(webView, media.player, youtubeVideoId(url), panel && !home && !!transcript, media.playback?.videoId ?? null);
   const playerState = useEvent(media.player, 'statusChange', { status: media.player.status, error: undefined });
   const playerStatus = playerState?.status ?? media.player.status;
   const playerError = playerState?.error;
@@ -147,6 +149,10 @@ function Browser() {
     if (raw.length > 8_000_000) return;
     try {
       const message = JSON.parse(raw);
+      if (message?.type === 'playbackPosition') {
+        if (message.videoId === currentVideo.current) transcriptPlayback.handlePosition(message, origin);
+        return;
+      }
       if (message?.type === 'media' || message?.type === 'mediaEval' || message?.type === 'mediaReady' || message?.type === 'playerLayout' || message?.type === 'sponsorSkipped') {
         void media.handleMessage(raw, origin, message); return;
       }
@@ -243,6 +249,7 @@ function Browser() {
             {!home && loading && <View pointerEvents="none" style={[styles.progress, { width: `${Math.max(4, progress * 100)}%` }]} />}
           </View>
           {panel && <View style={styles.transcript}><TranscriptPanel key={currentVideo.current} data={transcript} loading={extracting} error={transcriptError} cached={cachedTranscript}
+            position={transcriptPlayback.position}
             onClose={closePanel} onExtract={requestTranscript} onSeek={seconds => {
               Keyboard.dismiss();
               if (!media.seek(seconds) && currentVideo.current) webView.current?.injectJavaScript(seekScript(currentVideo.current, seconds));
