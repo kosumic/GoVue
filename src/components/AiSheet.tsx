@@ -7,17 +7,20 @@ import { useAi, type Model, type Provider, type ProviderDraft, type ProviderKind
 import type { Transcript } from '../youtube/transcript';
 import { colors } from '../theme';
 import { IconButton } from './IconButton';
+import { AiMarkdown } from './AiMarkdown';
 
 const kinds: [ProviderKind, string][] = [['chatgpt', 'ChatGPT plan'], ['openai', 'OpenAI API'], ['anthropic', 'Anthropic'], ['gemini', 'Google Gemini'], ['openrouter', 'OpenRouter'], ['custom', 'OpenAI compatible']];
 const draftOf = (p: Provider): ProviderDraft => ({ id: p.id, label: p.label, kind: p.kind, baseUrl: p.baseUrl, model: p.model });
 const blank = (kind: ProviderKind): ProviderDraft => ({ id: '', kind, label: kinds.find(k => k[0] === kind)![1], baseUrl: '', model: '' });
 const external = (url: string) => { void Linking.openURL(url).catch(() => Alert.alert('Could not open browser', 'Please try again.')); };
+const summaryPrompt = 'Summarize this video using the attached transcript. Start with a concise overview, then list the key points with timestamps. Use only information supported by the transcript.';
+export type SummaryRequest = { id: number; videoId: string; trackId: string };
 
 function Button({ title, onPress, disabled = false }: { title: string; onPress: () => void; disabled?: boolean }) {
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, disabled && styles.disabled]}><Text style={styles.buttonText}>{title}</Text></Pressable>;
 }
 
-export function AiSheet({ visible, onClose, transcript, videoId }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null }) {
+export function AiSheet({ visible, onClose, transcript, videoId, summaryRequest }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; summaryRequest: SummaryRequest | null }) {
   const ai = useAi(visible, `${videoId || ''}:${transcript?.trackId || ''}`);
   const [tab, setTab] = useState<'ask' | 'providers'>('providers');
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
@@ -27,12 +30,30 @@ export function AiSheet({ visible, onClose, transcript, videoId }: { visible: bo
   const [prompt, setPrompt] = useState('');
   const [includeTranscript, setIncludeTranscript] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingSummary, setPendingSummary] = useState<SummaryRequest | null>(null);
+  const [summaryView, setSummaryView] = useState(false);
   const active = ai.providers.find(p => p.id === ai.activeId);
   const editing = ai.providers.find(p => p.id === draft?.id);
   const attached = !!transcript && transcript.videoId === videoId;
   const matchingModels = models.filter(m => `${m.id} ${m.name}`.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase()));
   useEffect(() => { setIncludeTranscript(false); }, [videoId, transcript?.trackId, ai.activeId]);
-  useEffect(() => { if (!visible) { setKey(''); setDraft(null); setModels([]); } }, [visible]);
+  useEffect(() => { setSummaryView(false); }, [videoId, transcript?.trackId]);
+  useEffect(() => { if (!visible) { setKey(''); setDraft(null); setModels([]); setIncludeTranscript(false); setPendingSummary(null); } }, [visible]);
+  useEffect(() => {
+    if (!visible || !summaryRequest) { setSummaryView(false); return; }
+    ai.clear(); setTab('ask'); setDraft(null); setKey(''); setModels([]);
+    setPrompt(summaryPrompt); setIncludeTranscript(true); setSummaryView(true); setPendingSummary(summaryRequest);
+  }, [visible, summaryRequest]);
+  useEffect(() => {
+    if (!visible || !pendingSummary) return;
+    if (!attached || transcript.videoId !== pendingSummary.videoId || transcript.trackId !== pendingSummary.trackId) {
+      setPendingSummary(null);
+      return;
+    }
+    if (!ai.ready || !active?.connected || !active.model || ai.busy) return;
+    setPendingSummary(null); setTab('ask'); setIncludeTranscript(true);
+    void ai.run('chat', active.id, { prompt: summaryPrompt, includeTranscript: true, videoId: pendingSummary.videoId, trackId: pendingSummary.trackId });
+  }, [visible, pendingSummary, attached, transcript, ai.ready, active, ai.busy]);
 
   async function save() {
     if (!draft || saving) return;
@@ -62,26 +83,36 @@ export function AiSheet({ visible, onClose, transcript, videoId }: { visible: bo
       { text: 'Keep', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: () => { void ai.run('remove', p.id).then(result => { if (result) { setDraft(null); setKey(''); setModels([]); } }); } },
     ]);
   }
-  function ask(question = prompt) {
+  function ask(question = prompt, attachTranscript = includeTranscript) {
     if (!active || !question.trim()) return;
+    setPendingSummary(null);
     setPrompt(question);
-    void ai.run('chat', active.id, { prompt: question, includeTranscript: includeTranscript && attached, ...(includeTranscript && attached ? { videoId: transcript.videoId, trackId: transcript.trackId } : {}) });
+    void ai.run('chat', active.id, { prompt: question, includeTranscript: attachTranscript && attached, ...(attachTranscript && attached ? { videoId: transcript.videoId, trackId: transcript.trackId } : {}) });
   }
   return <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>AI assistant</Text><IconButton icon={X} label="Close AI assistant" onPress={onClose} /></View>
-        <View style={styles.tabs}>{(['ask', 'providers'] as const).map(value => <Pressable key={value} accessibilityRole="tab" accessibilityState={{ selected: tab === value }} style={[styles.tab, tab === value && styles.selected]} onPress={() => { setTab(value); setKey(''); }}><Text style={styles.buttonText}>{value === 'ask' ? 'Ask' : 'Providers'}</Text></Pressable>)}</View>
+        <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>{summaryView ? 'Video summary' : 'AI assistant'}</Text><IconButton icon={X} label="Close AI assistant" onPress={onClose} /></View>
+        <View style={styles.tabs}>{(['ask', 'providers'] as const).map(value => <Pressable key={value} accessibilityRole="tab" accessibilityState={{ selected: tab === value }} style={[styles.tab, tab === value && styles.selected]} onPress={() => { setTab(value); setKey(''); }}><Text style={styles.buttonText}>{value === 'ask' ? summaryView ? 'Summary' : 'Ask' : 'Providers'}</Text></Pressable>)}</View>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.body}>
           {tab === 'ask' ? <>
             {active ? <><Text style={styles.label}>{active.label}</Text><Text style={styles.help}>{active.model || 'Choose a model in Providers.'}</Text></> : <><Text style={styles.label}>Connect a model</Text><Text style={styles.help}>Add a provider and choose a model to ask questions here.</Text><Button title="Set up a provider" onPress={() => setTab('providers')} /></>}
-            {attached && <View style={styles.row}><View style={styles.grow}><Text style={styles.label}>Include transcript</Text><Text style={styles.help}>{includeTranscript ? `The transcript will be sent to ${active?.label || 'your selected provider'} with your next question.` : 'Enable to ask about the current video. Only saved caption text and its title are attached.'}</Text></View><Switch accessibilityLabel="Include current transcript in AI request" value={includeTranscript} disabled={!!ai.busy} onValueChange={setIncludeTranscript} trackColor={{ true: colors.accent }} /></View>}
-            {attached && <Text numberOfLines={2} style={styles.help}>{transcript.title}</Text>}
-            <TextInput accessibilityLabel="Question for AI assistant" placeholder={includeTranscript ? 'Ask about this transcript…' : 'Ask a question…'} placeholderTextColor={colors.muted} value={prompt} onChangeText={setPrompt} multiline maxLength={8000} editable={!ai.busy} style={[styles.input, styles.composer]} />
-            {ai.busy === 'chat' ? <Button title="Stop response" onPress={ai.stop} /> : <Button title="Send question" disabled={!active?.connected || !active.model || !prompt.trim() || !!ai.busy} onPress={() => ask()} />}
-            {includeTranscript && <Button title="Summarize this transcript" disabled={!active?.connected || !active.model || !!ai.busy} onPress={() => ask('Summarize this transcript and list its key points with timestamps.')} />}
-            {ai.text ? <View style={styles.answer}><Text selectable style={styles.answerText}>{ai.text}</Text><Button title="Copy answer" onPress={() => Clipboard.setString(ai.text)} /></View> : null}
-            <Text style={styles.help}>Each question starts a new conversation. Your question and any enabled transcript go directly to the selected provider. Answers are not saved.</Text>
+            {pendingSummary && ai.ready && <Text style={styles.help}>Connect a provider and select a model to summarize this video. Once ready, this transcript will be sent to that provider.</Text>}
+            {pendingSummary && ai.ready && active && (!active.connected || !active.model) && <Button title="Set up a provider" onPress={() => setTab('providers')} />}
+            {summaryView && attached ? <>
+              <Text numberOfLines={2} style={styles.label}>{transcript.title}</Text>
+              <Text style={styles.help}>The summary uses this video’s {transcript.language} captions and includes key points with timestamps.</Text>
+              {ai.busy === 'chat' ? <Button title="Stop response" onPress={ai.stop} /> : <Button title="Summarize again" disabled={!active?.connected || !active.model || !!ai.busy || !!pendingSummary} onPress={() => ask(summaryPrompt, true)} />}
+            </> : <>
+              {attached && <View style={styles.row}><View style={styles.grow}><Text style={styles.label}>Include transcript</Text><Text style={styles.help}>{includeTranscript ? `The transcript will be sent to ${active?.label || 'your selected provider'} with your next question.` : 'Enable to ask about the current video. Only saved caption text and its title are attached.'}</Text></View><Switch accessibilityLabel="Include current transcript in AI request" value={includeTranscript} disabled={!!ai.busy} onValueChange={value => { setPendingSummary(null); setIncludeTranscript(value); }} trackColor={{ true: colors.accent }} /></View>}
+              {attached && <Text numberOfLines={2} style={styles.help}>{transcript.title}</Text>}
+              <TextInput accessibilityLabel="Question for AI assistant" placeholder={includeTranscript ? 'Ask about this transcript…' : 'Ask a question…'} placeholderTextColor={colors.muted} value={prompt} onChangeText={value => { setPendingSummary(null); setPrompt(value); }} multiline maxLength={8000} editable={!ai.busy} style={[styles.input, styles.composer]} />
+              {ai.busy === 'chat' ? <Button title="Stop response" onPress={ai.stop} /> : <Button title="Send question" disabled={!active?.connected || !active.model || !prompt.trim() || !!ai.busy} onPress={() => ask()} />}
+              {includeTranscript && <Button title="Summarize this transcript" disabled={!active?.connected || !active.model || !!ai.busy} onPress={() => ask(summaryPrompt)} />}
+            </>}
+            {ai.text ? <View style={styles.answer}><AiMarkdown content={ai.text} streaming={ai.busy === 'chat'} /><Button title="Copy answer" onPress={() => Clipboard.setString(ai.text)} /></View> : null}
+            {summaryView && <Button title="Ask about this video" disabled={!!ai.busy || !!pendingSummary} onPress={() => { setSummaryView(false); setPrompt(''); setIncludeTranscript(attached); }} />}
+            <Text style={styles.help}>{summaryView ? 'The transcript goes directly to your selected provider. Summaries are not saved.' : 'Each question starts a new conversation. Your question and any enabled transcript go directly to the selected provider. Answers are not saved.'}</Text>
           </> : draft ? <>
             <View style={styles.row}><IconButton icon={ChevronLeft} label="Back to providers" disabled={!!ai.busy || saving} onPress={() => { setDraft(null); setKey(''); setModels([]); ai.clear(); }} /><Text style={styles.label}>{kinds.find(k => k[0] === draft.kind)?.[1]}</Text></View>
             {editing?.credentialError && <Text accessibilityRole="alert" style={styles.error}>{editing.credentialError}</Text>}
@@ -108,7 +139,7 @@ export function AiSheet({ visible, onClose, transcript, videoId }: { visible: bo
               {models.length > 0 && <><TextInput accessibilityLabel="Search available models" placeholder="Search models…" value={modelQuery} onChangeText={setModelQuery} autoCapitalize="none" autoCorrect={false} style={styles.input} /><Text style={styles.help}>{matchingModels.length} matching models. Choose a model, then save changes.{matchingModels.length > 80 ? ' Narrow the search to see more.' : ''}</Text></>}
               {matchingModels.slice(0, 80).map(m => <Pressable key={m.id} accessibilityRole="button" accessibilityLabel={`Choose model ${m.id}`} onPress={() => { setDraft({ ...draft, model: m.id }); setModels([]); setModelQuery(''); }} style={styles.model}><Text style={styles.label}>{m.name}</Text><Text style={styles.help}>{m.id}</Text></Pressable>)}
               <Button title="Test saved model" disabled={!!ai.busy || !editing?.connected || !editing.model || saving} onPress={() => { void ai.run('chat', draft.id, { prompt: 'Reply with exactly: Connection successful.', includeTranscript: false }); }} />
-              {ai.text ? <Text selectable style={styles.answerText}>{ai.text}</Text> : null}
+              {ai.text ? <AiMarkdown content={ai.text} streaming={ai.busy === 'chat'} /> : null}
               <Button title="Remove provider" disabled={!!ai.busy || saving} onPress={() => { if (editing) remove(editing); }} />
             </>}
           </> : <>
@@ -142,5 +173,5 @@ const styles = StyleSheet.create({
   button: { backgroundColor: colors.accentSoft, borderRadius: 10, padding: 14, alignItems: 'center' }, buttonText: { color: colors.accent, fontSize: 14, fontWeight: '600' }, disabled: { opacity: 0.45 },
   provider: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingBottom: 14 },
   model: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
-  answer: { gap: 16, paddingVertical: 16 }, answerText: { color: colors.ink, fontSize: 15, lineHeight: 24 }, error: { color: colors.error, fontSize: 13, lineHeight: 20 },
+  answer: { gap: 16, paddingVertical: 16 }, error: { color: colors.error, fontSize: 13, lineHeight: 20 },
 });

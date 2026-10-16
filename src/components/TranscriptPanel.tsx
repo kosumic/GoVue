@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { Copy, LocateFixed, RotateCw, Search, Share2, X } from 'lucide-react-native';
+import { Copy, LocateFixed, RotateCw, Search, Share2, Sparkles, X } from 'lucide-react-native';
 import { colors } from '../theme';
 import { currentSegmentIndex, timestamp, type Segment, type Transcript } from '../youtube/transcript';
 import { exportTranscript, searchTranscript } from '../core/transcripts';
 import { IconButton } from './IconButton';
 
-export function TranscriptPanel({ data, loading, error, cached, position, onClose, onExtract, onSeek }: {
+export function TranscriptPanel({ data, loading, error, cached, position, onClose, onExtract, onSeek, onSummarize }: {
   data: Transcript | null;
   loading: boolean;
   error: string | null;
@@ -16,6 +16,7 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
   onClose: () => void;
   onExtract: (track?: string) => void;
   onSeek: (seconds: number) => void;
+  onSummarize: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState(false);
@@ -82,6 +83,11 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
         <View style={styles.empty}><Text style={styles.emptyTitle}>Transcript unavailable</Text><Text accessibilityRole="alert" style={styles.help}>{error}</Text>
           <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>
       ) : data ? <>
+        <View style={styles.summaryRow}><Pressable accessibilityRole="button" accessibilityLabel="Summarize video with AI"
+          accessibilityHint="Send this transcript to your selected AI provider and open the summary"
+          onPress={onSummarize} style={({ pressed }) => [styles.summary, pressed && styles.pressedSegment]}>
+          <Sparkles size={16} color={colors.accent} /><Text style={styles.summaryText}>Summarize video</Text>
+        </Pressable></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tracks, { height: Math.max(48, Math.ceil(20 * fontScale) + 28) }]} contentContainerStyle={styles.trackContent}>
           {data.tracks.map(track => <Pressable key={track.id} accessibilityRole="button" accessibilityState={{ selected: track.id === data.trackId }}
             onPress={() => { setCopied(false); onExtract(track.id); }} style={[styles.track, track.id === data.trackId && styles.selectedTrack]}>
@@ -135,6 +141,9 @@ const styles = StyleSheet.create({
   help: { fontSize: 13, lineHeight: 21, color: colors.muted, textAlign: 'center', maxWidth: 320 },
   retry: { backgroundColor: colors.accent, paddingHorizontal: 22, paddingVertical: 13, borderRadius: 12, marginTop: 8 },
   retryText: { color: colors.surface, fontWeight: '600' },
+  summaryRow: { paddingHorizontal: 20, paddingBottom: 8 },
+  summary: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.accentSoft },
+  summaryText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
   tracks: { flexGrow: 0, flexShrink: 0 },
   trackContent: { paddingHorizontal: 20, paddingBottom: 10, gap: 8 },
   track: { paddingVertical: 9, paddingHorizontal: 13, borderRadius: 10, backgroundColor: colors.surface },
