@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { Copy, LocateFixed, RotateCw, Search, Share2, Sparkles, X } from 'lucide-react-native';
+import { Copy, Download, LocateFixed, RotateCw, Search, Share2, Sparkles, X } from 'lucide-react-native';
 import { colors } from '../theme';
 import { currentSegmentIndex, timestamp, type Segment, type Transcript } from '../youtube/transcript';
 import { exportTranscript, searchTranscript } from '../core/transcripts';
@@ -9,7 +9,7 @@ import { IconButton } from './IconButton';
 import { TranscriptWords } from './TranscriptWords';
 import { saveWord } from '../core/vocabulary';
 
-export function TranscriptPanel({ data, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onSummarize }: {
+export function TranscriptPanel({ data, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onSummarize, onDownload, downloadDisabled }: {
   data: Transcript | null;
   loading: boolean;
   error: string | null;
@@ -21,6 +21,8 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   onExtract: (track?: string) => void;
   onSeek: (seconds: number) => void;
   onSummarize: () => void;
+  onDownload: () => void;
+  downloadDisabled: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState(false);
@@ -94,18 +96,20 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   return (
     <View style={styles.panel}>
       <View style={styles.heading}>
-        <View style={styles.headingText}><Text accessibilityRole="header" style={styles.title}>Transcript</Text>
+        <View style={styles.headingText}><Text accessibilityRole="header" numberOfLines={1} style={styles.title}>Transcript</Text>
           <Text numberOfLines={1} style={styles.subtitle}>{cached ? 'Saved · ' : ''}{data?.title || 'YouTube captions'}</Text></View>
-        <IconButton icon={RotateCw} label="Refresh transcript" disabled={loading} onPress={() => { setCopied(false); onExtract(); }} />
-        <IconButton icon={Copy} label={copied ? 'Transcript copied' : 'Copy transcript'} disabled={!data || loading} onPress={async () => {
+        <IconButton compact icon={RotateCw} label="Refresh transcript" disabled={loading} onPress={() => { setCopied(false); onExtract(); }} />
+        <IconButton compact icon={Copy} label={copied ? 'Transcript copied' : 'Copy transcript'} disabled={!data || loading} onPress={async () => {
           if (!data) return;
           try { Clipboard.setString(await exportTranscript(data)); setCopied(true); } catch { Alert.alert('Could not copy transcript'); }
         }} />
-        <IconButton icon={Share2} label="Share transcript" disabled={!data || loading} onPress={async () => {
+        <IconButton compact icon={Share2} label="Share transcript" disabled={!data || loading} onPress={async () => {
           if (!data) return;
           try { await Share.share({ message: await exportTranscript(data), title: data.title }); } catch { Alert.alert('Could not share transcript'); }
         }} />
-        <IconButton icon={X} label="Close transcript" onPress={onClose} />
+        <IconButton compact icon={Sparkles} label="Summarize video with AI" disabled={!data || loading || !!error} onPress={onSummarize} />
+        <IconButton compact icon={Download} label="Download this video" disabled={downloadDisabled} onPress={onDownload} />
+        <IconButton compact icon={X} label="Close transcript" onPress={onClose} />
       </View>
       {copied && <Text accessibilityLiveRegion="polite" style={styles.feedback}>Transcript copied</Text>}
       {!!wordFeedback && <Text accessibilityLiveRegion="polite" style={styles.feedback}>{wordFeedback}</Text>}
@@ -118,11 +122,6 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
           <Switch accessibilityLabel="Pause after each transcript line" accessibilityHint="Resume playback when you are ready for the next line"
             value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
         </View>
-        <View style={styles.summaryRow}><Pressable accessibilityRole="button" accessibilityLabel="Summarize video with AI"
-          accessibilityHint="Send this transcript to your selected AI provider and open the summary"
-          onPress={onSummarize} style={({ pressed }) => [styles.summary, pressed && styles.pressedSegment]}>
-          <Sparkles size={16} color={colors.accent} /><Text style={styles.summaryText}>Summarize video</Text>
-        </Pressable></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tracks, { height: Math.max(48, Math.ceil(20 * fontScale) + 28) }]} contentContainerStyle={styles.trackContent}>
           {data.tracks.map(track => <Pressable key={track.id} accessibilityRole="button" accessibilityState={{ selected: track.id === data.trackId }}
             onPress={() => { setCopied(false); onExtract(track.id); }} style={[styles.track, track.id === data.trackId && styles.selectedTrack]}>
@@ -171,9 +170,9 @@ const styles = StyleSheet.create({
   pauseRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, minHeight: 48 },
   pauseLabel: { flex: 1, color: colors.ink, fontSize: 13 },
   panel: { flex: 1, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.line },
-  heading: { flexDirection: 'row', alignItems: 'center', paddingLeft: 20, paddingRight: 6, paddingVertical: 8 },
-  headingText: { flex: 1, gap: 3 },
-  title: { fontSize: 19, fontWeight: '600', letterSpacing: -0.4, color: colors.ink },
+  heading: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 4, paddingVertical: 8 },
+  headingText: { flex: 1, minWidth: 0, gap: 3 },
+  title: { fontSize: 17, fontWeight: '600', letterSpacing: -0.4, color: colors.ink },
   subtitle: { fontSize: 11, color: colors.muted },
   feedback: { color: colors.accent, fontSize: 12, paddingHorizontal: 20, paddingBottom: 8 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28, gap: 12 },
@@ -181,9 +180,6 @@ const styles = StyleSheet.create({
   help: { fontSize: 13, lineHeight: 21, color: colors.muted, textAlign: 'center', maxWidth: 320 },
   retry: { backgroundColor: colors.accent, paddingHorizontal: 22, paddingVertical: 13, borderRadius: 12, marginTop: 8 },
   retryText: { color: colors.surface, fontWeight: '600' },
-  summaryRow: { paddingHorizontal: 20, paddingBottom: 8 },
-  summary: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.accentSoft },
-  summaryText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
   tracks: { flexGrow: 0, flexShrink: 0 },
   trackContent: { paddingHorizontal: 20, paddingBottom: 10, gap: 8 },
   track: { paddingVertical: 9, paddingHorizontal: 13, borderRadius: 10, backgroundColor: colors.surface },
