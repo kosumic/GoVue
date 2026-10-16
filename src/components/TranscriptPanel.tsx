@@ -44,7 +44,9 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
   const following = followPlayback && !query.trim();
   const scrollToCurrent = useCallback(() => {
     const target = scrollTarget.current;
-    if (target) list.current?.scrollToIndex({ index: target.index, viewPosition: 0.3, animated: true });
+    if (target && target.index < (list.current?.props.data?.length ?? 0)) {
+      list.current?.scrollToIndex({ index: target.index, viewPosition: 0.3, animated: true });
+    }
   }, []);
   useEffect(() => {
     scrollTarget.current = following && activeIndex >= 0 && !loading && !error ? { index: activeIndex, attempts: 0 } : null;
@@ -93,7 +95,7 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
         <View style={styles.languageRow}>
           <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language} · Tap a line to jump and play</Text>
           {!query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
-            onPress={() => following ? stopFollowing() : setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
+            onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
             <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
           </Pressable>}
