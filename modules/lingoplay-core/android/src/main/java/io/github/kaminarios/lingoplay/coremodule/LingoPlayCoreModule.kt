@@ -11,6 +11,8 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
+import android.os.Build
+import android.os.Trace
 import java.nio.ByteBuffer
 import io.github.kaminarios.lingoplay.core.MediaHttp
 import io.github.kaminarios.lingoplay.core.MediaRangeReply
@@ -55,7 +57,20 @@ class LingoPlayCoreModule : Module() {
     }
     AsyncFunction("execute") { request: String ->
       val context = requireNotNull(appContext.reactContext)
-      execute(request, File(context.filesDir, "transcripts").path)
+      Trace.beginSection("LingoPlay core: native.execute")
+      try { execute(request, File(context.filesDir, "transcripts").path) }
+      finally { Trace.endSection() }
+    }
+    Function("transcriptTrace") { requestId: String, stage: String, cookie: Int, begin: Boolean ->
+      // Trace names contain only a generated request ID and an allowlisted
+      // stage from the app, never page text, request bodies, or signed URLs.
+      if (Build.VERSION.SDK_INT < 29 || !Trace.isEnabled() ||
+          !requestId.matches(Regex("[0-9:]{1,80}")) || !stage.matches(Regex("[a-z_.]{1,64}"))) false
+      else {
+        val name = "LingoPlay transcript: $stage [$requestId]"
+        if (begin) Trace.beginAsyncSection(name, cookie) else Trace.endAsyncSection(name, cookie)
+        true
+      }
     }
     AsyncFunction("mux") { video: String, audio: String, output: String ->
       val context = requireNotNull(appContext.reactContext)

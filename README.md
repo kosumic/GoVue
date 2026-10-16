@@ -100,6 +100,33 @@ The release variant bundles JavaScript and works without Metro. It currently use
 
 WebView debugging is disabled by default. Set `EXPO_PUBLIC_LINGOPLAY_DEBUG=1` only for a temporary diagnostic build.
 
+To profile transcript loading with Perfetto, build a diagnostic APK with the flag
+below set during **both prebuild and bundling**. This enables Android shell
+profiling and request-correlated async slices for cache lookup, the WebView
+bridge, player captions, transcript controls, API requests, core acceptance, and
+the reader's React commit. Rust adds thread slices for lock contention, parsing,
+normalization, and cache I/O. Trace labels contain stage names and generated
+request IDs; they contain no caption text, signed URLs, or session tokens.
+
+```sh
+nix develop path:.
+EXPO_PUBLIC_LINGOPLAY_TRACE_TRANSCRIPT=1 npx expo prebuild --platform android --no-install
+EXPO_PUBLIC_LINGOPLAY_TRACE_TRANSCRIPT=1 NODE_ENV=production android/gradlew -p android :app:assembleRelease -PreactNativeArchitectures=arm64-v8a
+adb install -r android/app/build/outputs/apk/release/app-release.apk
+node scripts/profile-transcript.mjs --duration 60 --output .cache/transcript.pftrace
+```
+
+Load a transcript during the recording; use **Refresh transcript** to measure an
+uncached extraction. Open the resulting file in [Perfetto](https://ui.perfetto.dev)
+and search for `LingoPlay transcript:`. Page spans are timestamped when their
+begin/end messages arrive in the app, so they include WebView message scheduling.
+`reader.commit` ends after React commits the reader; use the frame timeline to
+inspect actual presentation. Rebuild without the flag (including prebuild) to
+disable shell profiling and transcript async spans.
+
+For a timing table, run Perfetto's trace processor with
+`trace_processor_shell query -f scripts/transcript-profile.sql .cache/transcript.pftrace`.
+
 The app has been built, installed, and exercised on the Pixel: extraction, search, copy, caption seeking, inline native playback with scrollable and expanded YouTube comments, downloading separate video/audio tracks into a combined MP4, pause/resume, offline playback, background playback, and PiP. SponsorBlock skipped an actual community segment; a known ad request was intercepted with page rules enabled. The iOS Release app has been built and launched on an iPhone 17 Pro simulator on `mini`; the Rust library also builds for arm64 iOS devices. YouTube behavior on iOS remains unverified because YouTube connections time out on that host. No physical iPhone or distribution signing has been verified.
 
 ## Extraction and cache

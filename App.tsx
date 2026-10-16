@@ -13,6 +13,7 @@ import { TranscriptPanel } from './src/components/TranscriptPanel';
 import { colors } from './src/theme';
 import { extractionScript, seekScript, YOUTUBE_BRIDGE } from './src/youtube/pageBridge';
 import { type Transcript } from './src/youtube/transcript';
+import { createTranscriptTrace, TRANSCRIPT_TRACING, type TranscriptTrace } from './src/youtube/transcriptTrace';
 import { acceptTranscript, restoreTranscript } from './src/core/transcripts';
 import { MediaSheet, type MediaSheetMode } from './src/components/MediaSheet';
 import { useDownloads } from './src/media/downloads';
@@ -25,7 +26,7 @@ import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 import { AiSheet, type SummaryRequest } from './src/components/AiSheet';
 import { SavedWordsSheet } from './src/components/SavedWordsSheet';
 
-type PendingRequest = { id: string; videoId: string; timer: ReturnType<typeof setTimeout> };
+type PendingRequest = { id: string; videoId: string; timer: ReturnType<typeof setTimeout>; trace: TranscriptTrace };
 
 function Browser() {
   const insets = useSafeAreaInsets();
@@ -51,6 +52,7 @@ function Browser() {
   const [extracting, setExtracting] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const pending = useRef<PendingRequest | null>(null);
+  const renderingTranscript = useRef<{ videoId: string; trace: TranscriptTrace } | null>(null);
   const sequence = useRef(0);
   const [mediaSheet, setMediaSheet] = useState<MediaSheetMode>(null);
   const [aiVisible, setAiVisible] = useState(false);
@@ -66,7 +68,9 @@ function Browser() {
   const mediaAction = (work: () => Promise<unknown>) => { work().catch(error => Alert.alert('LingoPlay', error instanceof Error ? error.message : 'Please try again.')); };
 
   const cancelRequest = useCallback(() => {
-    if (pending.current) clearTimeout(pending.current.timer);
+    if (pending.current) { clearTimeout(pending.current.timer); pending.current.trace.finish(); }
+    renderingTranscript.current?.trace.finish();
+    renderingTranscript.current = null;
     pending.current = null;
     webView.current?.injectJavaScript('window.__lingoplay?.cancel(); true;');
     setExtracting(false);
@@ -86,7 +90,17 @@ function Browser() {
     setUrl(next);
   }, [cancelRequest]);
 
-  useEffect(() => () => { if (pending.current) clearTimeout(pending.current.timer); }, []);
+  useEffect(() => () => {
+    if (pending.current) { clearTimeout(pending.current.timer); pending.current.trace.finish(); }
+    renderingTranscript.current?.trace.finish();
+  }, []);
+
+  useEffect(() => {
+    const rendering = renderingTranscript.current;
+    if (!rendering || extracting || !panel || transcript?.videoId !== rendering.videoId) return;
+    rendering.trace.finish();
+    renderingTranscript.current = null;
+  }, [transcript, extracting, panel]);
 
   const closePanel = useCallback(() => { setPanel(false); cancelRequest(); }, [cancelRequest]);
   const showHome = useCallback(() => {
@@ -126,25 +140,31 @@ function Browser() {
     setPanel(true); setExtracting(true); setTranscriptError(null); setCachedTranscript(false);
     Keyboard.dismiss();
     const id = `${Date.now()}:${++sequence.current}`;
+    const trace = createTranscriptTrace(id);
     const timer = setTimeout(() => {
       if (pending.current?.id !== id) return;
       cancelRequest();
       setTranscriptError('Transcript request timed out. Play the video or check your connection, then try again.');
     }, 45000);
-    pending.current = { id, videoId, timer };
+    pending.current = { id, videoId, timer, trace };
     if (preferCache) {
+      trace.event('cache.restore', true);
       try {
         const cached = await restoreTranscript(videoId);
+        trace.event('cache.restore', false);
         if (pending.current?.id !== id || currentVideo.current !== videoId) return;
         if (cached) {
           clearTimeout(timer); pending.current = null;
+          trace.event('reader.commit', true);
+          renderingTranscript.current = { videoId, trace };
           setTranscript(cached); setCachedTranscript(true); setExtracting(false);
           return;
         }
-      } catch { /* A missing cache must not block a fresh YouTube request. */ }
+      } catch { trace.event('cache.restore', false); /* A missing cache must not block a fresh YouTube request. */ }
       if (pending.current?.id !== id || currentVideo.current !== videoId) return;
     }
-    webView.current?.injectJavaScript(extractionScript(id, track));
+    trace.event('bridge.extract', true);
+    webView.current?.injectJavaScript(extractionScript(id, track, TRANSCRIPT_TRACING));
   }
 
   function handleMessage(event: WebViewMessageEvent) {
@@ -154,6 +174,14 @@ function Browser() {
     if (raw.length > 8_000_000) return;
     try {
       const message = JSON.parse(raw);
+      if (message?.type === 'transcriptTrace') {
+        if (raw.length <= 500 && message.requestId === pending.current?.id && message.videoId === currentVideo.current &&
+            typeof message.stage === 'string' && message.stage.startsWith('page.') &&
+            (message.phase === 'begin' || message.phase === 'end')) {
+          pending.current?.trace.event(message.stage, message.phase === 'begin');
+        }
+        return;
+      }
       if (message?.type === 'playbackPosition') {
         if (message.videoId === currentVideo.current) transcriptPlayback.handlePosition(message, origin);
         return;
@@ -175,15 +203,23 @@ function Browser() {
   async function handleTranscriptMessage(event: WebViewMessageEvent) {
     const request = pending.current;
     if (!request || request.videoId !== currentVideo.current) return;
+    request.trace.event('bridge.extract', false);
+    request.trace.event('core.accept', true);
     try {
       const reply = await acceptTranscript(event.nativeEvent.data, event.nativeEvent.url, request.id, request.videoId);
+      request.trace.event('core.accept', false);
       if (pending.current !== request || request.videoId !== currentVideo.current) return;
       clearTimeout(request.timer); pending.current = null; setExtracting(false);
-      if (reply.ok) { setTranscript(reply.transcript); setCachedTranscript(false); setTranscriptError(null); }
-      else setTranscriptError(reply.error);
+      if (reply.ok) {
+        request.trace.event('reader.commit', true);
+        renderingTranscript.current = { videoId: request.videoId, trace: request.trace };
+        setTranscript(reply.transcript); setCachedTranscript(false); setTranscriptError(null);
+      }
+      else { request.trace.finish(); setTranscriptError(reply.error); }
     } catch (error) {
       if (pending.current !== request || request.videoId !== currentVideo.current) return;
       clearTimeout(request.timer); pending.current = null; setExtracting(false);
+      request.trace.finish();
       setTranscriptError(error instanceof Error ? error.message : 'Could not process this transcript. Try again.');
     }
   }
