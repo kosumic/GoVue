@@ -1,8 +1,9 @@
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Download, Play, Share2, Trash2, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import { IconButton } from './IconButton';
+import { LanguageSettings } from './LanguageSettings';
 import type { MediaCatalog, MediaSettings } from '../core/media';
 import type { DownloadEntry, useDownloads } from '../media/downloads';
 
@@ -19,9 +20,12 @@ export function MediaSheet({ mode, onClose, catalog, loading, error, onRefresh, 
 }) {
   return <Modal visible={mode !== null} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
     <SafeAreaView style={styles.safe}>
-      <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>{mode === 'settings' ? 'Playback settings' : mode === 'library' ? 'Downloads' : 'Download video'}</Text><IconButton icon={X} label="Close media sheet" onPress={onClose} /></View>
-      <ScrollView contentContainerStyle={styles.body}>
+      <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>{mode === 'settings' ? 'Settings' : mode === 'library' ? 'Downloads' : 'Download video'}</Text><IconButton icon={X} label="Close media sheet" onPress={onClose} /></View>
+      <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         {mode === 'settings' ? <>
+          <LanguageSettings />
+          <Text accessibilityRole="header" style={styles.section}>Playback settings</Text>
           {([
             ['adBlock', 'Block ads', 'Hide YouTube promotions, block ad requests, and skip video ads.'],
             ['sponsorBlock', 'SponsorBlock', 'Skip community-marked sections using SponsorBlock.'],
@@ -67,12 +71,14 @@ export function MediaSheet({ mode, onClose, catalog, loading, error, onRefresh, 
           </View>)}
         </>}
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   </Modal>;
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
+  fill: { flex: 1 },
   heading: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
   title: { flex: 1, color: colors.ink, fontSize: 22, fontWeight: '600' },
   body: { padding: 20, gap: 16, paddingBottom: 48 },
