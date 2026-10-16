@@ -121,6 +121,88 @@ test('caption fallback preserves signed URL parameters, filters empty events, an
   } finally { env.close(); }
 });
 
+test('reselects a caption track on a paused player when reload alone does not fetch its text', async () => {
+  const env = setup(async () => { throw Error('The player must issue its own caption request'); });
+  const preferred = { languageCode: 'en', vss_id: '.en' };
+  let selected = preferred;
+  let requests = 0;
+  try {
+    class CaptionRequest extends env.window.EventTarget {
+      open(method, url) { this.responseURL = url; }
+      send() {
+        this.status = 200;
+        this.responseType = '';
+        this.responseText = JSON.stringify({ events: [
+          { tStartMs: 240, dDurationMs: 4000, segs: [{ utf8: 'First caption' }] },
+          { tStartMs: 8420000, dDurationMs: 1500, segs: [{ utf8: 'Final caption' }] },
+        ] });
+        this.dispatchEvent(new env.window.Event('load'));
+      }
+    }
+    env.window.XMLHttpRequest = CaptionRequest;
+    const player = env.window.document.createElement('div');
+    player.id = 'movie_player';
+    player.getPlayerResponse = () => env.window.ytInitialPlayerResponse;
+    player.loadModule = () => {};
+    player.playVideo = () => { throw Error('Extraction must keep the web video paused'); };
+    player.getOption = (_, option) => option === 'tracklist' ? [preferred] : selected || {};
+    player.setOption = (_, option, value) => {
+      // Match the live player: reload and reselecting its current track do
+      // nothing. Only clearing that selection allows a fresh signed request.
+      if (option !== 'track' || (value.vss_id || value.vssId) === selected?.vss_id) return;
+      selected = value.vss_id ? value : null;
+      if (!selected) return;
+      requests++;
+      const xhr = new env.window.XMLHttpRequest();
+      xhr.open('GET', `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3&pot=private-fixture-token`);
+      xhr.send();
+    };
+    env.window.document.body.append(player);
+    env.window.eval(YOUTUBE_BRIDGE);
+    await env.window.__lingoplay.extract('paused-selected-track');
+    const reply = env.messages.at(-1);
+    assert.equal(reply.ok, true);
+    assert.equal(reply.transcript.language, 'English');
+    assert.equal(reply.transcript.segments.length, 2);
+    assert.equal(reply.transcript.segments.at(-1).start, 8420);
+    assert.equal(requests, 1);
+    assert.equal(selected, preferred);
+    assert.equal(env.requests.length, 0);
+    assert.ok(!JSON.stringify(env.messages).includes('private-fixture-token'));
+  } finally { env.close(); }
+});
+
+test('default caption fallback honors the selected track, YouTube default, and regional page language', async () => {
+  const choices = [['ar', 'Arabic'], ['zh', 'Chinese'], ['en', 'English']].map(([language, label]) => ({
+    ...track, vssId: '.' + language, languageCode: language, name: { simpleText: label }, baseUrl: track.baseUrl + '&lang=' + language,
+  }));
+  for (const scenario of [
+    { current: null, defaultIndex: 2, pageLanguage: 'ar', expected: 'en' },
+    { current: '.ar', defaultIndex: 2, pageLanguage: 'en', expected: 'ar' },
+    { current: null, defaultIndex: undefined, pageLanguage: 'en-US', expected: 'en' },
+  ]) {
+    const env = setup(async url => {
+      if (url.includes('/next')) return env.response({});
+      assert.equal(new URL(url).searchParams.get('lang'), scenario.expected);
+      return env.response({ events: [{ tStartMs: 0, dDurationMs: 2000, segs: [{ utf8: 'Preferred captions' }] }] });
+    }, { tracks: choices });
+    try {
+      env.window.document.documentElement.lang = scenario.pageLanguage;
+      env.window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.audioTracks = [{ defaultCaptionTrackIndex: scenario.defaultIndex }];
+      const player = env.window.document.createElement('div');
+      player.id = 'movie_player';
+      player.getPlayerResponse = () => env.window.ytInitialPlayerResponse;
+      player.getOption = () => ({ vss_id: scenario.current });
+      env.window.document.body.append(player);
+      env.window.eval(YOUTUBE_BRIDGE);
+      await env.window.__lingoplay.extract('preferred-fallback');
+      const reply = env.messages.at(-1);
+      assert.equal(reply.ok, true);
+      assert.equal(reply.transcript.trackId, '.' + scenario.expected);
+    } finally { env.close(); }
+  }
+});
+
 test('supports XML captions and explicit language selection without a transcript API call', async () => {
   const env = setup(async url => {
     assert.ok(url.includes('/api/timedtext'));
