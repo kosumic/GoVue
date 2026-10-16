@@ -8,6 +8,8 @@ YouTube videos opened in the browser automatically use the app's player for back
 
 The native player follows YouTube's video area while the page stays interactive: descriptions, channel controls, comments, and recommendations remain available. Expanded YouTube panels can cover the video without the native view blocking them. Opening the transcript expands the video above the reader; offline playback uses the full player area.
 
+Tap **Minimize browser** beside the playback controls to keep listening while using LingoPlay. An open transcript fills the available space. The page and player stay mounted, including when you open the start page. Tap **Return to browser** to restore the same page and playback position; the bar also offers play/pause and remains available in chat, saved words, downloads, and settings.
+
 The **Speed** and **Quality** buttons expose playback speed (0.25×–3×) and the video's available resolutions. **Auto** adapts between available segmented tracks. Separate AVC video and AAC audio play through in-memory HLS playlists on the Rust loopback transport; no download or remux is needed. Changing resolution preserves position, speed, and whether playback is paused. Speed and resolution preferences are saved by Rust; offline files support speed changes and keep their downloaded resolution.
 
 Open **Settings** (the gear button) to add **Languages I know** with current levels and **Languages I want to learn** with target levels. Pick a language from 196 bundled choices: common languages appear first, followed by an alphabetical list, with optional search by English name, native name, alias, or code. The list covers [ISO 639-1 languages](https://www.loc.gov/standards/iso639-2/php/code_list.php) plus additional languages including Cantonese and Filipino. Languages already in the same list are hidden from the picker; the same language can appear in both lists with different levels. Previously saved names remain available.
@@ -69,7 +71,7 @@ npm ci
 npm run android
 ```
 
-Connect an arm64 Android device with USB debugging enabled. Expo generates the native Android project and starts Metro; Gradle builds the Rust library and bindings automatically. The Nix environment supplies Node, Rust 1.90, cargo-ndk, the Android Rust target, SDK/NDK, and Java.
+Connect an arm64 Android device with USB debugging enabled. Expo generates the native Android project and starts Metro; Gradle builds the Rust library and bindings automatically. The Nix environment supplies Node 26, Rust 1.90, cargo-ndk, the Android Rust target, SDK/NDK, and Java. Node scripts run TypeScript directly using native type stripping; Node 24.15 or newer is required, with no TypeScript runner or compilation step.
 
 For USB networking:
 
@@ -93,7 +95,7 @@ This builds Rust for both the iOS device and simulator targets, generates Swift 
 
 Both platforms share the reader, extraction, playback controls, and download workflow. Small Kotlin and Swift adapters use their platform HTTPS and MP4 APIs. Root `android/` and `ios/` directories are generated and ignored; persistent native module sources live under `modules/`. `npm ci` bundles the page decoder; run `npm run page:build` after changing its source.
 
-On Android, `npm ci` also applies the Expo Video 57 PiP activity fix in `scripts/patch-video.mjs`. Autolinking builds `expo-video` from source so that fix is included instead of using its precompiled binary.
+On Android, `npm ci` also applies the Expo Video 57 PiP fixes in `scripts/patch-video.ts`: resolving the activity on cold start and hiding native dialog windows during PiP so open sheets cannot cover the video. Autolinking builds `expo-video` from source so those fixes are included instead of using its precompiled binary.
 
 ## Verification and builds
 
@@ -132,7 +134,7 @@ nix develop path:.
 EXPO_PUBLIC_LINGOPLAY_TRACE_TRANSCRIPT=1 npx expo prebuild --platform android --no-install
 EXPO_PUBLIC_LINGOPLAY_TRACE_TRANSCRIPT=1 NODE_ENV=production android/gradlew -p android :app:assembleRelease -PreactNativeArchitectures=arm64-v8a
 adb install -r android/app/build/outputs/apk/release/app-release.apk
-node scripts/profile-transcript.mjs --duration 60 --output .cache/transcript.pftrace
+node scripts/profile-transcript.ts --duration 60 --output .cache/transcript.pftrace
 ```
 
 Load a transcript during the recording; use **Refresh transcript** to measure an

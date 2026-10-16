@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Play, RotateCw, Search, Trash2, X } from 'lucide-react-native';
@@ -7,10 +7,11 @@ import { timestamp } from '../youtube/transcript';
 import { colors } from '../theme';
 import { IconButton } from './IconButton';
 
-export function SavedWordsSheet({ visible, onClose, onOpen }: {
+export function SavedWordsSheet({ visible, onClose, onOpen, browserControl }: {
   visible: boolean;
   onClose: () => void;
   onOpen: (entry: SavedWord) => void;
+  browserControl?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
   const [words, setWords] = useState<SavedWord[]>([]);
@@ -41,6 +42,7 @@ export function SavedWordsSheet({ visible, onClose, onOpen }: {
     <SafeAreaView style={styles.safe}>
       <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>Saved words</Text>
         <IconButton icon={X} label="Close saved words" onPress={onClose} /></View>
+      {browserControl}
       <View style={styles.search}><Search size={17} color={colors.muted} />
         <TextInput accessibilityLabel="Search saved words" placeholder="Find a word or caption" placeholderTextColor={colors.muted}
           value={query} onChangeText={setQuery} style={styles.input} autoCorrect={false} />
