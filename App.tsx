@@ -22,7 +22,7 @@ import { PLAYER_DECODER } from './src/youtube/generated/playerDecoder';
 import { PlayerRuntime, type PlayerRuntimeHandle } from './src/media/PlayerRuntime';
 import { embeddedPlayerFrame } from './src/media/playerLayout';
 import { useTranscriptPosition } from './src/media/useTranscriptPosition';
-import { AiSheet } from './src/components/AiSheet';
+import { AiSheet, type SummaryRequest } from './src/components/AiSheet';
 
 type PendingRequest = { id: string; videoId: string; timer: ReturnType<typeof setTimeout> };
 
@@ -53,6 +53,7 @@ function Browser() {
   const sequence = useRef(0);
   const [mediaSheet, setMediaSheet] = useState<MediaSheetMode>(null);
   const [aiVisible, setAiVisible] = useState(false);
+  const [aiSummaryRequest, setAiSummaryRequest] = useState<SummaryRequest | null>(null);
   const downloads = useDownloads();
   const playerRuntime = useRef<PlayerRuntimeHandle>(null);
   const media = useMediaBrowser(webView, youtubeVideoId(url), pageAgent, playerRuntime);
@@ -193,7 +194,7 @@ function Browser() {
       <StatusBar style="dark" />
       <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top}>
         <View style={styles.topbar}><Text style={styles.brand}>lingoplay<Text style={styles.brandDot}>.</Text></Text>
-          <View style={styles.mediaControls}><IconButton icon={Sparkles} label="Open AI assistant" onPress={() => setAiVisible(true)} /><IconButton icon={FolderDown} label="Open downloads" onPress={() => setMediaSheet('library')} /><IconButton icon={Settings2} label="Settings" onPress={() => setMediaSheet('settings')} /></View></View>
+          <View style={styles.mediaControls}><IconButton icon={Sparkles} label="Open AI assistant" onPress={() => { setAiSummaryRequest(null); setAiVisible(true); }} /><IconButton icon={FolderDown} label="Open downloads" onPress={() => setMediaSheet('library')} /><IconButton icon={Settings2} label="Settings" onPress={() => setMediaSheet('settings')} /></View></View>
         {!home && (canExtract || media.playback) && <View style={styles.mediaToolbar}>
           <Pressable accessibilityRole="button" accessibilityLabel={media.playback?.offline ? 'Close offline player' : media.playback ? 'Return to web player' : 'Use native player for background playback'} disabled={media.busy} style={styles.mediaButton} onPress={() => {
             if (media.playback) { const offline = media.playback.offline; media.closePlayer(!offline); if (offline && !source) setHome(true); }
@@ -252,6 +253,12 @@ function Browser() {
           </View>
           {panel && <View style={styles.transcript}><TranscriptPanel key={currentVideo.current} data={transcript} loading={extracting} error={transcriptError} cached={cachedTranscript}
             position={transcriptPlayback.position}
+            onSummarize={() => {
+              if (!transcript || extracting || transcriptError || transcript.videoId !== currentVideo.current) return;
+              Keyboard.dismiss();
+              setAiSummaryRequest({ id: ++sequence.current, videoId: transcript.videoId, trackId: transcript.trackId });
+              setAiVisible(true);
+            }}
             onClose={closePanel} onExtract={requestTranscript} onSeek={seconds => {
               Keyboard.dismiss();
               if (!media.seek(seconds) && currentVideo.current) webView.current?.injectJavaScript(seekScript(currentVideo.current, seconds));
@@ -291,7 +298,7 @@ function Browser() {
         </View>
       </KeyboardAvoidingView>
       <PlayerRuntime ref={playerRuntime} />
-      <AiSheet visible={aiVisible} onClose={() => setAiVisible(false)} transcript={transcript} videoId={youtubeVideoId(url)} />
+      <AiSheet visible={aiVisible} onClose={() => { setAiVisible(false); setAiSummaryRequest(null); }} transcript={transcript} videoId={youtubeVideoId(url)} summaryRequest={aiSummaryRequest} />
       <MediaSheet mode={mediaSheet} onClose={() => setMediaSheet(null)} catalog={media.catalog} loading={media.busy} error={media.error}
         onRefresh={() => { media.resolveMedia().catch(() => {}); }} downloads={downloads}
         settings={media.settings} onSettings={media.updateSettings} sponsorStatus={media.sponsorStatus}

@@ -41,6 +41,7 @@
     "lucide-react-native": "^1.52.0",
     "react": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-enriched-markdown": "1.1.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
     "react-native-webview": "13.16.1",
@@ -52,6 +53,13 @@
     "esbuild": "^0.28.2",
     "jsdom": "^30.1.2",
     "typescript": "~6.0.3"
+  },
+  "enriched-markdown": {
+    "enableCodeHighlight": true,
+    "enableMath": true,
+    "codeHighlightLanguages": [
+      "rust", "typescript", "javascript", "tsx", "python", "bash", "json", "yaml", "markdown", "c", "cpp", "go"
+    ]
   },
   "engines": {
     "node": ">=22.13.0"

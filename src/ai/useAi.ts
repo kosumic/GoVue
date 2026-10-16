@@ -13,6 +13,7 @@ type Started = { taskId: string; url?: string; returnUrl?: string };
 
 export function useAi(visible: boolean, contextId: string) {
   const [config, setConfig] = useState<Config>({ providers: [], activeId: null });
+  const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState('');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -35,8 +36,14 @@ export function useAi(visible: boolean, contextId: string) {
     return () => { subscription.remove(); stop(); };
   }, []);
   useEffect(() => {
-    if (visible) { void aiRequest<Config>({ op: 'ai_config' }).then(setConfig).catch(e => setError(e.message)); }
-    else stop();
+    let active = true;
+    setReady(false);
+    if (visible) {
+      void aiRequest<Config>({ op: 'ai_config' }).then(next => {
+        if (active) { setConfig(next); setReady(true); }
+      }).catch(e => { if (active) setError(e.message); });
+    } else stop();
+    return () => { active = false; };
   }, [visible]);
   useEffect(() => {
     if (previousContext.current === contextId) return;
@@ -104,5 +111,5 @@ export function useAi(visible: boolean, contextId: string) {
     try { setConfig(await aiRequest<Config>({ op: 'ai_select', id })); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not select provider.'); }
   }
-  return { ...config, busy, text, error, notice, run, save, select, stop, clear: () => { setText(''); setError(''); setNotice(''); } };
+  return { ...config, ready, busy, text, error, notice, run, save, select, stop, clear: () => { setText(''); setError(''); setNotice(''); } };
 }
