@@ -5,8 +5,9 @@ import { aiRequest } from '../../modules/lingoplay-core';
 
 export type ProviderKind = 'chatgpt' | 'codex' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'xai' | 'kimi' | 'copilot' | 'custom';
 export type Model = { id: string; name: string; hidden?: boolean; contextWindow?: number | null; maxOutputTokens?: number | null; reasoning?: string; reasoningEfforts?: string[]; temperature?: number | null; topP?: number | null; inputModalities?: string[]; outputModalities?: string[] };
-export type ProviderDraft = { id: string; label: string; kind: ProviderKind; baseUrl: string; model: string; enabled?: boolean; auth?: string; protocol?: string; azure?: boolean; models?: Model[] };
-export type Provider = ProviderDraft & { enabled: boolean; models: Model[]; connected: boolean; account?: string; planEnabled: boolean; needsReauth?: boolean; credentialError?: string };
+export type ConnectionPreview = { canEditEndpoint: boolean; canAppendV1: boolean; effectiveBaseUrl: string | null; error?: string | null };
+export type ProviderDraft = { id: string; label: string; kind: ProviderKind; baseUrl: string; model: string; enabled?: boolean; auth?: string; protocol?: string; azure?: boolean; appendV1Suffix?: boolean; customUserAgent?: string; models?: Model[] };
+export type Provider = ProviderDraft & { enabled: boolean; models: Model[]; connected: boolean; account?: string; planEnabled: boolean; needsReauth?: boolean; credentialError?: string; connection?: ConnectionPreview };
 export type Group = { id: string; name: string; members: { providerId: string; model: string }[]; strategy: 'fallback' | 'loadBalance'; fallbackOnAnyError: boolean; reasoning: string; contextLimit: number | null; connected?: boolean };
 export type ProviderChoice = { kind: ProviderKind; name: string; auth: string[]; description: string };
 type Config = { providers: Provider[]; groups: Group[]; choices: ProviderChoice[]; activeId: string | null };

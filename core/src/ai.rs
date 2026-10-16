@@ -19,6 +19,7 @@ use std::{
 use url::Url;
 mod accounts;
 mod catalog;
+mod connections;
 mod conversations;
 
 const AUTH: &str = "https://auth.openai.com";
@@ -131,6 +132,10 @@ struct Provider {
     #[serde(default)]
     azure: bool,
     #[serde(default)]
+    append_v1_suffix: bool,
+    #[serde(default)]
+    custom_user_agent: String,
+    #[serde(default)]
     models: Vec<catalog::Model>,
 }
 #[derive(Default, Serialize, Deserialize)]
@@ -206,6 +211,7 @@ fn validate_provider(p: &mut Provider) -> Result<()> {
     {
         return Err("Invalid authentication or API protocol.".into());
     }
+    connections::validate(p)?;
     if catalog::oauth(p)
         && !matches!(
             p.kind.as_str(),
@@ -247,6 +253,7 @@ fn public_config(root: &Path) -> Result<Value> {
     let mut rows = Vec::new();
     for p in &c.providers {
         let mut row = serde_json::to_value(p).map_err(|_| "Invalid provider settings.")?;
+        row["connection"] = connections::preview(p);
         let s = match read_secret(&p.id) {
             Ok(s) => s,
             Err(_) => {
@@ -777,12 +784,13 @@ fn token_set(mut response: Value, previous: &Value) -> Result<Value> {
     response["expires_at"] = json!(now() + expires);
     Ok(response)
 }
-fn credential(p: &Provider, job: &Arc<Job>) -> Result<String> {
+fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<String> {
     if p.kind != "chatgpt" {
-        return accounts::credential(p, job);
+        return accounts::credential(root, p, job);
     }
     let guard = session(&p.id);
     let _g = guard.lock().unwrap_or_else(|e| e.into_inner());
+    connections::check_current(root, p, job)?;
     let mut s = read_secret(&p.id)?;
     if p.kind != "chatgpt" {
         return s["key"]
@@ -815,17 +823,18 @@ fn credential(p: &Provider, job: &Arc<Job>) -> Result<String> {
         .ok_or("Sign in to ChatGPT again.".into())
 }
 fn headers(p: &Provider, token: String) -> Vec<(&'static str, String)> {
-    if p.azure {
-        return vec![("api-key", token)];
-    }
-    let mut hs = match catalog::protocol(p) {
-        "anthropic" => vec![
-            ("x-api-key", token.clone()),
-            ("anthropic-version", "2023-06-01".into()),
-        ],
-        "gemini" => vec![("x-goog-api-key", token.clone())],
-        _ if token.is_empty() => Vec::new(),
-        _ => vec![("Authorization", format!("Bearer {token}"))],
+    let mut hs = if p.azure {
+        vec![("api-key", token.clone())]
+    } else {
+        match catalog::protocol(p) {
+            "anthropic" => vec![
+                ("x-api-key", token.clone()),
+                ("anthropic-version", "2023-06-01".into()),
+            ],
+            "gemini" => vec![("x-goog-api-key", token.clone())],
+            _ if token.is_empty() => Vec::new(),
+            _ => vec![("Authorization", format!("Bearer {token}"))],
+        }
     };
     if p.kind == "openrouter" {
         hs.push(("X-Title", "LingoPlay".into()));
@@ -857,6 +866,10 @@ fn headers(p: &Provider, token: String) -> Vec<(&'static str, String)> {
             }
         }
     }
+    if !p.custom_user_agent.is_empty() {
+        hs.retain(|(name, _)| !name.eq_ignore_ascii_case("User-Agent"));
+        hs.push(("User-Agent", p.custom_user_agent.clone()));
+    }
     hs
 }
 fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value> {
@@ -866,8 +879,9 @@ fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value> {
     if !p.enabled {
         return Err("Enable this provider before refreshing models.".into());
     }
-    let token = credential(p, job)?;
-    let mut url = format!("{}/models", p.base_url);
+    let token = credential(root, p, job)?;
+    let base = connections::effective_base(p)?;
+    let mut url = format!("{base}/models");
     if p.kind == "codex" {
         url.push_str("?client_version=0.153.3");
     }
@@ -964,16 +978,16 @@ fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value> {
             break;
         }
         if let Some(page) = result["nextPageToken"].as_str().filter(|s| !s.is_empty()) {
-            let mut next = Url::parse(&format!("{}/models", p.base_url))
-                .map_err(|_| "Invalid models endpoint.")?;
+            let mut next =
+                Url::parse(&format!("{base}/models")).map_err(|_| "Invalid models endpoint.")?;
             next.query_pairs_mut().append_pair("pageToken", page);
             url = next.into();
         } else if result["has_more"] == true {
             let last = result["last_id"]
                 .as_str()
                 .ok_or("Invalid model pagination.")?;
-            let mut next = Url::parse(&format!("{}/models", p.base_url))
-                .map_err(|_| "Invalid models endpoint.")?;
+            let mut next =
+                Url::parse(&format!("{base}/models")).map_err(|_| "Invalid models endpoint.")?;
             next.query_pairs_mut()
                 .append_pair("after_id", last)
                 .append_pair("limit", "100");
@@ -988,11 +1002,15 @@ fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value> {
     let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     job.pending()?;
     let mut cfg = config(root)?;
+    job.pending()?;
     let saved = cfg
         .providers
         .iter_mut()
         .find(|e| e.id == p.id)
         .ok_or("Provider was removed.")?;
+    if connections::changed(saved, p) {
+        return Err("Connection settings changed. Refresh models again.".into());
+    }
     for model in &rows {
         if let Some(existing) = saved.models.iter_mut().find(|e| e.id == model.id) {
             if existing.context_window.is_none() {
@@ -1094,6 +1112,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
 fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
     job.state.lock().unwrap_or_else(|e| e.into_inner())["providerId"] = json!(p.id);
     job.pending()?;
+    let base = connections::effective_base(p)?;
     if p.model.is_empty() {
         return Err("Choose a model in Providers first.".into());
     }
@@ -1160,8 +1179,8 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             json!({"model":p.model,"system":instructions,"max_tokens":4096,"messages":messages,"stream":true}),
         ),
         "gemini" => {
-            let mut u = Url::parse(&format!("{}/", p.base_url))
-                .map_err(|_| "Invalid provider endpoint.")?;
+            let mut u =
+                Url::parse(&format!("{base}/")).map_err(|_| "Invalid provider endpoint.")?;
             u.path_segments_mut()
                 .map_err(|_| "Invalid provider endpoint.")?
                 .pop_if_empty()
@@ -1181,7 +1200,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         ),
     };
     let url = if p.azure {
-        let mut u = Url::parse(&p.base_url).map_err(|_| "Invalid Azure endpoint.")?;
+        let mut u = Url::parse(&base).map_err(|_| "Invalid Azure endpoint.")?;
         u.path_segments_mut()
             .map_err(|_| "Invalid Azure endpoint.")?
             .pop_if_empty()
@@ -1191,7 +1210,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
     } else if protocol == "gemini" {
         suffix
     } else {
-        format!("{}{suffix}", p.base_url)
+        format!("{base}{suffix}")
     };
     let model = catalog::selected(p);
     let limit = match (c["contextLimit"].as_u64(), model.context_window) {
@@ -1315,7 +1334,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             body[k] = v.clone();
         }
     }
-    let mut hs = headers(p, credential(p, job)?);
+    let mut hs = headers(p, credential(root, p, job)?);
     if let Some(extra) = options["headers"].as_object() {
         for k in extra.keys() {
             hs.retain(|(name, _)| !name.eq_ignore_ascii_case(k));
@@ -1686,56 +1705,11 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             public_config(&root)
         }
-        "ai_save" => {
-            let mut p: Provider = serde_json::from_value(c["provider"].clone())
+        "ai_save" => connections::save_connection(&c, &root),
+        "ai_connection_preview" => {
+            let p: Provider = serde_json::from_value(c["provider"].clone())
                 .map_err(|_| "Invalid provider settings.")?;
-            if p.id.is_empty() {
-                p.id = random()?;
-            }
-            validate_provider(&mut p)?;
-            let lock = session(&p.id);
-            let _lock = lock.lock().unwrap_or_else(|e| e.into_inner());
-            let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let mut cfg = config(&root)?;
-            if let Some(old) = cfg.providers.iter().find(|v| v.id == p.id) {
-                if old.kind != p.kind
-                    || old.base_url != p.base_url
-                    || catalog::oauth(old) != catalog::oauth(&p)
-                {
-                    return Err("Add a separate provider to change its type or endpoint.".into());
-                }
-                if c["provider"].get("models").is_none() {
-                    p.models = old.models.clone();
-                }
-                if old.enabled && !p.enabled {
-                    cancel_owner(&p.id);
-                }
-            } else if cfg.providers.len() >= 32 {
-                return Err("At most 32 providers can be saved.".into());
-            }
-            if let Some(key) = c["key"].as_str() {
-                if catalog::oauth(&p)
-                    || (key.trim().is_empty() && p.kind != "custom")
-                    || key.len() > 8192
-                    || key.chars().any(char::is_control)
-                {
-                    return Err("Enter a valid API key.".into());
-                }
-                let mut secret = read_secret(&p.id)?;
-                secret["key"] = json!(key.trim());
-                write_secret(&p.id, &secret)?;
-            }
-            catalog::migrate_provider(&mut p);
-            if let Some(i) = cfg.providers.iter().position(|v| v.id == p.id) {
-                cfg.providers[i] = p.clone();
-            } else {
-                cfg.providers.push(p.clone());
-            }
-            if cfg.active_id.is_none() {
-                cfg.active_id = Some(p.id.clone());
-            }
-            save(&root, &cfg)?;
-            public_config(&root)
+            Ok(connections::preview(&p))
         }
         "ai_select" => {
             let id = string(&c, "id")?;

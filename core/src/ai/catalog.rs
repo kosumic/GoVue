@@ -257,6 +257,8 @@ pub(super) fn group_provider(g: &Group) -> Provider {
         auth: String::new(),
         protocol: String::new(),
         azure: false,
+        append_v1_suffix: false,
+        custom_user_agent: String::new(),
         models: Vec::new(),
     }
 }

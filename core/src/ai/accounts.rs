@@ -190,7 +190,7 @@ fn save_tokens(root: &Path, p: &Provider, job: &Arc<Job>, data: Value) -> Result
     let lock = session(&p.id);
     let _g = lock.lock().unwrap_or_else(|e| e.into_inner());
     job.pending()?;
-    provider(root, &p.id)?;
+    connections::check_current(root, p, job)?;
     let previous = read_secret(&p.id)?;
     if let (Some(saved), Some(received)) = (previous["subject"].as_str(), data["subject"].as_str())
     {
@@ -541,9 +541,10 @@ fn device_login(root: &Path, p: &Provider, s: &Spec, job: &Arc<Job>) -> Result<V
         }
     }
 }
-pub(super) fn credential(p: &Provider, job: &Arc<Job>) -> Result<String> {
+pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<String> {
     let lock = session(&p.id);
     let _g = lock.lock().unwrap_or_else(|e| e.into_inner());
+    connections::check_current(root, p, job)?;
     let mut s = read_secret(&p.id)?;
     if !catalog::oauth(p) || p.kind == "openrouter" {
         return s["key"]
