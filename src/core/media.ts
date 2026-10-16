@@ -1,7 +1,7 @@
 import { coreRequest } from '../../modules/lingoplay-core';
 
-export type MediaSettings = { adBlock: boolean; sponsorBlock: boolean; backgroundPlayback: boolean; autoPip: boolean; playbackSpeed: number; qualityHeight: number; categories: string[] };
-export const defaultMediaSettings: MediaSettings = { adBlock: true, sponsorBlock: true, backgroundPlayback: true, autoPip: false, playbackSpeed: 1, qualityHeight: 0, categories: ['sponsor', 'selfpromo', 'interaction'] };
+export type MediaSettings = { adBlock: boolean; sponsorBlock: boolean; backgroundPlayback: boolean; autoPip: boolean; pauseAfterLine: boolean; playbackSpeed: number; qualityHeight: number; categories: string[] };
+export const defaultMediaSettings: MediaSettings = { adBlock: true, sponsorBlock: true, backgroundPlayback: true, autoPip: false, pauseAfterLine: false, playbackSpeed: 1, qualityHeight: 0, categories: ['sponsor', 'selfpromo', 'interaction'] };
 export type MediaByteRange = { start: number; end: number };
 export type MediaStream = { itag: number; url: string; userAgent: string; kind: 'audio' | 'video' | 'combined'; mimeType: string; height: number; width?: number; initRange?: MediaByteRange | null; indexRange?: MediaByteRange | null; bitrate: number; bytes: number; label: string };
 export type MediaCatalog = { videoId: string; origin: string; title: string; author: string; duration: number; position: number; live: boolean; streams: MediaStream[]; hlsUrl: string | null };

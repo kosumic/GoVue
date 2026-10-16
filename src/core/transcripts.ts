@@ -17,3 +17,9 @@ export async function searchTranscript(data: Transcript, query: string): Promise
 export function exportTranscript(data: Transcript) {
   return coreRequest<string>({ op: 'export', videoId: data.videoId, trackId: data.trackId });
 }
+
+export function advanceTranscriptPlayback(data: Transcript, cursor: unknown, sample: {
+  position: number | null; playing: boolean; seeking: boolean; rate: number; elapsed: number;
+}) {
+  return coreRequest<{ pause: boolean; cursor: unknown }>({ op: 'transcript_playback', videoId: data.videoId, trackId: data.trackId, cursor, ...sample });
+}
