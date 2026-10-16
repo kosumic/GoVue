@@ -193,7 +193,7 @@ function Browser() {
       <StatusBar style="dark" />
       <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top}>
         <View style={styles.topbar}><Text style={styles.brand}>lingoplay<Text style={styles.brandDot}>.</Text></Text>
-          <View style={styles.mediaControls}><IconButton icon={Sparkles} label="Open AI assistant" onPress={() => setAiVisible(true)} /><IconButton icon={FolderDown} label="Open downloads" onPress={() => setMediaSheet('library')} /><IconButton icon={Settings2} label="Playback settings" onPress={() => setMediaSheet('settings')} /></View></View>
+          <View style={styles.mediaControls}><IconButton icon={Sparkles} label="Open AI assistant" onPress={() => setAiVisible(true)} /><IconButton icon={FolderDown} label="Open downloads" onPress={() => setMediaSheet('library')} /><IconButton icon={Settings2} label="Settings" onPress={() => setMediaSheet('settings')} /></View></View>
         {!home && (canExtract || media.playback) && <View style={styles.mediaToolbar}>
           <Pressable accessibilityRole="button" accessibilityLabel={media.playback?.offline ? 'Close offline player' : media.playback ? 'Return to web player' : 'Use native player for background playback'} disabled={media.busy} style={styles.mediaButton} onPress={() => {
             if (media.playback) { const offline = media.playback.offline; media.closePlayer(!offline); if (offline && !source) setHome(true); }

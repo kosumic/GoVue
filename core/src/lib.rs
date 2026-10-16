@@ -14,6 +14,7 @@ uniffi::setup_scaffolding!();
 mod media;
 mod transport;
 mod ai;
+mod languages;
 pub use ai::{ai_execute, install_ai_platform, AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 
 #[derive(uniffi::Record)]
@@ -354,6 +355,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    if op == "language_settings" {
+        return languages::settings(&command, root);
+    }
     if op.starts_with("media_") || op.starts_with("sponsor_") || op.starts_with("downloads_") {
         return media::dispatch(&command, root);
     }
