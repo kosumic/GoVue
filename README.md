@@ -82,7 +82,7 @@ The app has been built, installed, and exercised on the Pixel: extraction, searc
 
 ## Extraction and cache
 
-The page bridge asks the existing YouTube player for a caption track and captures the player's fetch or XMLHttpRequest response, including requests requiring a proof-of-origin token. It restores the previous player caption selection afterward. Where available, it can also use YouTube's transcript control, transcript endpoint, or caption-track URL. There is no external transcript service or audio upload.
+The page bridge asks the existing YouTube player for a caption track and captures the player's fetch or XMLHttpRequest response, including requests requiring a proof-of-origin token. It clears and reselects an uncached track so a paused player fetches its text, then restores the previous selection. Default extraction and fallback requests honor the selected track, YouTube's default caption track, and the page language. Where available, it can also use YouTube's transcript control, transcript endpoint, or caption-track URL. There is no external transcript service or audio upload.
 
 The Rust boundary accepts Android's origin-only WebMessageListener events and document-URL events from other WebView bridges, while validating the active request and video identity. Navigation cancels pending extraction and clears the reader, including single-page navigation. Raw JSON3/XML responses are parsed in Rust; transcript-renderer fallback segments receive the same validation and normalization.
 

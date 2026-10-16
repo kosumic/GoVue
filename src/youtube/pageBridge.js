@@ -165,13 +165,26 @@ export const YOUTUBE_BRIDGE = String.raw`
     }
     return Reflect.apply(originalOpen, this, [method, url, ...rest]);
   };
+  const captionTrackIndex = (id, tracks, requestedTrack) => {
+    if (requestedTrack !== 'default') return tracks.findIndex((track, index) => String(track.vssId || track.languageCode + ':' + index) === requestedTrack);
+    const selected = document.getElementById('movie_player')?.getOption?.('captions', 'track');
+    const current = selected?.vss_id || selected?.vssId;
+    const currentIndex = tracks.findIndex(track => track.vssId && track.vssId === current);
+    if (currentIndex >= 0) return currentIndex;
+    const captions = playerResponse(id)?.captions?.playerCaptionsTracklistRenderer;
+    const defaultIndex = captions?.audioTracks?.[captions.defaultAudioTrackIndex || 0]?.defaultCaptionTrackIndex;
+    if (Number.isInteger(defaultIndex) && defaultIndex >= 0 && defaultIndex < tracks.length) return defaultIndex;
+    const language = (document.documentElement.lang || '').toLowerCase();
+    const languageIndex = tracks.findIndex(track => track.languageCode?.toLowerCase() === language);
+    if (languageIndex >= 0) return languageIndex;
+    const baseIndex = tracks.findIndex(track => track.languageCode?.toLowerCase().split('-')[0] === language.split('-')[0]);
+    return baseIndex >= 0 ? baseIndex : 0;
+  };
   const playerCaptions = async (id, tracks, requestedTrack, signal) => {
     const player = document.getElementById('movie_player');
     if (!player?.loadModule || !player?.setOption || !tracks.length) return null;
     const previous = player.getOption?.('captions', 'track') || {};
-    const current = previous.vss_id || previous.vssId;
-    const preferred = tracks.find(track => track.vssId === current) || tracks.find(track => track.languageCode === document.documentElement.lang) || tracks[0];
-    const track = requestedTrack === 'default' ? preferred : tracks.find((track, index) => String(track.vssId || track.languageCode + ':' + index) === requestedTrack);
+    const track = tracks[captionTrackIndex(id, tracks, requestedTrack)];
     if (!track) return null;
     const key = String(track.vssId || track.languageCode);
     if (captionCache.get(key)?.videoId === id) return captionCache.get(key);
@@ -179,6 +192,10 @@ export const YOUTUBE_BRIDGE = String.raw`
       player.loadModule('captions');
       const nativeTracks = player.getOption?.('captions', 'tracklist') || [];
       const nativeTrack = nativeTracks.find(item => (item.vss_id || item.vssId) === track.vssId);
+      // A paused/unstarted player can report a selected track without having
+      // fetched it. Selecting that same track or setting reload is a no-op;
+      // clear it first so YouTube issues its own signed caption request.
+      player.setOption('captions', 'track', {});
       player.setOption('captions', 'track', nativeTrack || { languageCode: track.languageCode, kind: track.kind, vss_id: track.vssId });
       player.setOption('captions', 'reload', true);
       const deadline = Date.now() + 12000;
@@ -350,7 +367,7 @@ export const YOUTUBE_BRIDGE = String.raw`
         }
         if (signal.aborted || videoId() !== id) return;
         if (!segments.length) {
-          const index = requestedTrack === 'default' ? 0 : tracks.findIndex(track => track.id === requestedTrack);
+          const index = captionTrackIndex(id, rawTracks, requestedTrack);
           if (index < 0 || !rawTracks[index]) {
             throw failure || new Error('No transcript is available. Play the video and try again; some videos have no captions.');
           }
