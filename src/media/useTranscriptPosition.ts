@@ -34,7 +34,8 @@ export function useTranscriptPosition(webView: React.RefObject<WebView | null>, 
     if (!request || nativeVideoId || !enabled || request.videoId !== videoId || message.videoId !== videoId || message.requestId !== request.id || !isYouTubeUrl(origin)) return;
     // Android may supply just the HTTPS origin; document URLs must match too.
     const url = new URL(origin);
-    if (url.pathname !== '/' && youtubeVideoId(origin) !== videoId) return;
+    const originOnly = url.pathname === '/' && !url.search && !url.hash;
+    if (url.username || url.password || (url.port && url.port !== '443') || (!originOnly && youtubeVideoId(origin) !== videoId)) return;
     if (message.seconds !== null && (typeof message.seconds !== 'number' || !Number.isFinite(message.seconds) || message.seconds < 0)) return;
     setSample({ request, seconds: message.seconds });
   }

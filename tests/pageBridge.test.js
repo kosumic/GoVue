@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { YOUTUBE_BRIDGE, extractionScript, seekScript } from '../src/youtube/pageBridge.js';
+import { YOUTUBE_BRIDGE, extractionScript, playbackPositionScript, seekScript } from '../src/youtube/pageBridge.js';
 
 const videoId = 'abcdefghijk';
 const otherVideoId = '0123456789a';
@@ -419,5 +419,61 @@ test('caption taps seek and resume through the current YouTube player, rejecting
     env.window.history.pushState({}, '', `/watch?v=${otherVideoId}`);
     env.window.__lingoplay.seek(videoId, 10);
     assert.equal(actions.length, 2);
+  } finally { env.close(); }
+});
+
+test('playback positions follow the web video across seeks and retain request correlation', () => {
+  const env = setup(async () => env.response({}));
+  try {
+    const video = env.window.document.querySelector('video');
+    env.window.eval(YOUTUBE_BRIDGE);
+    video.currentTime = 42.5;
+    env.window.eval(playbackPositionScript('position:1', videoId));
+    assert.deepEqual(env.messages.at(-1), { type: 'playbackPosition', requestId: 'position:1', videoId, seconds: 42.5 });
+    video.currentTime = 3;
+    env.window.eval(playbackPositionScript('position:2', videoId));
+    assert.deepEqual(env.messages.at(-1), { type: 'playbackPosition', requestId: 'position:2', videoId, seconds: 3 });
+    const count = env.messages.length;
+    env.window.eval(playbackPositionScript('stale', otherVideoId));
+    assert.equal(env.messages.length, count);
+    const quoted = 'quote"\nrequest';
+    env.window.eval(playbackPositionScript(quoted, videoId));
+    assert.equal(env.messages.at(-1).requestId, quoted);
+  } finally { env.close(); }
+});
+
+test('playback positions reject a stale SPA player and hide ad or unavailable timelines', () => {
+  const env = setup(async () => env.response({}));
+  try {
+    const player = env.window.document.createElement('div');
+    player.id = 'movie_player';
+    player.getVideoData = () => ({ video_id: videoId });
+    env.window.document.body.append(player);
+    const video = env.window.document.querySelector('video');
+    player.append(video);
+    video.currentTime = 12;
+    env.window.eval(YOUTUBE_BRIDGE);
+    player.classList.add('ad-showing');
+    env.window.eval(playbackPositionScript('position:1', videoId));
+    assert.equal(env.messages.at(-1).seconds, null);
+    player.classList.remove('ad-showing');
+    env.window.eval(playbackPositionScript('position:1', videoId));
+    assert.equal(env.messages.at(-1).seconds, 12);
+    video.remove();
+    player.getCurrentTime = () => NaN;
+    env.window.eval(playbackPositionScript('position:1', videoId));
+    assert.equal(env.messages.at(-1).seconds, null);
+    player.getCurrentTime = () => 31.25;
+    env.window.eval(playbackPositionScript('position:1', videoId));
+    assert.equal(env.messages.at(-1).seconds, 31.25);
+    env.window.history.pushState({}, '', `/watch?v=${otherVideoId}`);
+    env.window.ytInitialPlayerResponse.videoDetails.videoId = otherVideoId;
+    const count = env.messages.length;
+    env.window.eval(playbackPositionScript('position:2', otherVideoId));
+    assert.equal(env.messages.length, count, 'The URL changed but the old player still owns the video');
+    player.getVideoData = () => ({ video_id: otherVideoId });
+    env.window.eval(playbackPositionScript('position:2', otherVideoId));
+    assert.equal(env.messages.at(-1).videoId, otherVideoId);
+    assert.equal(env.messages.at(-1).seconds, 31.25);
   } finally { env.close(); }
 });
