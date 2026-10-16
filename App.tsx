@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, BackHandler, Keyboard, KeyboardAvoidingView, 
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
-import { ArrowLeft, ArrowRight, Bookmark, Captions, Download, FolderDown, Globe2, House, PictureInPicture2, Play, RotateCw, Settings2, Sparkles, X } from 'lucide-react-native';
+import { ArrowLeft, ArrowRight, Bookmark, Captions, Download, FolderDown, Globe2, House, Minimize2, PictureInPicture2, Play, RotateCw, Settings2, Sparkles, X } from 'lucide-react-native';
 import { useEvent } from 'expo';
 import { VideoView } from 'expo-video';
 import { browserAddress, isWebUrl, isYouTubeUrl, youtubeVideoId } from './src/browser/address';
@@ -26,6 +26,7 @@ import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 import { AiSheet, type SummaryRequest } from './src/components/AiSheet';
 import { SavedWordsSheet } from './src/components/SavedWordsSheet';
 import { PlayerControls } from './src/components/PlayerControls';
+import { BrowserResumeBar } from './src/components/BrowserResumeBar';
 import { useWebViewRenderer } from './src/browser/useWebViewRenderer';
 
 type PendingRequest = { id: string; videoId: string; timer: ReturnType<typeof setTimeout>; trace: TranscriptTrace };
@@ -39,6 +40,7 @@ function Browser() {
   const addressInput = useRef<TextInput>(null);
   const [source, setSource] = useState<{ uri: string } | null>(null);
   const [home, setHome] = useState(true);
+  const [browserMinimized, setBrowserMinimized] = useState(false);
   const [url, setUrl] = useState('');
   const nativeVideo = useRef<VideoView>(null);
   const currentUrl = useRef('');
@@ -108,16 +110,22 @@ function Browser() {
 
   const closePanel = useCallback(() => { setPanel(false); cancelRequest(); }, [cancelRequest]);
   const showHome = useCallback(() => {
-    closePanel(); setHome(true); setBrowserError(null); Keyboard.dismiss();
+    closePanel(); setHome(true); setBrowserMinimized(false); setBrowserError(null); Keyboard.dismiss();
   }, [closePanel]);
+
+  const restoreBrowser = useCallback(() => {
+    Keyboard.dismiss(); setHome(false); setBrowserMinimized(false);
+    setAiVisible(false); setAiSummaryRequest(null); setWordsVisible(false); setMediaSheet(null);
+  }, []);
 
   const goBack = useCallback(() => {
     if (panel) { closePanel(); return true; }
+    if (browserMinimized) { restoreBrowser(); return true; }
     if (home) return false;
     if (navigation.back) webView.current?.goBack();
     else showHome();
     return true;
-  }, [panel, home, navigation.back, closePanel, showHome]);
+  }, [panel, home, browserMinimized, navigation.back, closePanel, showHome, restoreBrowser]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', goBack);
@@ -152,7 +160,7 @@ function Browser() {
     try {
       const next = browserAddress(input);
       cancelRequest(); setPanel(false); setTranscript(null); setTranscriptError(null);
-      updateUrl(next); setAddress(next); setBrowserError(null); setHome(false); setEditing(false);
+      updateUrl(next); setAddress(next); setBrowserError(null); setHome(false); setBrowserMinimized(false); setEditing(false);
       Keyboard.dismiss();
       if (!source || pageStopped.current || !renderer.mounted) {
         setSource({ uri: next });
@@ -261,13 +269,16 @@ function Browser() {
   const canReadTranscript = canExtract || (!home && !!transcript);
   const expandedPlayer = panel || media.playback?.offline || pageStopped.current;
   const playerHidden = !expandedPlayer && media.playerLayout?.visible === false;
+  const browserHidden = home || browserMinimized;
+  const browserControl = source || media.playback ? <BrowserResumeBar title={media.playback?.title || url} player={media.player}
+    hasPlayback={!!media.playback} onRestore={restoreBrowser} /> : null;
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
       <StatusBar style="dark" />
       <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top}>
         <View style={styles.topbar}><Text style={styles.brand}>lingoplay<Text style={styles.brandDot}>.</Text></Text>
           <View style={styles.mediaControls}><IconButton icon={Bookmark} label="Open saved words" onPress={() => setWordsVisible(true)} /><IconButton icon={Sparkles} label="Open AI assistant" onPress={() => { setAiSummaryRequest(null); setAiVisible(true); }} /><IconButton icon={FolderDown} label="Open downloads" onPress={() => setMediaSheet('library')} /><IconButton icon={Settings2} label="Settings" onPress={() => setMediaSheet('settings')} /></View></View>
-        {!home && (canExtract || media.playback) && <View style={styles.mediaToolbar}>
+        {!browserHidden && (canExtract || media.playback) && <View style={styles.mediaToolbar}>
           <Pressable accessibilityRole="button" accessibilityLabel={media.playback?.offline ? 'Close offline player' : media.playback ? 'Return to web player' : 'Use native player for background playback'} disabled={media.busy} style={styles.mediaButton} onPress={() => {
             if (media.playback) { const offline = media.playback.offline; media.closePlayer(!offline); if (offline && !source) setHome(true); }
             else mediaAction(() => media.startNative());
@@ -279,13 +290,18 @@ function Browser() {
             if (process.env.EXPO_PUBLIC_LINGOPLAY_DEBUG === '1') console.info('LingoPlay PiP requested');
             await nativeVideo.current.startPictureInPicture();
           })} />
+          <IconButton icon={Minimize2} label="Minimize browser" onPress={() => { Keyboard.dismiss(); setBrowserMinimized(true); }} />
         </View>}
-        {!home && media.playback && <PlayerControls key={`${media.playback.videoId}:${media.playback.offline}`} player={media.player}
+        {!browserHidden && media.playback && <PlayerControls key={`${media.playback.videoId}:${media.playback.offline}`} player={media.player}
           speeds={media.speeds} qualities={media.qualities} height={media.playback.qualityHeight} offline={media.playback.offline}
           busy={media.switchingQuality} onSpeed={media.setSpeed} onQuality={media.setQuality} />}
-        <View style={styles.workspace} onLayout={event => setViewport({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}>
-          <View style={[styles.viewport, panel && styles.compact]}>
-            {source && renderer.mounted && <WebView key={renderer.generation} ref={renderer.attach} source={source} style={[styles.webview, home && styles.hidden]}
+        <View style={styles.workspace} onLayout={event => {
+          if (!browserHidden || viewport.height === 0) setViewport({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height });
+        }}>
+          {/* Preserve both native views and the page size while the browser is minimized. */}
+          <View pointerEvents={browserHidden ? 'none' : 'auto'} accessibilityElementsHidden={browserHidden} importantForAccessibility={browserHidden ? 'no-hide-descendants' : 'auto'}
+            style={[styles.viewport, panel && styles.compact, browserHidden && [styles.parkedViewport, { height: viewport.height }]]}>
+            {source && renderer.mounted && <WebView key={renderer.generation} ref={renderer.attach} source={source} style={styles.webview}
               // Clip the full-size page instead of resizing it: YouTube treats
               // a small WebView window as picture-in-picture and pauses playback.
               containerStyle={[styles.page, viewport.height > 0 && { height: viewport.height }]}
@@ -317,8 +333,7 @@ function Browser() {
               onError={event => { if (isCurrentPage()) { setLoading(false); setBrowserError(event.nativeEvent.description || 'This page could not be loaded.'); } }}
               onRenderProcessGone={pageTerminated}
               onContentProcessDidTerminate={pageTerminated} />}
-            {home && <StartPage onNavigate={navigate} onFocusAddress={() => addressInput.current?.focus()} />}
-            {(media.playback || media.preparing) && !home && <View pointerEvents={playerHidden ? 'none' : 'auto'} style={[styles.nativePlayer,
+            {(media.playback || media.preparing) && <View pointerEvents={playerHidden ? 'none' : 'auto'} style={[styles.nativePlayer,
               expandedPlayer ? StyleSheet.absoluteFill : embeddedPlayerFrame(media.playerLayout, viewport.width, viewport.height), playerHidden && styles.playerHidden]}>
               <VideoView ref={nativeVideo} style={styles.fill} player={media.player} nativeControls contentFit="contain" surfaceType="textureView" allowsPictureInPicture startsPictureInPictureAutomatically={media.settings.autoPip} fullscreenOptions={{ enable: true }}
                 onPictureInPictureStart={() => { if (process.env.EXPO_PUBLIC_LINGOPLAY_DEBUG === '1') console.info('LingoPlay PiP started'); }}
@@ -328,7 +343,10 @@ function Browser() {
             </View>}
             {!home && loading && <View pointerEvents="none" style={[styles.progress, { width: `${Math.max(4, progress * 100)}%` }]} />}
           </View>
-          {panel && <View style={styles.transcript}><TranscriptPanel key={currentVideo.current} data={transcript} loading={extracting} error={transcriptError} cached={cachedTranscript}
+          {browserHidden && !panel && <StartPage onNavigate={navigate} onFocusAddress={() => {
+            setBrowserMinimized(false); requestAnimationFrame(() => addressInput.current?.focus());
+          }} />}
+          {panel && <View style={[styles.transcript, browserMinimized && styles.fill]}><TranscriptPanel key={currentVideo.current} data={transcript} loading={extracting} error={transcriptError} cached={cachedTranscript}
             position={transcriptPlayback.position}
             onSummarize={() => {
               if (!transcript || extracting || transcriptError || transcript.videoId !== currentVideo.current) return;
@@ -341,6 +359,7 @@ function Browser() {
               if (!media.seek(seconds) && currentVideo.current) webView.current?.injectJavaScript(seekScript(currentVideo.current, seconds));
             }} /></View>}
         </View>
+        {browserHidden && browserControl}
         {media.notice && <Text accessibilityLiveRegion="polite" style={styles.mediaNotice}>{media.notice}</Text>}
         {media.error && !mediaSheet && !media.preparing && !media.playback && <View style={styles.error}>
           <Text accessibilityRole="alert" style={styles.errorText}>{media.error}</Text>
@@ -349,7 +368,7 @@ function Browser() {
         </View>}
         {browserError && <View style={styles.error}><Text accessibilityRole="alert" style={styles.errorText}>{browserError}</Text>
           <IconButton icon={X} label="Dismiss browser error" onPress={() => setBrowserError(null)} /></View>}
-        <View style={styles.chrome}>
+        {!browserMinimized && <View style={styles.chrome}>
           <View style={styles.addressBar}><Globe2 color={colors.muted} size={18} strokeWidth={1.7} />
             <TextInput ref={addressInput} accessibilityLabel="Website address or search" value={editing ? address : home ? '' : url}
               placeholder="Search or enter a website" placeholderTextColor={colors.muted} style={styles.address}
@@ -372,21 +391,22 @@ function Browser() {
               <Text style={[styles.transcriptLabel, !canReadTranscript && styles.disabledLabel]}>Transcript</Text>
             </Pressable>
           </View>
-        </View>
+        </View>}
       </KeyboardAvoidingView>
       <PlayerRuntime ref={playerRuntime} />
-      <SavedWordsSheet visible={wordsVisible} onClose={() => setWordsVisible(false)} onOpen={entry => {
+      <SavedWordsSheet visible={wordsVisible} browserControl={browserControl} onClose={() => setWordsVisible(false)} onOpen={entry => {
         setWordsVisible(false);
         if (!home && currentVideo.current === entry.videoId) {
+          setBrowserMinimized(false);
           if (!media.seek(entry.start)) webView.current?.injectJavaScript(seekScript(entry.videoId, entry.start));
         } else navigate(`https://m.youtube.com/watch?v=${entry.videoId}&t=${Math.floor(entry.start)}s`);
       }} />
-      <AiSheet visible={aiVisible} onClose={() => { setAiVisible(false); setAiSummaryRequest(null); }} transcript={transcript} videoId={youtubeVideoId(url)} summaryRequest={aiSummaryRequest} />
-      <MediaSheet mode={mediaSheet} onClose={() => setMediaSheet(null)} catalog={media.catalog} loading={media.busy} error={media.error}
+      <AiSheet visible={aiVisible} browserControl={browserControl} onClose={() => { setAiVisible(false); setAiSummaryRequest(null); }} transcript={transcript} videoId={youtubeVideoId(url)} summaryRequest={aiSummaryRequest} />
+      <MediaSheet mode={mediaSheet} browserControl={browserControl} onClose={() => setMediaSheet(null)} catalog={media.catalog} loading={media.busy} error={media.error}
         onRefresh={() => { media.resolveMedia().catch(() => {}); }} downloads={downloads}
         settings={media.settings} onSettings={media.updateSettings} sponsorStatus={media.sponsorStatus}
         onDownload={itag => { const catalog = media.catalog; if (!catalog) return; setMediaSheet('library'); mediaAction(() => downloads.start(catalog, itag, pageAgent)); }}
-        onPlay={entry => { setMediaSheet(null); setHome(false); mediaAction(() => media.playOffline(entry, downloads.uri(entry))); }}
+        onPlay={entry => { restoreBrowser(); mediaAction(() => media.playOffline(entry, downloads.uri(entry))); }}
         onRetry={entry => { setMediaSheet(null); navigate(`https://m.youtube.com/watch?v=${entry.videoId}`); }} />
     </SafeAreaView>
   );
@@ -419,7 +439,7 @@ const styles = StyleSheet.create({
   page: { position: 'absolute', top: 0, left: 0, right: 0, flex: 0 },
   transcript: { flex: 0.55 },
   webview: { flex: 1, backgroundColor: colors.background },
-  hidden: { display: 'none' },
+  parkedViewport: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
   progress: { height: 2, backgroundColor: colors.accent, position: 'absolute', top: 0, left: 0 },
   chrome: { paddingHorizontal: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
   addressBar: { minHeight: 48, borderRadius: 15, backgroundColor: '#EAECE5', flexDirection: 'row', alignItems: 'center', paddingLeft: 14, paddingRight: 2, gap: 10 },

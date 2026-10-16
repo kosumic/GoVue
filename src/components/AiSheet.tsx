@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronLeft, History, MessageSquare, SquarePen, Trash2, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,7 +18,7 @@ function Button({ title, onPress, disabled = false }: { title: string; onPress: 
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, disabled && styles.disabled]}><Text style={styles.buttonText}>{title}</Text></Pressable>;
 }
 
-export function AiSheet({ visible, onClose, transcript, videoId, summaryRequest }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; summaryRequest: SummaryRequest | null }) {
+export function AiSheet({ visible, onClose, transcript, videoId, summaryRequest, browserControl }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; summaryRequest: SummaryRequest | null; browserControl?: ReactNode }) {
   const ai = useAi(visible, `${videoId || ''}:${transcript?.trackId || ''}`);
   const chats = useChats(visible, `${videoId || ''}:${transcript?.trackId || ''}`);
   const [page, setPage] = useState<'chat' | 'providers' | 'history' | 'models'>('chat');
@@ -100,6 +100,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, summaryRequest 
           {(page === 'chat' || page === 'history') && <IconButton icon={SquarePen} label="New chat" onPress={newChat} />}
           <IconButton icon={X} label="Close AI assistant" onPress={onClose} />
         </View>
+        {browserControl}
         {page === 'chat' ? <>
           {pendingSummary && ai.ready && (!active?.connected || !active.model) && <View style={styles.banner}><Text style={styles.help}>Choose a model to summarize this video.</Text><Button title="Choose model" onPress={() => showPage('models')} /></View>}
           {chats.conversation && ai.ready && !selected?.connected && <View style={styles.banner}><Text style={styles.help}>Reconnect {chats.conversation.providerLabel} to continue this chat.</Text><Button title="Providers" onPress={() => showPage('providers')} /></View>}

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Download, Play, Share2, Trash2, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,15 +13,17 @@ const categories = [['sponsor', 'Sponsors'], ['selfpromo', 'Self promotion'], ['
 const action = (work: () => Promise<unknown>) => { work().catch(e => Alert.alert('LingoPlay', e instanceof Error ? e.message : 'Please try again.')); };
 const bytes = (n: number) => n > 0 ? `${(n / 1024 / 1024).toFixed(1)} MB` : '';
 
-export function MediaSheet({ mode, onClose, catalog, loading, error, onRefresh, onDownload, downloads, onPlay, onRetry, settings, onSettings, sponsorStatus }: {
+export function MediaSheet({ mode, onClose, catalog, loading, error, onRefresh, onDownload, downloads, onPlay, onRetry, settings, onSettings, sponsorStatus, browserControl }: {
   mode: MediaSheetMode; onClose: () => void; catalog: MediaCatalog | null; loading: boolean; error: string | null;
   onRefresh: () => void; onDownload: (itag: number) => void; downloads: ReturnType<typeof useDownloads>;
   onPlay: (entry: DownloadEntry) => void; onRetry: (entry: DownloadEntry) => void;
   settings: MediaSettings; onSettings: (changes: Partial<MediaSettings>) => void; sponsorStatus: string;
+  browserControl?: ReactNode;
 }) {
   return <Modal visible={mode !== null} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
     <SafeAreaView style={styles.safe}>
       <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>{mode === 'settings' ? 'Settings' : mode === 'library' ? 'Downloads' : 'Download video'}</Text><IconButton icon={X} label="Close media sheet" onPress={onClose} /></View>
+      {browserControl}
       <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         {mode === 'settings' ? <>
