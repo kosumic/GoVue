@@ -37,6 +37,7 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
   const identity = useRef(videoId); identity.current = videoId;
   const playbackRef = useRef<Playback | null>(null);
   const pending = useRef<Pending | null>(null);
+  const pageAvailable = useRef(true);
   const sequence = useRef(0);
   const nativeGeneration = useRef(0);
   const replacements = useRef(Promise.resolve());
@@ -56,8 +57,15 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
   }, [playback]);
 
   const inject = (script: string) => webView.current?.injectJavaScript(script);
-  function cancelPending() {
-    if (pending.current) { clearTimeout(pending.current.timer); pending.current.reject(Error('The video changed. Try again.')); pending.current = null; }
+  function cancelPending(message = 'The video changed. Try again.') {
+    if (pending.current) { clearTimeout(pending.current.timer); pending.current.reject(Error(message)); pending.current = null; }
+  }
+  function pageTerminated() {
+    pageAvailable.current = false;
+    preparation.current = null; setPreparing(false);
+    cancelPending('The browser stopped. Reload the page and try again.');
+    setBusy(false); setPlayerLayout(null);
+    ++qualitySequence.current; setSwitchingQuality(false);
   }
   useEffect(() => {
     let active = true;
@@ -122,6 +130,7 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
   }, [notice]);
 
   function configurePage() {
+    pageAvailable.current = true;
     inject(mediaSettingsScript(settings));
     if (identity.current) inject(mediaSponsorsScript(identity.current, segments.current));
     if (identity.current && (playbackRef.current || preparation.current)) inject(mediaNativeScript(identity.current, true));
@@ -144,6 +153,11 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
   function resolveMedia() {
     const id = identity.current;
     if (!id) return Promise.reject(Error('Open a YouTube video first.'));
+    if (!pageAvailable.current || !webView.current) {
+      const failure = Error('Reload the browser page before loading media.');
+      setError(failure.message);
+      return Promise.reject(failure);
+    }
     cancelPending(); setBusy(true); setError(null); setCatalog(null);
     return new Promise<MediaCatalog>((resolve, reject) => {
       const requestId = `media:${Date.now()}:${++sequence.current}`;
@@ -167,7 +181,7 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
       if (message.videoId === identity.current && manualWeb.current !== identity.current && !playbackRef.current && !preparation.current && !pending.current &&
           Date.now() >= autoRetryAt.current && AppState.currentState === 'active' && (settings.backgroundPlayback || settings.adBlock || settings.autoPip)) {
         autoRetryAt.current = Date.now() + 30000;
-        void startNative().catch(failure => { if (identity.current === message.videoId) setError(failure instanceof Error ? failure.message : 'Video could not start.'); });
+        void startNative().catch(failure => { if (pageAvailable.current && identity.current === message.videoId) setError(failure instanceof Error ? failure.message : 'Video could not start.'); });
       }
       return;
     }
@@ -285,5 +299,5 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
     if (!playbackRef.current || playbackRef.current.videoId !== identity.current) return false;
     player.currentTime = seconds; player.play(); return true;
   }
-  return { settings, updateSettings, playback, preparing, playerLayout, player, catalog, qualities, speeds, switchingQuality, setSpeed, setQuality, busy: busy || preparing, error, sponsorStatus, notice, configurePage, resolveMedia, handleMessage, startNative, playOffline, closePlayer, seek };
+  return { settings, updateSettings, playback, preparing, playerLayout, player, catalog, qualities, speeds, switchingQuality, setSpeed, setQuality, busy: busy || preparing, error, sponsorStatus, notice, configurePage, resolveMedia, handleMessage, startNative, playOffline, closePlayer, seek, pageTerminated };
 }

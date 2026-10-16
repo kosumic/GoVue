@@ -26,12 +26,15 @@ import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 import { AiSheet, type SummaryRequest } from './src/components/AiSheet';
 import { SavedWordsSheet } from './src/components/SavedWordsSheet';
 import { PlayerControls } from './src/components/PlayerControls';
+import { useWebViewRenderer } from './src/browser/useWebViewRenderer';
 
 type PendingRequest = { id: string; videoId: string; timer: ReturnType<typeof setTimeout>; trace: TranscriptTrace };
 
 function Browser() {
   const insets = useSafeAreaInsets();
-  const webView = useRef<WebView>(null);
+  const renderer = useWebViewRenderer();
+  const webView = renderer.view;
+  const pageStopped = useRef(false);
   const [pageAgent, setPageAgent] = useState('');
   const addressInput = useRef<TextInput>(null);
   const [source, setSource] = useState<{ uri: string } | null>(null);
@@ -62,18 +65,18 @@ function Browser() {
   const downloads = useDownloads();
   const playerRuntime = useRef<PlayerRuntimeHandle>(null);
   const media = useMediaBrowser(webView, youtubeVideoId(url), pageAgent, playerRuntime);
-  const transcriptPlayback = useTranscriptPosition(webView, media.player, youtubeVideoId(url), panel && !home && !!transcript, media.playback?.videoId ?? null);
+  const transcriptPlayback = useTranscriptPosition(webView, media.player, youtubeVideoId(url), panel && !home && !!transcript && (!pageStopped.current || !!media.playback), media.playback?.videoId ?? null);
   const playerState = useEvent(media.player, 'statusChange', { status: media.player.status, error: undefined });
   const playerStatus = playerState?.status ?? media.player.status;
   const playerError = playerState?.error;
   const mediaAction = (work: () => Promise<unknown>) => { work().catch(error => Alert.alert('LingoPlay', error instanceof Error ? error.message : 'Please try again.')); };
 
-  const cancelRequest = useCallback(() => {
+  const cancelRequest = useCallback((notifyPage = true) => {
     if (pending.current) { clearTimeout(pending.current.timer); pending.current.trace.finish(); }
     renderingTranscript.current?.trace.finish();
     renderingTranscript.current = null;
     pending.current = null;
-    webView.current?.injectJavaScript('window.__lingoplay?.cancel(); true;');
+    if (notifyPage) webView.current?.injectJavaScript('window.__lingoplay?.cancel(); true;');
     setExtracting(false);
   }, []);
 
@@ -121,13 +124,41 @@ function Browser() {
     return () => subscription.remove();
   }, [goBack]);
 
+  const isCurrentPage = () => renderer.isCurrent() && !pageStopped.current;
+  function pageTerminated() {
+    if (!isCurrentPage()) return;
+    pageStopped.current = true;
+    if (Platform.OS === 'android') renderer.retire();
+    cancelRequest(false);
+    media.pageTerminated();
+    setPageAgent(''); setLoading(false); setProgress(0);
+    setNavigation({ back: false, forward: false });
+    setBrowserError('The browser stopped. Reload this page to continue.');
+    if (!transcript) setTranscriptError('The browser stopped. Reload the page, then try again.');
+  }
+
+  function reloadBrowser() {
+    cancelRequest(!pageStopped.current); setBrowserError(null); setPageAgent(''); setProgress(0);
+    if (!renderer.mounted) {
+      const next = currentUrl.current;
+      if (!isWebUrl(next)) return;
+      setSource({ uri: next });
+      renderer.recreate();
+    } else webView.current?.reload();
+    pageStopped.current = false;
+  }
+
   function navigate(input: string) {
     try {
       const next = browserAddress(input);
       cancelRequest(); setPanel(false); setTranscript(null); setTranscriptError(null);
       updateUrl(next); setAddress(next); setBrowserError(null); setHome(false); setEditing(false);
       Keyboard.dismiss();
-      if (!source) setSource({ uri: next });
+      if (!source || pageStopped.current || !renderer.mounted) {
+        setSource({ uri: next });
+        if (!renderer.mounted) renderer.recreate();
+        pageStopped.current = false;
+      }
       else webView.current?.injectJavaScript(`window.location.assign(${JSON.stringify(next)}); true;`);
     } catch (error) {
       setBrowserError(error instanceof Error ? error.message : 'Could not open this address.');
@@ -137,6 +168,7 @@ function Browser() {
   async function requestTranscript(track = 'default', preferCache = false) {
     const videoId = currentVideo.current;
     if (!videoId || home) return;
+    if (!isCurrentPage()) { setBrowserError('The browser stopped. Reload this page to continue.'); return; }
     cancelRequest();
     setPanel(true); setExtracting(true); setTranscriptError(null); setCachedTranscript(false);
     Keyboard.dismiss();
@@ -225,8 +257,9 @@ function Browser() {
     }
   }
 
-  const canExtract = !home && !!youtubeVideoId(url) && !!pageAgent;
-  const expandedPlayer = panel || media.playback?.offline;
+  const canExtract = !home && !!youtubeVideoId(url) && !!pageAgent && isCurrentPage();
+  const canReadTranscript = canExtract || (!home && !!transcript);
+  const expandedPlayer = panel || media.playback?.offline || pageStopped.current;
   const playerHidden = !expandedPlayer && media.playerLayout?.visible === false;
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
@@ -252,7 +285,7 @@ function Browser() {
           busy={media.switchingQuality} onSpeed={media.setSpeed} onQuality={media.setQuality} />}
         <View style={styles.workspace} onLayout={event => setViewport({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}>
           <View style={[styles.viewport, panel && styles.compact]}>
-            {source && <WebView ref={webView} source={source} style={[styles.webview, home && styles.hidden]}
+            {source && renderer.mounted && <WebView key={renderer.generation} ref={renderer.attach} source={source} style={[styles.webview, home && styles.hidden]}
               // Clip the full-size page instead of resizing it: YouTube treats
               // a small WebView window as picture-in-picture and pauses playback.
               containerStyle={[styles.page, viewport.height > 0 && { height: viewport.height }]}
@@ -264,13 +297,15 @@ function Browser() {
               setSupportMultipleWindows={false} geolocationEnabled={false} allowFileAccess={false}
               allowFileAccessFromFileURLs={false} allowUniversalAccessFromFileURLs={false} mixedContentMode="never"
               originWhitelist={['*']} injectedJavaScript={PLAYER_DECODER + '\n' + YOUTUBE_BRIDGE + '\n' + mediaSettingsScript(media.settings)}
-              injectedJavaScriptBeforeContentLoaded={mediaSettingsScript(media.settings)} onMessage={handleMessage}
-              onShouldStartLoadWithRequest={request => request.url === 'about:blank' || isWebUrl(request.url)}
+              injectedJavaScriptBeforeContentLoaded={mediaSettingsScript(media.settings)} onMessage={event => { if (isCurrentPage()) handleMessage(event); }}
+              onShouldStartLoadWithRequest={request => isCurrentPage() && (request.url === 'about:blank' || isWebUrl(request.url))}
               onNavigationStateChange={state => {
+                if (!isCurrentPage()) return;
                 updateUrl(state.url); setNavigation({ back: state.canGoBack, forward: state.canGoForward });
               }}
-              onLoadStart={() => { setLoading(true); setBrowserError(null); }}
+              onLoadStart={() => { if (isCurrentPage()) { setLoading(true); setBrowserError(null); } }}
               onLoadProgress={event => {
+                if (!isCurrentPage()) return;
                 setProgress(event.nativeEvent.progress);
                 // YouTube can leave subresources loading after its document is usable.
                 if (event.nativeEvent.progress >= 0.5 && isYouTubeUrl(event.nativeEvent.url)) {
@@ -278,10 +313,10 @@ function Browser() {
                   media.configurePage();
                 }
               }}
-              onLoadEnd={() => { setLoading(false); webView.current?.injectJavaScript(YOUTUBE_BRIDGE); media.configurePage(); }}
-              onError={event => { setLoading(false); setBrowserError(event.nativeEvent.description || 'This page could not be loaded.'); }}
-              onRenderProcessGone={() => { cancelRequest(); setLoading(false); setBrowserError('The browser stopped. Reload this page to continue.'); }}
-              onContentProcessDidTerminate={() => { cancelRequest(); setLoading(false); setBrowserError('The browser stopped. Reload this page to continue.'); }} />}
+              onLoadEnd={() => { if (isCurrentPage()) { setLoading(false); webView.current?.injectJavaScript(YOUTUBE_BRIDGE); media.configurePage(); } }}
+              onError={event => { if (isCurrentPage()) { setLoading(false); setBrowserError(event.nativeEvent.description || 'This page could not be loaded.'); } }}
+              onRenderProcessGone={pageTerminated}
+              onContentProcessDidTerminate={pageTerminated} />}
             {home && <StartPage onNavigate={navigate} onFocusAddress={() => addressInput.current?.focus()} />}
             {(media.playback || media.preparing) && !home && <View pointerEvents={playerHidden ? 'none' : 'auto'} style={[styles.nativePlayer,
               expandedPlayer ? StyleSheet.absoluteFill : embeddedPlayerFrame(media.playerLayout, viewport.width, viewport.height), playerHidden && styles.playerHidden]}>
@@ -323,18 +358,18 @@ function Browser() {
               onChangeText={setAddress} onSubmitEditing={event => navigate(event.nativeEvent.text)} />
             {!home && <IconButton icon={loading ? X : RotateCw} label={loading ? 'Stop loading' : 'Reload page'} onPress={() => {
               if (loading) { webView.current?.stopLoading(); setLoading(false); }
-              else { cancelRequest(); setBrowserError(null); webView.current?.reload(); }
+              else reloadBrowser();
             }} />}</View>
           <View style={styles.controls}>
             <View style={styles.history}><IconButton icon={ArrowLeft} label="Go back" disabled={home && !source} onPress={() => {
               if (home && source) setHome(false); else goBack();
             }} /><IconButton icon={ArrowRight} label="Go forward" disabled={home || !navigation.forward} onPress={() => webView.current?.goForward()} />
               <IconButton icon={House} label="Start page" active={home} onPress={showHome} /></View>
-            <Pressable accessibilityRole="button" accessibilityLabel={panel ? 'Close transcript' : 'Extract YouTube transcript'} accessibilityState={{ disabled: !canExtract, expanded: panel }}
-              disabled={!canExtract} onPress={() => panel ? closePanel() : transcript ? setPanel(true) : requestTranscript('default', true)}
-              style={({ pressed }) => [styles.transcriptButton, !canExtract && styles.disabled, pressed && styles.pressed]}>
-              {extracting ? <ActivityIndicator color={colors.accent} size="small" /> : <Captions size={19} color={canExtract ? colors.accent : colors.muted} />}
-              <Text style={[styles.transcriptLabel, !canExtract && styles.disabledLabel]}>Transcript</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={panel ? 'Close transcript' : 'Extract YouTube transcript'} accessibilityState={{ disabled: !canReadTranscript, expanded: panel }}
+              disabled={!canReadTranscript} onPress={() => panel ? closePanel() : transcript ? setPanel(true) : requestTranscript('default', true)}
+              style={({ pressed }) => [styles.transcriptButton, !canReadTranscript && styles.disabled, pressed && styles.pressed]}>
+              {extracting ? <ActivityIndicator color={colors.accent} size="small" /> : <Captions size={19} color={canReadTranscript ? colors.accent : colors.muted} />}
+              <Text style={[styles.transcriptLabel, !canReadTranscript && styles.disabledLabel]}>Transcript</Text>
             </Pressable>
           </View>
         </View>
