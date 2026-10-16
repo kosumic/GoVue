@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, BackHandler, Keyboard, KeyboardAvoidingView, 
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
-import { ArrowLeft, ArrowRight, Bookmark, Captions, Download, FolderDown, Globe2, House, Minimize2, PictureInPicture2, Play, RotateCw, Settings2, Sparkles, X } from 'lucide-react-native';
+import { ArrowLeft, ArrowRight, Bookmark, Captions, Download, Ellipsis, FolderDown, Globe2, House, Minimize2, PictureInPicture2, Play, RotateCw, Settings2, Sparkles, X } from 'lucide-react-native';
 import { useEvent } from 'expo';
 import { VideoView } from 'expo-video';
 import { browserAddress, isWebUrl, isYouTubeUrl, youtubeVideoId } from './src/browser/address';
@@ -25,7 +25,6 @@ import { embeddedPlayerFrame } from './src/media/playerLayout';
 import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 import { AiSheet, type SummaryRequest } from './src/components/AiSheet';
 import { SavedWordsSheet } from './src/components/SavedWordsSheet';
-import { PlayerControls } from './src/components/PlayerControls';
 import { BrowserResumeBar } from './src/components/BrowserResumeBar';
 import { useWebViewRenderer } from './src/browser/useWebViewRenderer';
 
@@ -63,6 +62,7 @@ function Browser() {
   const [mediaSheet, setMediaSheet] = useState<MediaSheetMode>(null);
   const [aiVisible, setAiVisible] = useState(false);
   const [wordsVisible, setWordsVisible] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
   const [aiSummaryRequest, setAiSummaryRequest] = useState<SummaryRequest | null>(null);
   const downloads = useDownloads();
   const playerRuntime = useRef<PlayerRuntimeHandle>(null);
@@ -119,13 +119,14 @@ function Browser() {
   }, []);
 
   const goBack = useCallback(() => {
+    if (menuVisible) { setMenuVisible(false); return true; }
     if (panel) { closePanel(); return true; }
     if (browserMinimized) { restoreBrowser(); return true; }
     if (home) return false;
     if (navigation.back) webView.current?.goBack();
     else showHome();
     return true;
-  }, [panel, home, browserMinimized, navigation.back, closePanel, showHome, restoreBrowser]);
+  }, [menuVisible, panel, home, browserMinimized, navigation.back, closePanel, showHome, restoreBrowser]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', goBack);
@@ -276,15 +277,13 @@ function Browser() {
     <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
       <StatusBar style="dark" />
       <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top}>
-        <View style={styles.topbar}><Text style={styles.brand}>lingoplay<Text style={styles.brandDot}>.</Text></Text>
-          <View style={styles.mediaControls}><IconButton icon={Bookmark} label="Open saved words" onPress={() => setWordsVisible(true)} /><IconButton icon={Sparkles} label="Open AI assistant" onPress={() => { setAiSummaryRequest(null); setAiVisible(true); }} /><IconButton icon={FolderDown} label="Open downloads" onPress={() => setMediaSheet('library')} /><IconButton icon={Settings2} label="Settings" onPress={() => setMediaSheet('settings')} /></View></View>
         {!browserHidden && (canExtract || media.playback) && <View style={styles.mediaToolbar}>
           <Pressable accessibilityRole="button" accessibilityLabel={media.playback?.offline ? 'Close offline player' : media.playback ? 'Return to web player' : 'Use native player for background playback'} disabled={media.busy} style={styles.mediaButton} onPress={() => {
             if (media.playback) { const offline = media.playback.offline; media.closePlayer(!offline); if (offline && !source) setHome(true); }
             else mediaAction(() => media.startNative());
           }}>
             {media.busy ? <ActivityIndicator size="small" color={colors.accent} /> : <Play size={17} color={colors.accent} />}<Text style={styles.mediaLabel}>{media.playback?.offline ? 'Close player' : media.playback ? 'Web player' : 'Player'}</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Download this video" style={styles.mediaButton} disabled={!canExtract || media.busy} onPress={() => { setMediaSheet('download'); media.resolveMedia().catch(() => {}); }}><Download size={17} color={colors.accent} /><Text style={styles.mediaLabel}>Download</Text></Pressable>
+          {!panel && <Pressable accessibilityRole="button" accessibilityLabel="Download this video" style={styles.mediaButton} disabled={!canExtract || media.busy} onPress={() => { setMediaSheet('download'); media.resolveMedia().catch(() => {}); }}><Download size={17} color={colors.accent} /><Text style={styles.mediaLabel}>Download</Text></Pressable>}
           <IconButton icon={PictureInPicture2} label="Picture in picture" disabled={!media.playback || playerStatus !== 'readyToPlay'} onPress={() => mediaAction(async () => {
             if (!nativeVideo.current) throw Error('The video player is not ready yet.');
             if (process.env.EXPO_PUBLIC_LINGOPLAY_DEBUG === '1') console.info('LingoPlay PiP requested');
@@ -292,9 +291,6 @@ function Browser() {
           })} />
           <IconButton icon={Minimize2} label="Minimize browser" onPress={() => { Keyboard.dismiss(); setBrowserMinimized(true); }} />
         </View>}
-        {!browserHidden && media.playback && <PlayerControls key={`${media.playback.videoId}:${media.playback.offline}`} player={media.player}
-          speeds={media.speeds} qualities={media.qualities} height={media.playback.qualityHeight} offline={media.playback.offline}
-          busy={media.switchingQuality} onSpeed={media.setSpeed} onQuality={media.setQuality} />}
         <View style={styles.workspace} onLayout={event => {
           if (!browserHidden || viewport.height === 0) setViewport({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height });
         }}>
@@ -349,6 +345,7 @@ function Browser() {
           {panel && <View style={[styles.transcript, browserMinimized && styles.fill]}><TranscriptPanel key={currentVideo.current} data={transcript} loading={extracting} error={transcriptError} cached={cachedTranscript}
             position={transcriptPlayback.position}
             pauseAfterLine={media.settings.pauseAfterLine} onPauseAfterLine={pauseAfterLine => media.updateSettings({ pauseAfterLine })}
+            downloadDisabled={!canExtract || media.busy} onDownload={() => { setMediaSheet('download'); media.resolveMedia().catch(() => {}); }}
             onSummarize={() => {
               if (!transcript || extracting || transcriptError || transcript.videoId !== currentVideo.current) return;
               Keyboard.dismiss();
@@ -385,13 +382,28 @@ function Browser() {
             <View style={styles.history}><IconButton icon={ArrowLeft} label="Go back" disabled={home && !source} onPress={() => {
               if (home && source) setHome(false); else goBack();
             }} /><IconButton icon={ArrowRight} label="Go forward" disabled={home || !navigation.forward} onPress={() => webView.current?.goForward()} />
-              <IconButton icon={House} label="Start page" active={home} onPress={showHome} /></View>
+              <IconButton icon={House} label="Start page" active={home} onPress={showHome} />
+              <IconButton icon={Ellipsis} label="Open app menu" active={menuVisible} onPress={() => { Keyboard.dismiss(); setMenuVisible(true); }} /></View>
             <Pressable accessibilityRole="button" accessibilityLabel={panel ? 'Close transcript' : 'Extract YouTube transcript'} accessibilityState={{ disabled: !canReadTranscript, expanded: panel }}
               disabled={!canReadTranscript} onPress={() => panel ? closePanel() : transcript ? setPanel(true) : requestTranscript('default', true)}
               style={({ pressed }) => [styles.transcriptButton, !canReadTranscript && styles.disabled, pressed && styles.pressed]}>
               {extracting ? <ActivityIndicator color={colors.accent} size="small" /> : <Captions size={19} color={canReadTranscript ? colors.accent : colors.muted} />}
               <Text style={[styles.transcriptLabel, !canReadTranscript && styles.disabledLabel]}>Transcript</Text>
             </Pressable>
+          </View>
+        </View>}
+        {menuVisible && <View style={StyleSheet.absoluteFill} accessibilityViewIsModal>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close app menu" style={styles.menuBackdrop} onPress={() => setMenuVisible(false)} />
+          <View style={styles.menu}>
+            {([
+              [Bookmark, 'Open saved words', 'Saved words', () => setWordsVisible(true)],
+              [Sparkles, 'Open AI assistant', 'AI assistant', () => { setAiSummaryRequest(null); setAiVisible(true); }],
+              [FolderDown, 'Open downloads', 'Downloads', () => setMediaSheet('library')],
+              [Settings2, 'Settings', 'Settings', () => setMediaSheet('settings')],
+            ] as const).map(([Icon, label, title, onPress]) => <Pressable key={label} accessibilityRole="button" accessibilityLabel={label}
+              onPress={() => { setMenuVisible(false); onPress(); }} style={({ pressed }) => [styles.menuItem, pressed && styles.pressed]}>
+              <Icon size={21} strokeWidth={1.8} color={colors.ink} /><Text style={styles.menuLabel}>{title}</Text>
+            </Pressable>)}
           </View>
         </View>}
       </KeyboardAvoidingView>
@@ -419,7 +431,6 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  mediaControls: { flexDirection: 'row' },
   mediaToolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
   mediaButton: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12 },
   mediaLabel: { color: colors.accent, fontSize: 13, fontWeight: '600' },
@@ -431,10 +442,10 @@ const styles = StyleSheet.create({
   mediaNotice: { color: colors.accent, fontSize: 12, paddingHorizontal: 20, paddingVertical: 8 },
   fill: { flex: 1 },
   safe: { flex: 1, backgroundColor: colors.background },
-  topbar: { height: 42, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 24 },
-  brand: { color: colors.ink, fontSize: 17, letterSpacing: -0.7, fontWeight: '600' },
-  brandDot: { color: colors.accent },
-  domain: { color: colors.muted, fontSize: 11, flexShrink: 1 },
+  menuBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: '#00000022' },
+  menu: { position: 'absolute', bottom: 120, right: 12, width: 240, padding: 8, borderRadius: 16, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, elevation: 6 },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 48, paddingHorizontal: 12, borderRadius: 10 },
+  menuLabel: { color: colors.ink, fontSize: 15 },
   workspace: { flex: 1 },
   viewport: { flex: 1, overflow: 'hidden' },
   compact: { flex: 0.45 },
