@@ -16,3 +16,5 @@ roxmltree = "0.20"
 html-escape = "0.2"
 unicode-normalization = "0.1"
 sha2 = "0.10"
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+tiny_http = "0.12"

@@ -13,6 +13,7 @@ android {
 }
 
 dependencies { implementation 'net.java.dev.jna:jna:5.17.0@aar' }
+dependencies { implementation 'com.squareup.okhttp3:okhttp:4.12.0' }
 
 def buildRust = tasks.register('buildRust', Exec) {
   workingDir '../../..'
