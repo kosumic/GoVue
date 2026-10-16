@@ -1,15 +1,21 @@
 import { coreRequest } from '../../modules/lingoplay-core';
 
-export type MediaSettings = { adBlock: boolean; sponsorBlock: boolean; backgroundPlayback: boolean; autoPip: boolean; categories: string[] };
-export const defaultMediaSettings: MediaSettings = { adBlock: true, sponsorBlock: true, backgroundPlayback: true, autoPip: false, categories: ['sponsor', 'selfpromo', 'interaction'] };
-export type MediaStream = { itag: number; url: string; userAgent: string; kind: 'audio' | 'video' | 'combined'; mimeType: string; height: number; bitrate: number; bytes: number; label: string };
+export type MediaSettings = { adBlock: boolean; sponsorBlock: boolean; backgroundPlayback: boolean; autoPip: boolean; playbackSpeed: number; qualityHeight: number; categories: string[] };
+export const defaultMediaSettings: MediaSettings = { adBlock: true, sponsorBlock: true, backgroundPlayback: true, autoPip: false, playbackSpeed: 1, qualityHeight: 0, categories: ['sponsor', 'selfpromo', 'interaction'] };
+export type MediaByteRange = { start: number; end: number };
+export type MediaStream = { itag: number; url: string; userAgent: string; kind: 'audio' | 'video' | 'combined'; mimeType: string; height: number; width?: number; initRange?: MediaByteRange | null; indexRange?: MediaByteRange | null; bitrate: number; bytes: number; label: string };
 export type MediaCatalog = { videoId: string; origin: string; title: string; author: string; duration: number; position: number; live: boolean; streams: MediaStream[]; hlsUrl: string | null };
 export type DownloadPlan = { parts: MediaStream[]; extension: 'mp4' | 'm4a'; mimeType: string; label: string };
 export type SponsorSegment = { start: number; end: number; category: string };
+export type PlaybackQuality = { height: number; label: string };
+export type PlaybackSource = { uri: string; contentType: 'progressive' | 'hls'; qualityHeight: number };
 
 export const mediaSettings = (settings?: Partial<MediaSettings>) => coreRequest<MediaSettings>({ op: 'media_settings', settings });
 export const acceptMedia = (raw: string, origin: string, requestId: string, videoId: string) => coreRequest<MediaCatalog>({ op: 'media_catalog', raw, origin, requestId, videoId });
 export const planDownload = (catalog: MediaCatalog, itag: number) => coreRequest<DownloadPlan>({ op: 'media_plan', catalog, itag });
+export const playbackChoices = (catalog: MediaCatalog) => coreRequest<PlaybackQuality[]>({ op: 'media_playback_choices', catalog });
+export const playbackSpeeds = () => coreRequest<number[]>({ op: 'media_speeds' });
+export const preparePlayback = (catalog: MediaCatalog, height: number, userAgent: string, allowFallback = false) => coreRequest<PlaybackSource>({ op: 'media_playback', catalog, height, userAgent, allowFallback });
 export async function fetchSponsors(videoId: string, signal: AbortSignal) {
   const url = await coreRequest<string>({ op: 'sponsor_request', videoId });
   const response = await fetch(url, { signal });

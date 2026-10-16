@@ -25,6 +25,7 @@ import { embeddedPlayerFrame } from './src/media/playerLayout';
 import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 import { AiSheet, type SummaryRequest } from './src/components/AiSheet';
 import { SavedWordsSheet } from './src/components/SavedWordsSheet';
+import { PlayerControls } from './src/components/PlayerControls';
 
 type PendingRequest = { id: string; videoId: string; timer: ReturnType<typeof setTimeout>; trace: TranscriptTrace };
 
@@ -246,6 +247,9 @@ function Browser() {
             await nativeVideo.current.startPictureInPicture();
           })} />
         </View>}
+        {!home && media.playback && <PlayerControls key={`${media.playback.videoId}:${media.playback.offline}`} player={media.player}
+          speeds={media.speeds} qualities={media.qualities} height={media.playback.qualityHeight} offline={media.playback.offline}
+          busy={media.switchingQuality} onSpeed={media.setSpeed} onQuality={media.setQuality} />}
         <View style={styles.workspace} onLayout={event => setViewport({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}>
           <View style={[styles.viewport, panel && styles.compact]}>
             {source && <WebView ref={webView} source={source} style={[styles.webview, home && styles.hidden]}

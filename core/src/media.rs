@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
 use url::Url;
+pub(crate) mod playback;
 
 fn read(root: &str, name: &str, fallback: Value) -> Value {
     fs::read(Path::new(root).join("media").join(name))
@@ -123,7 +124,10 @@ fn catalog(command: &Value) -> Result<Value> {
             .unwrap_or("");
         streams.push(
             json!({"itag":itag,"url":url,"kind":kind,"mimeType":mime,"userAgent":user_agent,
-            "height":height,"bitrate":format["bitrate"].as_u64().unwrap_or(0),"bytes":bytes,
+            "height":height,"width":format["width"].as_u64().unwrap_or(0).min(15_360),
+            "initRange":playback::range(&format["initRange"], bytes).map(|(start,end)|json!({"start":start,"end":end})),
+            "indexRange":playback::range(&format["indexRange"], bytes).map(|(start,end)|json!({"start":start,"end":end})),
+            "bitrate":format["bitrate"].as_u64().unwrap_or(0),"bytes":bytes,
             "label":if audio { "Audio · M4A".to_string() } else { format!("{quality} · MP4") }}),
         );
     }
@@ -154,9 +158,12 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             Ok(json!({"start":offset,"end":(offset + 262_143).min(length-1)}))
         }
         "media_catalog" => catalog(command),
+        "media_playback_choices" => playback::choices(&command["catalog"]),
+        "media_playback" => super::transport::playback(command),
+        "media_speeds" => Ok(json!(playback::SPEEDS)),
         "media_settings" => {
             let defaults = json!({"adBlock":true,"sponsorBlock":true,"backgroundPlayback":true,"autoPip":false,
-                "categories":["sponsor","selfpromo","interaction"]});
+                "playbackSpeed":1.0,"qualityHeight":0,"categories":["sponsor","selfpromo","interaction"]});
             let mut settings = read(root, "settings.json", defaults.clone());
             if !settings.is_object() {
                 settings = defaults.clone();
@@ -166,7 +173,34 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     settings[key] = defaults[key].clone();
                 }
             }
+            if !settings["playbackSpeed"]
+                .as_f64()
+                .is_some_and(|n| playback::SPEEDS.contains(&n))
+            {
+                settings["playbackSpeed"] = json!(1.0);
+            }
+            if !settings["qualityHeight"]
+                .as_u64()
+                .is_some_and(|n| n <= 8640)
+            {
+                settings["qualityHeight"] = json!(0);
+            }
             if let Some(update) = command["settings"].as_object() {
+                if let Some(speed) = update.get("playbackSpeed") {
+                    if !speed
+                        .as_f64()
+                        .is_some_and(|n| playback::SPEEDS.contains(&n))
+                    {
+                        return Err("Unsupported playback speed.".into());
+                    }
+                    settings["playbackSpeed"] = speed.clone();
+                }
+                if let Some(height) = update.get("qualityHeight") {
+                    if !height.as_u64().is_some_and(|n| n <= 8640) {
+                        return Err("Invalid playback resolution.".into());
+                    }
+                    settings["qualityHeight"] = height.clone();
+                }
                 for key in ["adBlock", "sponsorBlock", "backgroundPlayback", "autoPip"] {
                     if let Some(value) = update.get(key).filter(|v| v.is_boolean()) {
                         settings[key] = value.clone();
@@ -401,5 +435,43 @@ mod tests {
         let request =
             dispatch(&json!({"op":"sponsor_request","videoId":"QVv3mQzlrN0"}), "").unwrap();
         assert!(!request.as_str().unwrap().contains("QVv3mQzlrN0"));
+    }
+
+    #[test]
+    fn playback_preferences_migrate_validate_and_survive_reload() {
+        let mut unique = [0u8; 8];
+        getrandom::getrandom(&mut unique).unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "lingoplay-playback-{:x}",
+            u64::from_ne_bytes(unique)
+        ));
+        let root = directory.to_str().unwrap();
+        write(root, "settings.json", &json!({"adBlock":false,"sponsorBlock":true,"backgroundPlayback":true,"autoPip":false,"categories":["sponsor"]})).unwrap();
+        let migrated = dispatch(&json!({"op":"media_settings"}), root).unwrap();
+        assert_eq!(migrated["playbackSpeed"], 1.0);
+        assert_eq!(migrated["qualityHeight"], 0);
+        dispatch(&json!({"op":"media_settings","settings":{"playbackSpeed":1.5,"qualityHeight":1080,"url":"https://r1.googlevideo.com/private"}}), root).unwrap();
+        let restored = dispatch(&json!({"op":"media_settings"}), root).unwrap();
+        assert_eq!(restored["playbackSpeed"], 1.5);
+        assert_eq!(restored["qualityHeight"], 1080);
+        assert_eq!(restored["adBlock"], false);
+        assert_eq!(restored["categories"], json!(["sponsor"]));
+        for invalid in [
+            json!({"playbackSpeed":0}),
+            json!({"playbackSpeed":"1.5"}),
+            json!({"playbackSpeed":16}),
+            json!({"qualityHeight":-1}),
+            json!({"qualityHeight":8641}),
+        ] {
+            assert!(dispatch(&json!({"op":"media_settings","settings":invalid}), root).is_err());
+        }
+        assert_eq!(
+            dispatch(&json!({"op":"media_settings"}), root).unwrap(),
+            restored
+        );
+        assert!(!fs::read_to_string(directory.join("media/settings.json"))
+            .unwrap()
+            .contains("private"));
+        fs::remove_dir_all(directory).unwrap();
     }
 }
