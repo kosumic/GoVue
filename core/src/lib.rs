@@ -13,6 +13,7 @@ use url::Url;
 uniffi::setup_scaffolding!();
 mod media;
 mod transport;
+mod trace;
 mod ai;
 mod language_catalog;
 mod languages;
@@ -383,8 +384,10 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         if raw.len() > MAX_BYTES || request_id.len() > 200 || !trusted_origin(origin, id) {
             return Err("Untrusted transcript response.".into());
         }
-        let reply: Value =
-            serde_json::from_str(raw).map_err(|_| "Unreadable transcript response.")?;
+        let reply: Value = {
+            let _span = trace::Section::begin(c"LingoPlay transcript: rust.reply_parse");
+            serde_json::from_str(raw).map_err(|_| "Unreadable transcript response.")?
+        };
         if reply["type"] != "transcript"
             || reply["requestId"] != request_id
             || reply["videoId"] != id
@@ -403,24 +406,34 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         if reply["ok"] != true {
             return Err("Invalid transcript response.".into());
         }
-        let mut data: Transcript = serde_json::from_value(reply["transcript"].clone())
-            .map_err(|_| "Invalid transcript data.")?;
+        let mut data: Transcript = {
+            let _span = trace::Section::begin(c"LingoPlay transcript: rust.decode");
+            serde_json::from_value(reply["transcript"].clone()).map_err(|_| "Invalid transcript data.")?
+        };
         if data.video_id != id {
             return Err("Transcript belongs to another video.".into());
         }
         if let Some(source) = reply["transcript"]["captionSource"].as_str() {
+            let _span = trace::Section::begin(c"LingoPlay transcript: rust.caption_parse");
             data.segments = parse_captions(source)?;
         }
-        normalize(&mut data)?;
+        {
+            let _span = trace::Section::begin(c"LingoPlay transcript: rust.normalize");
+            normalize(&mut data)?;
+        }
         // Captions remain usable when device storage is full or unavailable.
         let path = cache_path(root, &data.video_id, &data.track_id)?;
         remember(path, &data);
-        let cache_saved = save(root, &data).is_ok();
+        let cache_saved = {
+            let _span = trace::Section::begin(c"LingoPlay transcript: rust.cache_save");
+            save(root, &data).is_ok()
+        };
         return Ok(
             json!({"type":"transcript","requestId":request_id,"videoId":id,"ok":true,"transcript":data,"cacheSaved":cache_saved}),
         );
     }
     if op == "restore" {
+        let _span = trace::Section::begin(c"LingoPlay transcript: rust.cache_restore");
         let Ok(entries) = fs::read_dir(root) else {
             return Ok(Value::Null);
         };
@@ -491,7 +504,11 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
 /// dispatched off the JavaScript/UI thread by the Expo native module.
 #[uniffi::export]
 pub fn execute(request: String, storage_path: String) -> String {
-    let _guard = REQUEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _span = trace::Section::begin(c"LingoPlay core: execute");
+    let _guard = {
+        let _span = trace::Section::begin(c"LingoPlay core: lock_wait");
+        REQUEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    };
     match dispatch(&request, &storage_path) {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
         Err(error) => json!({"ok":false,"error":error}).to_string(),

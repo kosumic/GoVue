@@ -35,6 +35,42 @@ function setup(fetch, { url = `https://www.youtube.com/watch?v=${videoId}`, trac
   return { dom, window, messages, requests, response, close: () => window.close() };
 }
 
+test('transcript profiling is opt-in, balanced, and excludes captions and signed request data', async () => {
+  for (const profiling of [false, true]) {
+    const env = setup(async () => { throw Error('An existing transcript needs no network request'); });
+    try {
+      const renderer = env.window.document.createElement('ytd-transcript-renderer');
+      renderer.data = { content: [segment('0', '2000', 'Private caption text')] };
+      env.window.document.body.append(renderer);
+      env.window.eval(YOUTUBE_BRIDGE);
+      await env.window.__lingoplay.extract('123:1', 'default', profiling);
+      assert.equal(env.messages.at(-1).ok, true);
+      const traces = env.messages.filter(message => message.type === 'transcriptTrace');
+      if (!profiling) { assert.deepEqual(traces, []); continue; }
+      const active = new Set();
+      const seen = new Set();
+      for (const message of traces) {
+        assert.deepEqual(Object.keys(message).sort(), ['phase', 'requestId', 'stage', 'type', 'videoId']);
+        assert.equal(message.requestId, '123:1');
+        assert.equal(message.videoId, videoId);
+        if (message.phase === 'begin') {
+          assert.equal(active.has(message.stage), false);
+          active.add(message.stage);
+          seen.add(message.stage);
+        } else {
+          assert.equal(message.phase, 'end');
+          assert.equal(active.delete(message.stage), true);
+        }
+      }
+      assert.equal(active.size, 0);
+      assert.deepEqual([...seen].sort(), ['page.extract', 'page.player_captions', 'page.transcript_control']);
+      assert.ok(!JSON.stringify(traces).includes('Private caption text'));
+      assert.ok(!JSON.stringify(traces).includes('keep-me'));
+      assert.ok(!JSON.stringify(traces).includes('https://'));
+    } finally { env.close(); }
+  }
+});
+
 test('extracts transcript endpoint segments using this page session and current video', async () => {
   const env = setup(async (url, options) => {
     const body = JSON.parse(options.body);

@@ -1,6 +1,16 @@
 import { requireNativeModule } from 'expo';
 
-const native = requireNativeModule<{ execute(request: string): Promise<string>; ai(request: string): Promise<string>; mux(video: string, audio: string, output: string): Promise<string> }>('LingoPlayCore');
+const native = requireNativeModule<{
+  execute(request: string): Promise<string>;
+  ai(request: string): Promise<string>;
+  mux(video: string, audio: string, output: string): Promise<string>;
+  transcriptTrace?(requestId: string, stage: string, cookie: number, begin: boolean): boolean;
+}>('LingoPlayCore');
+
+// Android async atrace slices are collected by Perfetto. Other platforms and
+// older development clients can keep using the same transcript loading code.
+export const transcriptTrace = (requestId: string, stage: string, cookie: number, begin: boolean) =>
+  native.transcriptTrace?.(requestId, stage, cookie, begin) ?? false;
 
 export async function aiRequest<T>(command: Record<string, unknown>): Promise<T> {
   const reply = JSON.parse(await native.ai(JSON.stringify(command)));

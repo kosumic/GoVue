@@ -8,6 +8,11 @@ export const YOUTUBE_BRIDGE = String.raw`
     return id && /^[\w-]{11}$/.test(id) ? id : null;
   };
   const send = value => window.ReactNativeWebView?.postMessage(JSON.stringify(value));
+  const noTrace = () => {};
+  const measured = async (trace, stage, work) => {
+    trace(stage, true);
+    try { return await work(); } finally { trace(stage, false); }
+  };
   const text = value => typeof value === 'string' ? value : value?.simpleText || value?.runs?.map(run => run.text || '').join('') || '';
   const clean = value => value.replace(/\s+/g, ' ').trim();
   const walk = (root, key) => {
@@ -31,7 +36,7 @@ export const YOUTUBE_BRIDGE = String.raw`
     if (!response.ok) throw new Error('YouTube could not provide this transcript. Try opening the video and requesting it again.');
     return response;
   };
-  const api = async (method, body, signal) => {
+  const api = async (method, body, signal, trace = noTrace) => measured(trace, 'page.api.' + method, async () => {
     if (method === 'get_transcript' && transcriptRequest?.id === videoId()) {
       const saved = transcriptRequest;
       const response = await request(saved.url, {
@@ -50,7 +55,7 @@ export const YOUTUBE_BRIDGE = String.raw`
       body: JSON.stringify({ context, ...body })
     }, signal);
     return response.json();
-  };
+  });
   const playerResponse = id => {
     const player = document.getElementById('movie_player');
     let current;
@@ -180,7 +185,7 @@ export const YOUTUBE_BRIDGE = String.raw`
     const baseIndex = tracks.findIndex(track => track.languageCode?.toLowerCase().split('-')[0] === language.split('-')[0]);
     return baseIndex >= 0 ? baseIndex : 0;
   };
-  const playerCaptions = async (id, tracks, requestedTrack, signal) => {
+  const playerCaptions = async (id, tracks, requestedTrack, signal, trace) => measured(trace, 'page.player_captions', async () => {
     const player = document.getElementById('movie_player');
     if (!player?.loadModule || !player?.setOption || !tracks.length) return null;
     const previous = player.getOption?.('captions', 'track') || {};
@@ -209,7 +214,7 @@ export const YOUTUBE_BRIDGE = String.raw`
         try { player.setOption('captions', 'track', previous); } catch {}
       }
     }
-  };
+  });
   const renderedTranscript = id => {
     if (domOwner === id && playerResponse(id)?.videoDetails?.videoId === id) {
       const renderers = document.querySelectorAll('ytd-transcript-renderer, ytm-transcript-renderer, ytm-transcript-search-panel-renderer');
@@ -220,7 +225,7 @@ export const YOUTUBE_BRIDGE = String.raw`
     }
     return cachedTranscript?.id === id ? cachedTranscript.data : null;
   };
-  const pageTranscript = async (id, signal) => {
+  const pageTranscript = async (id, signal, trace) => measured(trace, 'page.transcript_control', async () => {
     // Android can finish loading the document before Polymer has initialized
     // YouTube's controls. Wait for the live renderer rather than falling back
     // immediately to the token-protected API when the static button is absent.
@@ -252,10 +257,10 @@ export const YOUTUBE_BRIDGE = String.raw`
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     return null;
-  };
+  });
   const selectedLanguage = data => text(walk(data, 'sortFilterSubMenuRenderer').flatMap(menu => menu.subMenuItems || []).find(item => item.selected)?.title);
-  const pageLanguage = async (id, label, signal) => {
-    const initial = await pageTranscript(id, signal);
+  const pageLanguage = async (id, label, signal, trace) => measured(trace, 'page.language', async () => {
+    const initial = await pageTranscript(id, signal, trace);
     if (!initial || signal.aborted || videoId() !== id) return null;
     if (clean(selectedLanguage(initial)) === clean(label)) return initial;
     const choices = document.querySelectorAll('ytd-transcript-footer-renderer tp-yt-paper-item, ytm-transcript-footer-renderer [role="option"]');
@@ -270,8 +275,8 @@ export const YOUTUBE_BRIDGE = String.raw`
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     return null;
-  };
-  const captionSegments = async (track, signal) => {
+  });
+  const captionSegments = async (track, signal, trace) => measured(trace, 'page.caption_url', async () => {
     const url = new URL(track.baseUrl, location.origin);
     if (url.protocol !== 'https:' || !['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(url.hostname) || url.pathname !== '/api/timedtext') {
       throw new Error('YouTube returned an unsupported caption address.');
@@ -281,7 +286,7 @@ export const YOUTUBE_BRIDGE = String.raw`
     const source = await response.text();
     if (!source.trim()) throw new Error('YouTube did not return captions for this language. Try the default transcript.');
     return parseCaptionSource(source);
-  };
+  });
   let lastUrl = '';
   let active = null;
   const announce = () => {
@@ -299,14 +304,23 @@ export const YOUTUBE_BRIDGE = String.raw`
     send({ type: 'page', url: location.href, videoId: videoId(), title: document.title, userAgent: navigator.userAgent });
   };
   window.__lingoplay = {
-    async extract(requestId, requestedTrack = 'default') {
+    async extract(requestId, requestedTrack = 'default', profiling = false) {
       active?.abort();
       const controller = new AbortController();
       active = controller;
       const signal = controller.signal;
       const id = videoId();
       if (!id) return;
+      const tracingStages = new Set();
+      const trace = profiling === true ? (stage, begin) => {
+        if (begin ? tracingStages.has(stage) : !tracingStages.has(stage)) return;
+        if (begin) tracingStages.add(stage); else tracingStages.delete(stage);
+        if (active === controller && videoId() === id) send({
+          type: 'transcriptTrace', requestId, videoId: id, stage, phase: begin ? 'begin' : 'end'
+        });
+      } : noTrace;
       const timeout = setTimeout(() => controller.abort(), 35000);
+      trace('page.extract', true);
       try {
         const player = playerResponse(id);
         const rawTracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
@@ -315,20 +329,20 @@ export const YOUTUBE_BRIDGE = String.raw`
           label: text(track.name) || track.languageCode,
           language: track.languageCode || '', automatic: track.kind === 'asr'
         }));
-        const captured = await playerCaptions(id, rawTracks, requestedTrack, signal);
+        const captured = await playerCaptions(id, rawTracks, requestedTrack, signal, trace);
         let segments = captured?.segments || [];
         let language = captured?.language || 'YouTube default';
         let trackId = captured?.trackId || requestedTrack;
         let failure;
         if (!segments.length && requestedTrack === 'default') {
           try {
-            let data = await pageTranscript(id, signal);
+            let data = await pageTranscript(id, signal, trace);
             if (!data) {
               // /next binds transcript parameters to this video after SPA navigation.
-              const next = await api('next', { videoId: id }, signal);
+              const next = await api('next', { videoId: id }, signal, trace);
               if (signal.aborted || videoId() !== id) return;
               const endpoint = walk(next, 'getTranscriptEndpoint')[0];
-              if (endpoint?.params) data = await api('get_transcript', { params: endpoint.params }, signal);
+              if (endpoint?.params) data = await api('get_transcript', { params: endpoint.params }, signal, trace);
             }
             if (data) {
               segments = segmentsFromApi(data);
@@ -344,7 +358,7 @@ export const YOUTUBE_BRIDGE = String.raw`
           const track = tracks.find(track => track.id === requestedTrack);
           if (track) {
             try {
-              const nativeLanguage = await pageLanguage(id, track.label, signal);
+              const nativeLanguage = await pageLanguage(id, track.label, signal, trace);
               if (nativeLanguage) {
                 segments = segmentsFromApi(nativeLanguage);
                 language = track.label;
@@ -355,7 +369,7 @@ export const YOUTUBE_BRIDGE = String.raw`
               const endpoint = walk(item, 'getTranscriptEndpoint')[0];
               const params = endpoint?.params || item?.continuation?.reloadContinuationData?.continuation;
               if (!segments.length && params) {
-                const data = await api('get_transcript', { params }, signal);
+                const data = await api('get_transcript', { params }, signal, trace);
                 segments = segmentsFromApi(data);
                 language = track.label;
               }
@@ -371,12 +385,13 @@ export const YOUTUBE_BRIDGE = String.raw`
           if (index < 0 || !rawTracks[index]) {
             throw failure || new Error('No transcript is available. Play the video and try again; some videos have no captions.');
           }
-          segments = await captionSegments(rawTracks[index], signal);
+          segments = await captionSegments(rawTracks[index], signal, trace);
           language = tracks[index].label;
           trackId = tracks[index].id;
         }
         if (!segments.length) throw new Error('This video has no caption text available yet. Live captions may appear later.');
         if (signal.aborted || videoId() !== id) return;
+        trace('page.extract', false);
         send({ type: 'transcript', requestId, videoId: id, ok: true, transcript: {
           videoId: id, title: player?.videoDetails?.title || document.title.replace(/ - YouTube$/, ''),
           language, trackId, tracks: [{ id: 'default', label: 'YouTube default', language: '', automatic: false }, ...tracks], segments,
@@ -384,9 +399,11 @@ export const YOUTUBE_BRIDGE = String.raw`
         }});
       } catch (error) {
         if (active !== controller || videoId() !== id) return;
+        trace('page.extract', false);
         send({ type: 'transcript', requestId, videoId: id, ok: false,
           error: signal.aborted ? 'Transcript request timed out. Check your connection and try again.' : error.message || 'Transcript unavailable. Try again.' });
       } finally {
+        trace('page.extract', false);
         clearTimeout(timeout);
         if (active === controller) active = null;
       }
@@ -432,8 +449,8 @@ export const YOUTUBE_BRIDGE = String.raw`
 true;
 `;
 
-export function extractionScript(requestId, trackId = 'default') {
-  return `${YOUTUBE_BRIDGE}\nwindow.__lingoplay?.extract(${JSON.stringify(requestId)}, ${JSON.stringify(trackId)}); true;`;
+export function extractionScript(requestId, trackId = 'default', profiling = false) {
+  return `${YOUTUBE_BRIDGE}\nwindow.__lingoplay?.extract(${JSON.stringify(requestId)}, ${JSON.stringify(trackId)}, ${profiling === true}); true;`;
 }
 
 export function seekScript(videoId, seconds) {

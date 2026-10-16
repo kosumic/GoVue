@@ -5,6 +5,9 @@ const path = require('node:path');
 module.exports = config => {
   config = withAndroidManifest(config, config => {
     config.modResults.manifest.application[0].$['android:networkSecurityConfig'] = '@xml/lingoplay_network_security';
+    config.modResults.manifest.application[0].profileable = [{
+      $: { 'android:shell': String(process.env.EXPO_PUBLIC_LINGOPLAY_TRACE_TRANSCRIPT === '1') },
+    }];
     return config;
   });
   return withDangerousMod(config, ['android', async config => {
