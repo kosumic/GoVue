@@ -1,16 +1,16 @@
 //! Boundary regressions, independent of account entitlement and live device checks.
 //! The committed RSA fixture signs synthetic test identities only.
 use lingoplay_core::{
-    ai_execute, install_ai_platform, AiHttpRequest, AiPlatform, AiResponse, AiSecret,
+    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -146,7 +146,7 @@ fn event(value: Value) -> String {
     format!("event: ignored-name\r\ndata: {value}\r\n\r\n")
 }
 fn identity(nonce: &str, mode: &str) -> String {
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -297,10 +297,12 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     let response = send_callback(&fields, &fields["state"], Some("oaiapp_fixture"));
     assert_eq!(response.status(), 302);
     assert_eq!(response.header("Location"), first["returnUrl"].as_str());
-    assert!(!response
-        .header("Location")
-        .unwrap()
-        .contains("fixture-code"));
+    assert!(
+        !response
+            .header("Location")
+            .unwrap()
+            .contains("fixture-code")
+    );
     assert_eq!(
         wait(root, first["taskId"].as_str().unwrap())["status"],
         "completed"
@@ -451,12 +453,14 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
         "cancelled"
     );
     thread::sleep(Duration::from_millis(250));
-    assert!(ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_millis(100))
-        .build()
-        .get(&f["redirect_uri"])
-        .call()
-        .is_err());
+    assert!(
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_millis(100))
+            .build()
+            .get(&f["redirect_uri"])
+            .call()
+            .is_err()
+    );
 
     // Finished requests left by a JS reload must not exhaust the active-request budget.
     let mut abandoned = Vec::new();
@@ -492,9 +496,11 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     assert!(row["credentialError"].is_string());
     let task = start(root, &broken, "remove", Value::Null);
     assert_eq!(wait(root, &task)["status"], "completed");
-    assert!(!backend
-        .secrets
-        .lock()
-        .unwrap()
-        .contains_key(&format!("ai.{broken}")));
+    assert!(
+        !backend
+            .secrets
+            .lock()
+            .unwrap()
+            .contains_key(&format!("ai.{broken}"))
+    );
 }

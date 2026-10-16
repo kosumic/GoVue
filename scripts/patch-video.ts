@@ -15,7 +15,7 @@ const after = `private var lastActivity = WeakReference<android.app.Activity>(ap
       WeakReference(activity).also { lastActivity = it }
     } ?: lastActivity`;
 let source = readFileSync(path, 'utf8');
-function patch(before, after, name) {
+function patch(before: string, after: string, name: string) {
   if (source.includes(after)) return;
   if (!source.includes(before)) throw Error(`Expo Video PiP manager changed; review the ${name} patch.`);
   source = source.replace(before, after);

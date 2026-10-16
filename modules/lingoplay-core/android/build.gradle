@@ -17,8 +17,8 @@ dependencies { implementation 'com.squareup.okhttp3:okhttp:4.12.0' }
 
 def buildRust = tasks.register('buildRust', Exec) {
   workingDir '../../..'
-  commandLine 'node', 'scripts/build-core.mjs', 'android'
-  inputs.files(fileTree('../../../core'), fileTree('../../../tools/bindgen'), file('../../../Cargo.toml'), file('../../../Cargo.lock'), file('../../../scripts/build-core.mjs'))
+  commandLine 'node', 'scripts/build-core.ts', 'android'
+  inputs.files(fileTree('../../../core'), fileTree('../../../tools/bindgen'), file('../../../Cargo.toml'), file('../../../Cargo.lock'), file('../../../rust-toolchain.toml'), file('../../../.cargo/config.toml'), file('../../../scripts/build-core.ts'))
   outputs.dir('src/main/jniLibs')
   outputs.dir('../generated/kotlin')
 }

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
@@ -11,14 +11,16 @@ use unicode_normalization::UnicodeNormalization;
 use url::Url;
 
 uniffi::setup_scaffolding!();
-mod media;
-mod transport;
-mod trace;
 mod ai;
 mod language_catalog;
 mod languages;
+mod media;
+mod trace;
+mod transport;
 mod vocabulary;
-pub use ai::{ai_execute, install_ai_platform, AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret};
+pub use ai::{
+    AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
+};
 
 #[derive(uniffi::Record)]
 pub struct MediaRangeReply {
@@ -408,7 +410,8 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         }
         let mut data: Transcript = {
             let _span = trace::Section::begin(c"LingoPlay transcript: rust.decode");
-            serde_json::from_value(reply["transcript"].clone()).map_err(|_| "Invalid transcript data.")?
+            serde_json::from_value(reply["transcript"].clone())
+                .map_err(|_| "Invalid transcript data.")?
         };
         if data.video_id != id {
             return Err("Transcript belongs to another video.".into());

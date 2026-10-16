@@ -1,15 +1,15 @@
 //! Native-independent boundary/routing regressions, added after Pixel streaming checks.
 use lingoplay_core::{
-    ai_execute, install_ai_platform, AiHttpRequest, AiPlatform, AiResponse, AiSecret,
+    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -235,9 +235,11 @@ fn saved_models_groups_configuration_and_wire_controls_work_together() {
     let serialized = exported.to_string();
     for marker in ["SYNTHETIC_API_KEY", "HEADER_SECRET", "BODY_SECRET"] {
         assert!(!serialized.contains(marker));
-        assert!(!fs::read_to_string(root.join("ai/providers.json"))
-            .unwrap()
-            .contains(marker));
+        assert!(
+            !fs::read_to_string(root.join("ai/providers.json"))
+                .unwrap()
+                .contains(marker)
+        );
     }
     for options in [
         json!({"headers":{"X-Test":"bad\r\nInjected: yes"}}),
@@ -598,15 +600,19 @@ fn saved_models_groups_configuration_and_wire_controls_work_together() {
     ok(root, json!({"op":"ai_select","id":fallback}));
     assert_eq!(run(root, &id, "remove")["status"], "completed");
     let cfg = ok(root, json!({"op":"ai_config"}));
-    assert!(!cfg["groups"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|g| g["id"] == fallback));
-    assert!(!backend
-        .secrets
-        .lock()
-        .unwrap()
-        .contains_key(&format!("ai.{id}")));
+    assert!(
+        !cfg["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["id"] == fallback)
+    );
+    assert!(
+        !backend
+            .secrets
+            .lock()
+            .unwrap()
+            .contains_key(&format!("ai.{id}"))
+    );
     select(root, "legacy", "old-model");
 }

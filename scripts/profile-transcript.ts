@@ -4,10 +4,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
-const options = new Map();
+const options = new Map<string, string>();
 for (let index = 0; index < args.length; index += 2) {
   if (!['--duration', '--output', '--serial'].includes(args[index]) || !args[index + 1]) {
-    throw Error('Usage: node scripts/profile-transcript.mjs [--duration seconds] [--output file.pftrace] [--serial adb-device]');
+    throw Error('Usage: node scripts/profile-transcript.ts [--duration seconds] [--output file.pftrace] [--serial adb-device]');
   }
   options.set(args[index], args[index + 1]);
 }
@@ -16,7 +16,8 @@ if (!Number.isInteger(duration) || duration < 10 || duration > 300) throw Error(
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const output = resolve(options.get('--output') ?? `.cache/transcript-${stamp}.pftrace`);
 const remote = `/data/misc/perfetto-traces/lingoplay-transcript-${stamp}.pftrace`;
-const adbArgs = options.has('--serial') ? ['-s', options.get('--serial')] : [];
+const serial = options.get('--serial');
+const adbArgs = serial ? ['-s', serial] : [];
 const config = readFileSync(fileURLToPath(new URL('./transcript.perfetto.pbtxt', import.meta.url)), 'utf8')
   .replace('duration_ms: 60000', `duration_ms: ${duration * 1000}`);
 mkdirSync(dirname(output), { recursive: true });
@@ -25,7 +26,7 @@ const recorder = spawn('adb', [...adbArgs, 'shell', 'perfetto', '--txt', '-c', '
   stdio: ['pipe', 'inherit', 'inherit'],
 });
 recorder.stdin.end(config);
-await new Promise((accept, reject) => {
+await new Promise<void>((accept, reject) => {
   recorder.on('error', reject);
   recorder.on('exit', code => code === 0 ? accept() : reject(Error(`Perfetto exited with ${code}.`)));
 });

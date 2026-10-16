@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, type ExecFileSyncOptions } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const moduleRoot = join(root, 'modules/lingoplay-core');
 const platform = process.argv[2] || 'host';
-const run = (command, args, extra = {}) => execFileSync(command, args, { cwd: root, stdio: 'inherit', env: { ...process.env, CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS || '2' }, ...extra });
+const run = (command: string, args: string[], extra: ExecFileSyncOptions = {}) => execFileSync(command, args, { cwd: root, stdio: 'inherit', env: { ...process.env, CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS || '2' }, ...extra });
 const lib = process.platform === 'darwin' ? 'liblingoplay_core.dylib' : 'liblingoplay_core.so';
 
 run('cargo', ['build', '--locked', '--release', '-p', 'lingoplay-core', '-p', 'lingoplay-bindgen']);
@@ -27,10 +27,11 @@ for (const language of ['kotlin', 'swift']) {
 if (platform === 'android') {
   const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
   if (!sdk) throw Error('Use nix develop path:. for the Android SDK and Rust toolchain.');
-  const ndk = process.env.ANDROID_NDK_HOME || join(sdk, 'ndk/27.1.12297006');
-  run('cargo', ['ndk', '-t', 'arm64-v8a', '--platform', '24', '-o', join(moduleRoot, 'android/src/main/jniLibs'), 'build', '--locked', '--release', '-p', 'lingoplay-core', '--lib'], {
-    env: { ...process.env, CARGO_BUILD_JOBS: '2', ANDROID_NDK_HOME: ndk, CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384' },
-  });
+  const target = 'aarch64-linux-android';
+  run('cargo', ['build', '--locked', '--release', '-p', 'lingoplay-core', '--lib', '--target', target]);
+  const output = join(moduleRoot, 'android/src/main/jniLibs/arm64-v8a');
+  mkdirSync(output, { recursive: true });
+  copyFileSync(join(root, 'target', target, 'release/liblingoplay_core.so'), join(output, 'liblingoplay_core.so'));
 } else if (platform === 'ios') {
   if (process.platform !== 'darwin') throw Error('The iOS core must be built on a Mac with Xcode.');
   // Nix's macOS SDK is suitable for host tools, but iOS targets need Xcode's

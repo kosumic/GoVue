@@ -71,7 +71,7 @@ npm ci
 npm run android
 ```
 
-Connect an arm64 Android device with USB debugging enabled. Expo generates the native Android project and starts Metro; Gradle builds the Rust library and bindings automatically. The Nix environment supplies Node 26, Rust 1.90, cargo-ndk, the Android Rust target, SDK/NDK, and Java. Node scripts run TypeScript directly using native type stripping; Node 24.15 or newer is required, with no TypeScript runner or compilation step.
+Connect an arm64 Android device with USB debugging enabled. Expo generates the native Android project and starts Metro; Gradle builds the Rust library and bindings automatically. The Nix environment uses the same Node 24, Rust 1.99.0, rust-overlay revision, SDK/NDK, and Java as `../herdr-android`. Rust 2024 and UniFFI 0.31.2 are shared across the core and binding generator. Android builds use the NDK linker supplied by the shell; the shared library keeps 16 KB page alignment. Node scripts run TypeScript directly using native type stripping; Node 24.15 or newer is required, with no TypeScript runner or compilation step.
 
 For USB networking:
 
@@ -106,7 +106,7 @@ npm run check
 npx expo install --check
 ```
 
-These check TypeScript, exercise the exact injected JavaScript with realistic browser fixtures, and test the Rust boundary, caption formats, search/export, and disk restore. They do not replace YouTube/device checks.
+These check TypeScript, exercise the exact injected JavaScript with realistic browser fixtures, check Rust formatting and Clippy with warnings rejected, and test the Rust boundary, caption formats, search/export, and disk restore. GitHub Actions runs these checks with the pinned Rust toolchain and Node 24, plus a Rust dependency audit. They do not replace YouTube/device checks.
 
 Standalone Android APK, inside the Nix shell:
 

@@ -136,15 +136,16 @@ pub(super) fn valid_reasoning(s: &str) -> bool {
     )
 }
 pub(super) fn reasoning<'a>(model: &'a Model, requested: &'a str) -> &'a str {
-    if !requested.is_empty() && model.reasoning_efforts.is_empty() {
-        if let Some(levels) = known_reasoning(&model.id) {
-            return levels
-                .iter()
-                .copied()
-                .filter(|s| reasoning_rank(s) <= reasoning_rank(requested))
-                .max_by_key(|s| reasoning_rank(s))
-                .unwrap_or(levels[0]);
-        }
+    if !requested.is_empty()
+        && model.reasoning_efforts.is_empty()
+        && let Some(levels) = known_reasoning(&model.id)
+    {
+        return levels
+            .iter()
+            .copied()
+            .filter(|s| reasoning_rank(s) <= reasoning_rank(requested))
+            .max_by_key(|s| reasoning_rank(s))
+            .unwrap_or(levels[0]);
     }
     if requested.is_empty()
         || model.reasoning_efforts.is_empty()
@@ -391,7 +392,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         "ai_export" => {
             return Ok(
                 json!({"format":"lingoplay.ai","version":1,"providers":cfg.providers,"groups":cfg.groups,"activeId":cfg.active_id}),
-            )
+            );
         }
         "ai_import" => {
             let value = &c["data"];

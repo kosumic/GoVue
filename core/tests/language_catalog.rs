@@ -1,5 +1,5 @@
 use lingoplay_core::execute;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 
 fn call(mut command: Value) -> Value {
@@ -34,7 +34,9 @@ fn catalog_returns_unique_choices_with_common_languages_first() {
     assert_eq!(result["sections"][1]["title"], "More languages");
     assert_eq!(
         &all[..12],
-        ["en", "es", "fr", "de", "zh", "ja", "ko", "it", "pt", "ar", "hi", "ru"]
+        [
+            "en", "es", "fr", "de", "zh", "ja", "ko", "it", "pt", "ar", "hi", "ru"
+        ]
     );
     assert_eq!(result["selected"], Value::Null);
     assert_eq!(choices(json!({"query":"  "})), result);

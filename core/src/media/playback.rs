@@ -1,7 +1,7 @@
 //! Playback choices and HLS byte-range playlists for YouTube's AVC/AAC files.
 //! Playlists and signed source addresses remain in the loopback proxy's memory.
-use super::{media_url, Result};
-use serde_json::{json, Value};
+use super::{Result, media_url};
+use serde_json::{Value, json};
 
 pub(super) const SPEEDS: [f64; 10] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
@@ -74,11 +74,13 @@ pub(crate) fn audio(catalog: &Value) -> Option<&Value> {
 }
 
 pub(super) fn choices(catalog: &Value) -> Result<Value> {
-    Ok(json!(videos(catalog)?
-        .iter()
-        .map(|s| json!({"height":s["height"],
+    Ok(json!(
+        videos(catalog)?
+            .iter()
+            .map(|s| json!({"height":s["height"],
         "label":format!("{}p", s["height"].as_u64().unwrap())}))
-        .collect::<Vec<_>>()))
+            .collect::<Vec<_>>()
+    ))
 }
 
 pub(crate) fn codecs(stream: &Value) -> Result<&str> {
@@ -169,7 +171,10 @@ pub(crate) fn playlist(stream: &Value, data: &[u8], uri: &str) -> Result<String>
         ));
         offset = next;
     }
-    Ok(format!("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{target:.0}\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"{uri}\",BYTERANGE=\"{}@{init_start}\"\n{segments}#EXT-X-ENDLIST\n", init_end - init_start + 1))
+    Ok(format!(
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{target:.0}\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"{uri}\",BYTERANGE=\"{}@{init_start}\"\n{segments}#EXT-X-ENDLIST\n",
+        init_end - init_start + 1
+    ))
 }
 
 #[cfg(test)]
@@ -255,9 +260,11 @@ pub(crate) mod tests {
         let mut stream = stream("video", 1080);
         stream["indexRange"]["end"] = json!(163);
         stream["bytes"] = json!(564);
-        assert!(playlist(&stream, &bytes, "opaque.mp4")
-            .unwrap()
-            .contains("200@164"));
+        assert!(
+            playlist(&stream, &bytes, "opaque.mp4")
+                .unwrap()
+                .contains("200@164")
+        );
     }
 
     #[test]

@@ -76,7 +76,7 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
             .as_ref()
             .is_some_and(|v| !catalog::valid_reasoning(v))
         || chat.messages.len() > 200
-        || chat.messages.len() % 2 != 0
+        || !chat.messages.len().is_multiple_of(2)
         || chat.messages.iter().enumerate().any(|(i, m)| {
             !valid_id(&m.id)
                 || m.role != if i % 2 == 0 { "user" } else { "assistant" }
@@ -165,11 +165,11 @@ fn list(root: &Path) -> Result<Vec<Conversation>> {
         if p.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        if let Some(id) = p.file_stem().and_then(|s| s.to_str()) {
-            if let Ok(mut chat) = read(root, id) {
-                recover(root, &mut chat)?;
-                rows.push(chat);
-            }
+        if let Some(id) = p.file_stem().and_then(|s| s.to_str())
+            && let Ok(mut chat) = read(root, id)
+        {
+            recover(root, &mut chat)?;
+            rows.push(chat);
         }
     }
     rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(b.id.cmp(&a.id)));
@@ -338,7 +338,9 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
     }
     let history_rows = chat
         .messages
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .filter(|pair| pair[1].status == "completed")
         .flat_map(|pair| {
             pair.iter()
@@ -441,12 +443,11 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         }
         "ai_chat_delete" => {
             let id = string(&c, "chatId")?;
-            if let Ok(chat) = read(&root, id) {
-                if let Some(task) = chat.active_task {
-                    if let Some(job) = jobs().lock().unwrap_or_else(|e| e.into_inner()).get(&task) {
-                        job.cancelled.store(true, Ordering::Relaxed);
-                    }
-                }
+            if let Ok(chat) = read(&root, id)
+                && let Some(task) = chat.active_task
+                && let Some(job) = jobs().lock().unwrap_or_else(|e| e.into_inner()).get(&task)
+            {
+                job.cancelled.store(true, Ordering::Relaxed);
             }
             match fs::remove_file(path(&root, id)?) {
                 Ok(()) => Ok(Value::Null),

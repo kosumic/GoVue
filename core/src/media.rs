@@ -1,5 +1,5 @@
-use super::{clean, string, trusted_origin, video_id, Result, MAX_BYTES};
-use serde_json::{json, Value};
+use super::{MAX_BYTES, Result, clean, string, trusted_origin, video_id};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
 use url::Url;
@@ -207,23 +207,25 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     }
                 }
                 if let Some(categories) = update.get("categories").and_then(Value::as_array) {
-                    settings["categories"] = json!(categories
-                        .iter()
-                        .filter(|v| matches!(
-                            v.as_str(),
-                            Some(
-                                "sponsor"
-                                    | "selfpromo"
-                                    | "interaction"
-                                    | "intro"
-                                    | "outro"
-                                    | "preview"
-                                    | "music_offtopic"
-                                    | "filler"
-                            )
-                        ))
-                        .take(8)
-                        .collect::<Vec<_>>());
+                    settings["categories"] = json!(
+                        categories
+                            .iter()
+                            .filter(|v| matches!(
+                                v.as_str(),
+                                Some(
+                                    "sponsor"
+                                        | "selfpromo"
+                                        | "interaction"
+                                        | "intro"
+                                        | "outro"
+                                        | "preview"
+                                        | "music_offtopic"
+                                        | "filler"
+                                )
+                            ))
+                            .take(8)
+                            .collect::<Vec<_>>()
+                    );
                 }
                 write(root, "settings.json", &settings)?;
             }
@@ -469,9 +471,11 @@ mod tests {
             dispatch(&json!({"op":"media_settings"}), root).unwrap(),
             restored
         );
-        assert!(!fs::read_to_string(directory.join("media/settings.json"))
-            .unwrap()
-            .contains("private"));
+        assert!(
+            !fs::read_to_string(directory.join("media/settings.json"))
+                .unwrap()
+                .contains("private")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 }

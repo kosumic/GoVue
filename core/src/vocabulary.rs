@@ -1,6 +1,6 @@
-use super::{folded, load, string, video_id, Result};
+use super::{Result, folded, load, string, video_id};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
@@ -131,15 +131,17 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
             let query = folded(query);
             let words = read(root)?;
-            Ok(json!(words
-                .into_iter()
-                .filter(|entry| {
-                    query.is_empty()
-                        || [&entry.word, &entry.context, &entry.title, &entry.language]
-                            .iter()
-                            .any(|text| folded(text).contains(&query))
-                })
-                .collect::<Vec<_>>()))
+            Ok(json!(
+                words
+                    .into_iter()
+                    .filter(|entry| {
+                        query.is_empty()
+                            || [&entry.word, &entry.context, &entry.title, &entry.language]
+                                .iter()
+                                .any(|text| folded(text).contains(&query))
+                    })
+                    .collect::<Vec<_>>()
+            ))
         }
         "vocabulary_save" => {
             let video = string(command, "videoId")?;

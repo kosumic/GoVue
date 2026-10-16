@@ -14,19 +14,21 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "page:build": "node scripts/build-page.mjs",
-    "postinstall": "node scripts/patch-video.mjs && npm run page:build",
+    "page:build": "node scripts/build-page.ts",
+    "postinstall": "node scripts/patch-video.ts && npm run page:build",
     "start": "expo start --dev-client --scheme lingoplay --host lan",
     "android": "expo run:android",
     "ios": "npm run core:ios && expo run:ios",
-    "typecheck": "tsc --noEmit",
-    "core:build": "node scripts/build-core.mjs host",
-    "core:android": "node scripts/build-core.mjs android",
-    "core:ios": "node scripts/build-core.mjs ios",
+    "typecheck": "tsc --noEmit && tsc --project scripts/tsconfig.json",
+    "core:build": "node scripts/build-core.ts host",
+    "core:android": "node scripts/build-core.ts android",
+    "core:ios": "node scripts/build-core.ts ios",
     "prebuild:ios": "npm run core:ios && expo prebuild --platform ios",
-    "test": "node --experimental-strip-types --test tests/*.test.*",
+    "test": "node --test tests/*.test.*",
+    "fmt:core": "cargo fmt --all --check",
+    "lint:core": "cargo clippy --locked --workspace --all-targets -- -D warnings",
     "test:core": "cargo test --locked -p lingoplay-core",
-    "check": "npm run typecheck && npm test && npm run test:core"
+    "check": "npm run typecheck && npm test && npm run fmt:core && npm run lint:core && npm run test:core"
   },
   "dependencies": {
     "@react-native-clipboard/clipboard": "1.16.3",
@@ -48,6 +50,7 @@
     "youtubei.js": "^18.1.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
     "@types/react": "~19.2.4",
     "babel-preset-expo": "~57.0.0",
     "esbuild": "^0.28.2",
@@ -63,6 +66,6 @@
     ]
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.15.0"
   }
 }

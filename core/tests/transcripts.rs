@@ -1,11 +1,11 @@
 use lingoplay_core::execute;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     fs,
     path::PathBuf,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Mutex, MutexGuard,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -175,18 +175,29 @@ fn parses_raw_json3_and_keeps_lines_across_the_whole_video() {
 fn decodes_legacy_and_srv3_xml_with_entity_and_word_boundaries() {
     let store = Store::new();
     for (source, expected) in [
-        ("<transcript><text start=\"1.5\" dur=\"2\">Tom &amp;amp; Jerry</text></transcript>", json!({"start":1.5,"duration":2.0,"text":"Tom & Jerry"})),
-        ("<timedtext><body><p t=\"3601000\" d=\"2500\"><s>Hello </s><s>world</s></p></body></timedtext>", json!({"start":3601.0,"duration":2.5,"text":"Hello world"}))
+        (
+            "<transcript><text start=\"1.5\" dur=\"2\">Tom &amp;amp; Jerry</text></transcript>",
+            json!({"start":1.5,"duration":2.0,"text":"Tom & Jerry"}),
+        ),
+        (
+            "<timedtext><body><p t=\"3601000\" d=\"2500\"><s>Hello </s><s>world</s></p></body></timedtext>",
+            json!({"start":3601.0,"duration":2.5,"text":"Hello world"}),
+        ),
     ] {
         let mut response = reply();
         response["transcript"]["captionSource"] = json!(source);
-        assert_eq!(store.value(accept(response))["transcript"]["segments"], json!([expected]));
+        assert_eq!(
+            store.value(accept(response))["transcript"]["segments"],
+            json!([expected])
+        );
     }
-    assert!(store
-        .value(operation("export"))
-        .as_str()
-        .unwrap()
-        .contains("1:00:01  Hello world"));
+    assert!(
+        store
+            .value(operation("export"))
+            .as_str()
+            .unwrap()
+            .contains("1:00:01  Hello world")
+    );
 }
 
 #[test]

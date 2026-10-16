@@ -4,7 +4,7 @@
 // Unicode data license: notices/Unicode-3.0.txt.
 use super::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use unicode_normalization::UnicodeNormalization;
 
