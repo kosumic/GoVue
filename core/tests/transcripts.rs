@@ -3,27 +3,40 @@ use serde_json::{json, Value};
 use std::{
     fs,
     path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex, MutexGuard,
+    },
 };
 
 const VIDEO: &str = "abcdefghijk";
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+// A scenario spans multiple calls into the process-wide three-document LRU.
+// Other scenarios must not evict an unsaved document between accept and export.
+static SCENARIOS: Mutex<()> = Mutex::new(());
 
-struct Store(PathBuf);
+struct Store {
+    path: PathBuf,
+    _scenario: MutexGuard<'static, ()>,
+}
 impl Store {
     fn new() -> Self {
+        let scenario = SCENARIOS.lock().unwrap_or_else(|error| error.into_inner());
         let path = std::env::temp_dir().join(format!(
             "lingoplay-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&path).unwrap();
-        Self(path)
+        Self {
+            path,
+            _scenario: scenario,
+        }
     }
     fn call(&self, command: Value) -> Value {
         serde_json::from_str(&execute(
             command.to_string(),
-            self.0.to_str().unwrap().into(),
+            self.path.to_str().unwrap().into(),
         ))
         .unwrap()
     }
@@ -35,7 +48,7 @@ impl Store {
 }
 impl Drop for Store {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.path);
     }
 }
 
@@ -184,7 +197,7 @@ fn restores_normalized_disk_cache_without_raw_sources_or_session_fields() {
         json!("<transcript><text start=\"12.5\" dur=\"2\">Hello, world.</text></transcript>");
     response["transcript"]["signedUrl"] = json!("private-session-token");
     assert_eq!(store.value(accept(response))["cacheSaved"], true);
-    let files: Vec<_> = fs::read_dir(&store.0)
+    let files: Vec<_> = fs::read_dir(&store.path)
         .unwrap()
         .map(|f| f.unwrap().path())
         .collect();
@@ -205,7 +218,7 @@ fn restores_normalized_disk_cache_without_raw_sources_or_session_fields() {
 #[test]
 fn full_storage_does_not_prevent_search_or_export_of_current_transcript() {
     let store = Store::new();
-    let blocked = store.0.join("file-not-directory");
+    let blocked = store.path.join("file-not-directory");
     fs::write(&blocked, "occupied").unwrap();
     let call = |command: Value| -> Value {
         serde_json::from_str(&execute(

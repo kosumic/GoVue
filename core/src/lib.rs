@@ -11,6 +11,32 @@ use unicode_normalization::UnicodeNormalization;
 use url::Url;
 
 uniffi::setup_scaffolding!();
+mod media;
+mod transport;
+
+#[derive(uniffi::Record)]
+pub struct MediaRangeReply {
+    pub status: i32,
+    pub body: Vec<u8>,
+}
+
+#[uniffi::export(callback_interface)]
+pub trait MediaHttp: Send + Sync {
+    fn fetch_range(
+        &self,
+        url: String,
+        user_agent: String,
+        origin: String,
+        method: String,
+        start: u64,
+        end: u64,
+    ) -> MediaRangeReply;
+}
+
+#[uniffi::export]
+pub fn install_media_http(backend: Box<dyn MediaHttp>) {
+    transport::install_http(backend);
+}
 
 const MAX_BYTES: usize = 8_000_000;
 const MAX_SEGMENTS: usize = 50_000;
@@ -326,6 +352,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    if op.starts_with("media_") || op.starts_with("sponsor_") || op.starts_with("downloads_") {
+        return media::dispatch(&command, root);
+    }
     if op == "info" {
         return Ok(json!({"engine": "rust", "version": env!("CARGO_PKG_VERSION")}));
     }

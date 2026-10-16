@@ -8,8 +8,12 @@
     "userInterfaceStyle": "light",
     "android": {
       "package": "io.github.kaminarios.lingoplay",
-      "permissions": ["INTERNET"],
-      "blockedPermissions": ["android.permission.RECORD_AUDIO"]
+      "permissions": [
+        "INTERNET"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "ios": {
       "bundleIdentifier": "io.github.kaminarios.lingoplay",
@@ -17,9 +21,21 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoadsInWebContent": true
+          "NSAllowsArbitraryLoadsInWebContent": true,
+          "NSAllowsLocalNetworking": true
         }
       }
-    }
+    },
+    "plugins": [
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": true,
+          "supportsPictureInPicture": true
+        }
+      ],
+      "expo-sharing",
+      "./plugins/withLocalMedia.cjs"
+    ]
   }
 }

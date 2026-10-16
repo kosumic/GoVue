@@ -2,9 +2,20 @@
   "name": "lingoplay",
   "version": "0.1.0",
   "private": true,
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-video"
+        ]
+      }
+    }
+  },
   "type": "module",
   "main": "index.js",
   "scripts": {
+    "page:build": "node scripts/build-page.mjs",
+    "postinstall": "node scripts/patch-video.mjs && npm run page:build",
     "start": "expo start --dev-client --scheme lingoplay --host lan",
     "android": "expo run:android",
     "ios": "npm run core:ios && expo run:ios",
@@ -19,21 +30,29 @@
   },
   "dependencies": {
     "@react-native-clipboard/clipboard": "1.16.3",
-    "expo": "~57.0.28",
+    "bgutils-js": "^4.0.3",
+    "expo": "~57.0.30",
     "expo-dev-client": "~57.0.20",
+    "expo-file-system": "~57.0.7",
+    "expo-sharing": "~57.0.23",
     "expo-status-bar": "~57.0.1",
+    "expo-video": "~57.0.5",
     "lucide-react-native": "^1.52.0",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
-    "react-native-webview": "13.16.1"
+    "react-native-webview": "13.16.1",
+    "youtubei.js": "^18.1.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.4",
     "babel-preset-expo": "~57.0.0",
+    "esbuild": "^0.28.2",
     "jsdom": "^30.1.2",
     "typescript": "~6.0.3"
   },
-  "engines": { "node": ">=22.13.0" }
+  "engines": {
+    "node": ">=22.13.0"
+  }
 }
