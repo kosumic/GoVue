@@ -10,6 +10,8 @@ The native player follows YouTube's video area while the page stays interactive:
 
 Open **Settings** (the gear button) to add **Languages I know** with current levels and **Languages I want to learn** with target levels. Choose A1–C2 to see a plain-language explanation based on the [CEFR global scale](https://www.coe.int/en/web/common-european-framework-reference-languages/table-1-cefr-3.3-common-reference-levels-global-scale); known languages also support **Native**, separately from CEFR. Edit or remove entries at any time. The same language can appear in both lists with different levels. Rust validates and saves these lists in app-private storage on this device.
 
+Hold a word in the transcript to save it. Tap the bookmark button in the top bar to open **Saved words**, search your collection, play a word's source video at its caption timestamp, or remove an entry. Each word keeps its caption, language, video title, and timestamp in app-private storage, independently of the transcript cache. Saving the same word again in the same caption language keeps the original entry. Word boundaries, validation, search, and persistence run in Rust; punctuation and spacing stay unchanged in the reader.
+
 ## AI providers
 
 Open **AI assistant** (the sparkle button) → **Providers** to add a ChatGPT plan connection, OpenAI API, Anthropic, Google Gemini, OpenRouter, or an OpenAI-compatible HTTPS endpoint. API-key providers use your own keys and provider billing. Save the connection, fetch its model list or enter a model ID, save the selected model, and use **Test saved model** to verify inference. Select a saved provider to make it active in **Ask**. Multiple provider/account registrations stay separate.

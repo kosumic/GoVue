@@ -6,6 +6,8 @@ import { colors } from '../theme';
 import { currentSegmentIndex, timestamp, type Segment, type Transcript } from '../youtube/transcript';
 import { exportTranscript, searchTranscript } from '../core/transcripts';
 import { IconButton } from './IconButton';
+import { TranscriptWords } from './TranscriptWords';
+import { saveWord } from '../core/vocabulary';
 
 export function TranscriptPanel({ data, loading, error, cached, position, onClose, onExtract, onSeek, onSummarize }: {
   data: Transcript | null;
@@ -20,6 +22,15 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
 }) {
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState(false);
+  const [wordFeedback, setWordFeedback] = useState('');
+  const savingWord = useRef(false);
+  const activeData = useRef(data);
+  activeData.current = data;
+  useEffect(() => {
+    activeData.current = data;
+    setWordFeedback('');
+    return () => { activeData.current = null; };
+  }, [data]);
   const [matches, setMatches] = useState<{ query: string; data: Transcript; segments: Segment[] } | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [followPlayback, setFollowPlayback] = useState(true);
@@ -62,6 +73,22 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
     if (scrollRetry.current) clearTimeout(scrollRetry.current);
     setFollowPlayback(false);
   };
+  async function saveCaptionWord(segment: Segment, tokenIndex: number, word: string) {
+    if (!data || savingWord.current) return;
+    const source = data;
+    stopFollowing();
+    savingWord.current = true;
+    setWordFeedback(`Saving “${word}”…`);
+    try {
+      const result = await saveWord(source, source.segments.indexOf(segment), tokenIndex, word);
+      if (activeData.current === source) setWordFeedback(result.saved ? `Saved “${result.entry.word}”` : `“${result.entry.word}” is already saved`);
+    } catch (e) {
+      if (activeData.current === source) {
+        setWordFeedback('');
+        Alert.alert('Could not save word', e instanceof Error ? e.message : 'Please try again.');
+      }
+    } finally { savingWord.current = false; }
+  }
   return (
     <View style={styles.panel}>
       <View style={styles.heading}>
@@ -79,6 +106,7 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
         <IconButton icon={X} label="Close transcript" onPress={onClose} />
       </View>
       {copied && <Text accessibilityLiveRegion="polite" style={styles.feedback}>Transcript copied</Text>}
+      {!!wordFeedback && <Text accessibilityLiveRegion="polite" style={styles.feedback}>{wordFeedback}</Text>}
       {loading ? <View style={styles.empty}><ActivityIndicator color={colors.accent} /><Text style={styles.emptyTitle}>Extracting captions…</Text><Text style={styles.help}>You can keep watching while this loads.</Text></View> : error ? (
         <View style={styles.empty}><Text style={styles.emptyTitle}>Transcript unavailable</Text><Text accessibilityRole="alert" style={styles.help}>{error}</Text>
           <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>
@@ -99,7 +127,7 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${segments.length} of ${data.segments.length}` : segments.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>
         <View style={styles.languageRow}>
-          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language} · Tap a line to jump and play</Text>
+          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language} · Tap a line to play · Hold a word to save</Text>
           {!query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
             onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
@@ -116,13 +144,16 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
             scrollRetry.current = setTimeout(scrollToCurrent, 100);
           }}
           keyboardShouldPersistTaps="handled" ListEmptyComponent={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
-          renderItem={({ item }) => <Pressable accessibilityRole="button" accessibilityLabel={`${timestamp(item.start)} · ${item.text}`}
+          renderItem={({ item }) => <Pressable accessible={false}
             accessibilityState={{ selected: item === activeSegment }}
             accessibilityHint={item === activeSegment ? 'Current line. Jump to this line and play the video' : 'Jump to this line and play the video'}
             onPress={() => { setFollowPlayback(true); onSeek(item.start); }}
             style={({ pressed }) => [styles.segment, item === activeSegment && styles.activeSegment, pressed && styles.pressedSegment]}>
-            <Text style={styles.time}>{timestamp(item.start)}</Text>
-            <Text style={[styles.segmentText, item === activeSegment && styles.activeText]}>{item.text}</Text>
+            <Text style={styles.time} accessibilityRole="button" accessibilityLabel={`Play line at ${timestamp(item.start)}`}
+              onPress={() => { setFollowPlayback(true); onSeek(item.start); }}>{timestamp(item.start)}</Text>
+            <TranscriptWords text={item.text} selected={item === activeSegment} style={[styles.segmentText, item === activeSegment && styles.activeText]}
+              onSeek={() => { setFollowPlayback(true); onSeek(item.start); }}
+              onSave={(tokenIndex, word) => { void saveCaptionWord(item, tokenIndex, word); }} />
           </Pressable>} />
       </> : null}
     </View>
