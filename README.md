@@ -8,6 +8,22 @@ YouTube videos opened in the browser automatically use the app's player for back
 
 The native player follows YouTube's video area while the page stays interactive: descriptions, channel controls, comments, and recommendations remain available. Expanded YouTube panels can cover the video without the native view blocking them. Opening the transcript expands the video above the reader; offline playback uses the full player area.
 
+## AI providers
+
+Open **AI assistant** (the sparkle button) → **Providers** to add a ChatGPT plan connection, OpenAI API, Anthropic, Google Gemini, OpenRouter, or an OpenAI-compatible HTTPS endpoint. API-key providers use your own keys and provider billing. Save the connection, fetch its model list or enter a model ID, save the selected model, and use **Test saved model** to verify inference. Select a saved provider to make it active in **Ask**. Multiple provider/account registrations stay separate.
+
+ChatGPT uses the documented [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) public-client flow under LingoPlay's own name: dynamic registration, a stable installation ID, system-browser authorization, a scoped loopback callback, PKCE, state/nonce checks, and signature/issuer/audience/expiry validation of the identity token. It uses the public Responses API rather than a borrowed Codex CLI client identity or ChatGPT's internal backend. OpenAI controls app/account eligibility, available models, and plan limits; this private app is not assumed to have plan access. The login button may therefore be declined even when an account can use Codex elsewhere. **Manage ChatGPT usage** opens ChatGPT's usage settings. Disconnect revokes the renewable session when reachable and clears local tokens; an unconfirmed revocation is reported in the app. Reconnect reuses the saved account registration.
+
+Sign-in opens in an in-app browser window (Android Custom Tabs / iOS authentication session). After validating the loopback callback's state, Rust returns an app link containing only the pending task ID to close that window automatically. Authorization codes stay in Rust; the UI receives no code or tokens.
+
+In **Ask**, each question is independent. Enable **Include transcript** to send the currently loaded, normalized caption text and title with the next question. It is off by default and resets when the video, caption track, or active provider changes. Questions are sent directly from the app to the selected provider; no LingoPlay relay server is involved. Answers stream into the sheet, can be stopped/copied, and are not saved. Closing the sheet cancels pending requests; navigating to another video cancels a transcript question.
+
+Provider configuration, bounded SSE parsing, OAuth/token refresh, model discovery, and transcript context construction live in Rust. Native Kotlin and Swift adapters supply HTTPS bytes without redirects and secure credential storage (Android Keystore-backed AES-GCM / iOS Keychain). API keys and OAuth tokens never enter the YouTube WebView, transcript cache, provider settings JSON, logs, or exports. Android app backup is disabled so device-bound credential ciphertext is not restored onto another installation.
+
+OpenMinis was studied as an architectural reference; its provider/authentication code was not copied or translated. The implementation follows each provider's documented protocols. Successful sign-in and inference require live account/device verification; fixture checks alone cannot establish plan entitlement.
+
+ChatGPT sign-in, automatic return from the in-app browser, account-specific model discovery, and a completed GPT-6.1-Sol response have been verified on the Pixel. API-key providers have protocol regression coverage. The new iOS provider adapters still need an Xcode build and live account check.
+
 ## Shared architecture
 
 | Layer | Responsibility |

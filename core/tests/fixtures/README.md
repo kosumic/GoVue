@@ -1,0 +1,1 @@
+`ai-test-private.der` and `ai-test-jwks.json` form a generated RSA key pair used only to sign and verify synthetic OAuth identities in the provider boundary tests. This publicly committed fixture is not an application credential and must never be used outside tests.

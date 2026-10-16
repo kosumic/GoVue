@@ -3,6 +3,8 @@ package io.github.kaminarios.lingoplay.coremodule
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import io.github.kaminarios.lingoplay.core.execute
+import io.github.kaminarios.lingoplay.core.aiExecute
+import io.github.kaminarios.lingoplay.core.installAiPlatform
 import java.io.File
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -43,7 +45,14 @@ private class NativeMediaHttp : MediaHttp {
 class LingoPlayCoreModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LingoPlayCore")
-    OnCreate { installMediaHttp(NativeMediaHttp()) }
+    OnCreate {
+      installMediaHttp(NativeMediaHttp())
+      installAiPlatform(NativeAiPlatform(requireNotNull(appContext.reactContext)))
+    }
+    AsyncFunction("ai") { request: String ->
+      val context = requireNotNull(appContext.reactContext)
+      aiExecute(request, File(context.filesDir, "transcripts").path)
+    }
     AsyncFunction("execute") { request: String ->
       val context = requireNotNull(appContext.reactContext)
       execute(request, File(context.filesDir, "transcripts").path)
