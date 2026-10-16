@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState } from 'react-native';
 import { useVideoPlayer, type VideoSource } from 'expo-video';
 import type WebView from 'react-native-webview';
-import { acceptMedia, defaultMediaSettings, fetchSponsors, mediaSettings, type MediaCatalog, type MediaSettings, type SponsorSegment } from '../core/media';
+import { acceptMedia, defaultMediaSettings, fetchSponsors, mediaSettings, playbackChoices, playbackSpeeds, preparePlayback, type MediaCatalog, type MediaSettings, type PlaybackQuality, type SponsorSegment } from '../core/media';
 import { mediaNativeScript, mediaResolveScript, mediaSettingsScript, mediaSponsorsScript } from '../youtube/mediaBridge';
 import { seekScript } from '../youtube/pageBridge';
 import { coreRequest } from '../../modules/lingoplay-core';
 import type { PlayerRuntimeHandle } from './PlayerRuntime';
 import { acceptPlayerLayout, type PlayerLayout } from './playerLayout';
 
-type Playback = { videoId: string; title: string; author: string; offline: boolean; uri: string };
+type Playback = { videoId: string; title: string; author: string; offline: boolean; uri: string; qualityHeight: number };
 type Pending = { requestId: string; videoId: string; timer: ReturnType<typeof setTimeout>; resolve: (value: MediaCatalog) => void; reject: (error: Error) => void };
 
 export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoId: string | null, userAgent: string, runtime: React.RefObject<PlayerRuntimeHandle | null>) {
@@ -18,6 +18,12 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
   const [catalog, setCatalog] = useState<MediaCatalog | null>(null);
   const [busy, setBusy] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [qualities, setQualities] = useState<PlaybackQuality[]>([]);
+  const [speeds, setSpeeds] = useState<number[]>([]);
+  const [switchingQuality, setSwitchingQuality] = useState(false);
+  const qualitySequence = useRef(0);
+  const settingsRef = useRef(settings); settingsRef.current = settings;
+  const catalogRef = useRef(catalog); catalogRef.current = catalog;
   const [playerLayout, setPlayerLayout] = useState<PlayerLayout | null>(null);
   const preparation = useRef<{ videoId: string } | null>(null);
   const manualWeb = useRef<string | null>(null);
@@ -41,6 +47,7 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
     player.showNowPlayingNotification = true;
     player.timeUpdateEventInterval = 0.25;
     player.audioMixingMode = 'doNotMix';
+    player.preservesPitch = true;
   });
   useEffect(() => {
     if (process.env.EXPO_PUBLIC_LINGOPLAY_DEBUG !== '1') return;
@@ -55,6 +62,7 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
   useEffect(() => {
     let active = true;
     mediaSettings().then(value => { if (active) setSettings(value); }).catch(() => {});
+    playbackSpeeds().then(value => { if (active) setSpeeds(value); }).catch(() => {});
     return () => { active = false; cancelPending(); };
   }, []);
   useEffect(() => {
@@ -62,6 +70,7 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
     player.staysActiveInBackground = settings.backgroundPlayback;
     player.showNowPlayingNotification = true;
   }, [settings, player]);
+  useEffect(() => { player.playbackRate = settings.playbackSpeed; }, [settings.playbackSpeed, player]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
       if (state === 'background' && !settings.backgroundPlayback && !settings.autoPip) player.pause();
@@ -70,7 +79,8 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
   }, [settings.backgroundPlayback, settings.autoPip, player]);
   useEffect(() => {
     preparation.current = null; setPreparing(false); manualWeb.current = null; autoRetryAt.current = 0;
-    cancelPending(); setCatalog(null); setError(null); setBusy(false); setPlayerLayout(null); segments.current = [];
+    cancelPending(); setCatalog(null); setQualities([]); setError(null); setBusy(false); setPlayerLayout(null); segments.current = [];
+    ++qualitySequence.current; setSwitchingQuality(false);
     if (playbackRef.current && playbackRef.current.videoId !== videoId) closePlayer(false);
   }, [videoId]);
   useEffect(() => {
@@ -117,9 +127,20 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
     if (identity.current && (playbackRef.current || preparation.current)) inject(mediaNativeScript(identity.current, true));
   }
   function updateSettings(changes: Partial<MediaSettings>) {
-    const next = { ...settings, ...changes }; setSettings(next);
-    settingsWrites.current = settingsWrites.current.catch(() => {}).then(async () => { await mediaSettings(next); }).catch(() => Alert.alert('Could not save playback settings'));
+    const next = { ...settingsRef.current, ...changes }; settingsRef.current = next; setSettings(next);
+    settingsWrites.current = settingsWrites.current.catch(() => {}).then(async () => { await mediaSettings(changes); }).catch(() => Alert.alert('Could not save playback settings'));
   }
+  function setSpeed(speed: number) {
+    if (!speeds.includes(speed)) return;
+    player.playbackRate = speed;
+    updateSettings({ playbackSpeed: speed });
+  }
+  useEffect(() => {
+    const subscription = player.addListener('playbackRateChange', ({ playbackRate }) => {
+      if (speeds.includes(playbackRate) && playbackRate !== settingsRef.current.playbackSpeed) updateSettings({ playbackSpeed: playbackRate });
+    });
+    return () => subscription.remove();
+  }, [player, speeds]);
   function resolveMedia() {
     const id = identity.current;
     if (!id) return Promise.reject(Error('Open a YouTube video first.'));
@@ -166,24 +187,27 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
     if (message.type !== 'media' || !request || message.requestId !== request.requestId || message.videoId !== request.videoId || identity.current !== request.videoId) return;
     try {
       const data = await acceptMedia(raw, origin, request.requestId, request.videoId);
+      const choices = await playbackChoices(data).catch(() => []);
       if (pending.current !== request || identity.current !== request.videoId) return;
-      clearTimeout(request.timer); pending.current = null; setBusy(false); setCatalog(data); request.resolve(data);
+      clearTimeout(request.timer); pending.current = null; setBusy(false); catalogRef.current = data; setCatalog(data);
+      setQualities(choices); request.resolve(data);
     } catch (error) {
       if (pending.current !== request) return;
       clearTimeout(request.timer); pending.current = null; setBusy(false);
       const failure = error instanceof Error ? error : Error('Could not load media.'); setError(failure.message); request.reject(failure);
     }
   }
-  async function openPlayer(data: Playback, source: VideoSource, position: number) {
+  async function openPlayer(data: Playback, source: VideoSource, position: number, resume = true, stillCurrent: () => boolean = () => true) {
     const generation = ++nativeGeneration.current;
     // Keep replacements ordered so an old asset cannot overwrite a newer one.
     replacements.current = replacements.current.catch(() => {}).then(async () => {
-      if (generation !== nativeGeneration.current) return;
+      if (generation !== nativeGeneration.current || !stillCurrent()) return;
       await player.replaceAsync(source);
-      if (generation !== nativeGeneration.current) return;
+      if (generation !== nativeGeneration.current || !stillCurrent()) return;
       const previous = playbackRef.current;
       if (previous && !previous.offline) void coreRequest({ op: 'media_proxy_release', uri: previous.uri }).catch(() => {});
-      player.currentTime = Math.max(0, position); player.play();
+      player.currentTime = Math.max(0, position); player.playbackRate = settingsRef.current.playbackSpeed;
+      if (resume) player.play(); else player.pause();
       playbackRef.current = data; setPlayback(data); setError(null);
       if (identity.current) inject(mediaNativeScript(identity.current, true));
     });
@@ -200,14 +224,13 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
     const data = await resolveMedia();
     if (preparation.current !== attempt) return;
     if (identity.current !== data.videoId) return;
-    const stream = data.streams.filter(s => s.kind === 'combined').sort((a, b) => b.height - a.height)[0];
-    if (!stream || !stream.bytes) throw Error('No combined video stream is available yet. Play the video and try again.');
-    const uri = await coreRequest<string>({ op: 'media_proxy', url: stream.url, length: stream.bytes, userAgent: stream.userAgent || userAgent, origin: data.origin });
-    if (identity.current !== data.videoId) { await coreRequest({ op: 'media_proxy_release', uri }); return; }
+    const prepared = await preparePlayback(data, settingsRef.current.qualityHeight, userAgent, true);
+    const { uri } = prepared;
+    if (identity.current !== data.videoId || preparation.current !== attempt) { await coreRequest({ op: 'media_proxy_release', uri }); return; }
     try {
-      await openPlayer({ videoId: data.videoId, title: data.title, author: data.author, offline: false, uri }, {
-        uri, contentType: 'progressive', metadata: { title: data.title, artist: data.author },
-      }, data.position);
+      await openPlayer({ videoId: data.videoId, title: data.title, author: data.author, offline: false, uri, qualityHeight: prepared.qualityHeight }, {
+        uri, contentType: prepared.contentType, metadata: { title: data.title, artist: data.author },
+      }, data.position, true, () => preparation.current === attempt && identity.current === data.videoId);
     } finally {
       if (playbackRef.current?.uri !== uri) await coreRequest({ op: 'media_proxy_release', uri }).catch(() => {});
     }
@@ -220,12 +243,34 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
   }
   async function playOffline(data: { videoId: string; title: string; author: string }, uri: string) {
     preparation.current = null; setPreparing(false); cancelPending(); manualWeb.current = identity.current;
-    await openPlayer({ ...data, offline: true, uri }, { uri, metadata: { title: data.title, artist: data.author } }, 0);
+    ++qualitySequence.current; setSwitchingQuality(false);
+    await openPlayer({ ...data, offline: true, uri, qualityHeight: 0 }, { uri, metadata: { title: data.title, artist: data.author } }, 0);
+  }
+  async function setQuality(height: number) {
+    const current = playbackRef.current;
+    const data = catalogRef.current;
+    if (!current || current.offline || !data || data.videoId !== current.videoId || identity.current !== data.videoId) return;
+    const request = ++qualitySequence.current;
+    setSwitchingQuality(true);
+    let uri: string | undefined;
+    try {
+      const prepared = await preparePlayback(data, height, userAgent); uri = prepared.uri;
+      const stillCurrent = () => request === qualitySequence.current && playbackRef.current?.videoId === current.videoId && identity.current === current.videoId;
+      if (!stillCurrent()) return;
+      const position = player.currentTime, resume = player.playing;
+      await openPlayer({ ...current, uri, qualityHeight: height }, { uri, contentType: prepared.contentType,
+        metadata: { title: current.title, artist: current.author } }, position, resume, stillCurrent);
+      if (stillCurrent()) updateSettings({ qualityHeight: height });
+    } finally {
+      if (uri && playbackRef.current?.uri !== uri) await coreRequest({ op: 'media_proxy_release', uri }).catch(() => {});
+      if (qualitySequence.current === request) setSwitchingQuality(false);
+    }
   }
   function closePlayer(resumeWeb = true) {
     preparation.current = null; setPreparing(false); cancelPending(); setBusy(false); setError(null);
     if (resumeWeb) manualWeb.current = identity.current;
     ++nativeGeneration.current;
+    ++qualitySequence.current; setSwitchingQuality(false);
     const current = playbackRef.current;
     const position = player.currentTime;
     player.pause(); playbackRef.current = null; setPlayback(null);
@@ -240,5 +285,5 @@ export function useMediaBrowser(webView: React.RefObject<WebView | null>, videoI
     if (!playbackRef.current || playbackRef.current.videoId !== identity.current) return false;
     player.currentTime = seconds; player.play(); return true;
   }
-  return { settings, updateSettings, playback, preparing, playerLayout, player, catalog, busy: busy || preparing, error, sponsorStatus, notice, configurePage, resolveMedia, handleMessage, startNative, playOffline, closePlayer, seek };
+  return { settings, updateSettings, playback, preparing, playerLayout, player, catalog, qualities, speeds, switchingQuality, setSpeed, setQuality, busy: busy || preparing, error, sponsorStatus, notice, configurePage, resolveMedia, handleMessage, startNative, playOffline, closePlayer, seek };
 }
