@@ -1,17 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { Copy, RotateCw, Search, Share2, X } from 'lucide-react-native';
+import { Copy, LocateFixed, RotateCw, Search, Share2, X } from 'lucide-react-native';
 import { colors } from '../theme';
-import { timestamp, type Segment, type Transcript } from '../youtube/transcript';
+import { currentSegmentIndex, timestamp, type Segment, type Transcript } from '../youtube/transcript';
 import { exportTranscript, searchTranscript } from '../core/transcripts';
 import { IconButton } from './IconButton';
 
-export function TranscriptPanel({ data, loading, error, cached, onClose, onExtract, onSeek }: {
+export function TranscriptPanel({ data, loading, error, cached, position, onClose, onExtract, onSeek }: {
   data: Transcript | null;
   loading: boolean;
   error: string | null;
   cached: boolean;
+  position: number | null;
   onClose: () => void;
   onExtract: (track?: string) => void;
   onSeek: (seconds: number) => void;
@@ -20,6 +21,10 @@ export function TranscriptPanel({ data, loading, error, cached, onClose, onExtra
   const [copied, setCopied] = useState(false);
   const [matches, setMatches] = useState<{ query: string; data: Transcript; segments: Segment[] } | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [followPlayback, setFollowPlayback] = useState(true);
+  const list = useRef<FlatList<Segment>>(null);
+  const scrollTarget = useRef<{ index: number; attempts: number } | null>(null);
+  const scrollRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { fontScale } = useWindowDimensions();
   useEffect(() => {
     let active = true;
@@ -34,6 +39,26 @@ export function TranscriptPanel({ data, loading, error, cached, onClose, onExtra
   }, [data, query]);
   const searching = !!query.trim() && !(matches?.query === query && matches.data === data) && !searchError;
   const segments = !query.trim() ? data?.segments ?? [] : matches?.query === query && matches.data === data ? matches.segments : [];
+  const activeIndex = currentSegmentIndex(data?.segments ?? [], position);
+  const activeSegment = data?.segments[activeIndex];
+  const following = followPlayback && !query.trim();
+  const scrollToCurrent = useCallback(() => {
+    const target = scrollTarget.current;
+    if (target) list.current?.scrollToIndex({ index: target.index, viewPosition: 0.3, animated: true });
+  }, []);
+  useEffect(() => {
+    scrollTarget.current = following && activeIndex >= 0 && !loading && !error ? { index: activeIndex, attempts: 0 } : null;
+    scrollToCurrent();
+    return () => {
+      scrollTarget.current = null;
+      if (scrollRetry.current) clearTimeout(scrollRetry.current);
+    };
+  }, [activeIndex, data, following, loading, error, scrollToCurrent]);
+  const stopFollowing = () => {
+    scrollTarget.current = null;
+    if (scrollRetry.current) clearTimeout(scrollRetry.current);
+    setFollowPlayback(false);
+  };
   return (
     <View style={styles.panel}>
       <View style={styles.heading}>
@@ -65,14 +90,31 @@ export function TranscriptPanel({ data, loading, error, cached, onClose, onExtra
           value={query} onChangeText={setQuery} style={styles.searchInput} />
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${segments.length} of ${data.segments.length}` : segments.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>
-        <FlatList data={segments} keyExtractor={(item, index) => `${item.start}:${index}`} contentContainerStyle={styles.list}
+        <View style={styles.languageRow}>
+          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language} · Tap a line to jump and play</Text>
+          {!query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
+            onPress={() => following ? stopFollowing() : setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
+            <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
+            <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
+          </Pressable>}
+        </View>
+        <FlatList ref={list} data={segments} extraData={activeSegment} keyExtractor={(item, index) => `${item.start}:${index}`} contentContainerStyle={styles.list}
+          onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
+          onScrollToIndexFailed={({ index, averageItemLength }) => {
+            const target = scrollTarget.current;
+            if (!target || target.index !== index || target.attempts++ >= 3) return;
+            list.current?.scrollToOffset({ offset: Math.max(0, (index - 1) * averageItemLength), animated: false });
+            if (scrollRetry.current) clearTimeout(scrollRetry.current);
+            scrollRetry.current = setTimeout(scrollToCurrent, 100);
+          }}
           keyboardShouldPersistTaps="handled" ListEmptyComponent={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
-          ListHeaderComponent={<Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language} · Tap a line to jump and play</Text>}
           renderItem={({ item }) => <Pressable accessibilityRole="button" accessibilityLabel={`${timestamp(item.start)} · ${item.text}`}
-            accessibilityHint="Jump to this line and play the video" onPress={() => onSeek(item.start)}
-            style={({ pressed }) => [styles.segment, pressed && styles.pressedSegment]}>
+            accessibilityState={{ selected: item === activeSegment }}
+            accessibilityHint={item === activeSegment ? 'Current line. Jump to this line and play the video' : 'Jump to this line and play the video'}
+            onPress={() => { setFollowPlayback(true); onSeek(item.start); }}
+            style={({ pressed }) => [styles.segment, item === activeSegment && styles.activeSegment, pressed && styles.pressedSegment]}>
             <Text style={styles.time}>{timestamp(item.start)}</Text>
-            <Text style={styles.segmentText}>{item.text}</Text>
+            <Text style={[styles.segmentText, item === activeSegment && styles.activeText]}>{item.text}</Text>
           </Pressable>} />
       </> : null}
     </View>
@@ -101,8 +143,14 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, paddingVertical: 11, color: colors.ink, fontSize: 13 },
   count: { color: colors.muted, fontSize: 11 },
   list: { paddingHorizontal: 20, paddingBottom: 24 },
-  language: { color: colors.muted, fontSize: 10, marginTop: 14, marginBottom: 8 },
-  segment: { flexDirection: 'row', gap: 12, paddingVertical: 9, minHeight: 44, borderRadius: 6 },
+  languageRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 20, marginTop: 8, marginBottom: 6 },
+  language: { flex: 1, color: colors.muted, fontSize: 10 },
+  follow: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 44, paddingHorizontal: 8, borderRadius: 8 },
+  following: { backgroundColor: colors.accentSoft },
+  followText: { fontSize: 11, color: colors.muted },
+  segment: { flexDirection: 'row', gap: 12, paddingVertical: 9, paddingHorizontal: 8, minHeight: 44, borderRadius: 6, borderLeftWidth: 3, borderLeftColor: 'transparent' },
+  activeSegment: { backgroundColor: colors.accentSoft, borderLeftColor: colors.accent },
+  activeText: { color: colors.accent, fontWeight: '600' },
   pressedSegment: { backgroundColor: colors.accentSoft },
   time: { minWidth: 46, paddingTop: 3, fontSize: 12, color: colors.accent, fontVariant: ['tabular-nums'] },
   segmentText: { flex: 1, fontSize: 15, lineHeight: 24, color: colors.ink },

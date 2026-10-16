@@ -392,6 +392,18 @@ export const YOUTUBE_BRIDGE = String.raw`
       }
     },
     cancel() { active?.abort(); active = null; },
+    position(requestId, id) {
+      if (videoId() !== id) return;
+      const player = document.getElementById('movie_player');
+      const owner = player?.getVideoData?.()?.video_id || player?.getPlayerResponse?.()?.videoDetails?.videoId || window.ytInitialPlayerResponse?.videoDetails?.videoId;
+      // SPA navigation can change the URL before the old player is replaced.
+      if (owner !== id) return;
+      const video = player?.querySelector('video') || document.querySelector('video');
+      const seconds = player?.classList.contains('ad-showing') || player?.classList.contains('ad-interrupting')
+        ? null : video ? video.currentTime : player?.getCurrentTime?.();
+      send({ type: 'playbackPosition', requestId, videoId: id,
+        seconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null });
+    },
     seek(id, seconds) {
       if (videoId() !== id || !Number.isFinite(seconds) || seconds < 0) return;
       const player = document.getElementById('movie_player');
@@ -426,4 +438,8 @@ export function extractionScript(requestId, trackId = 'default') {
 
 export function seekScript(videoId, seconds) {
   return `window.__lingoplay?.seek(${JSON.stringify(videoId)}, ${JSON.stringify(seconds)}); true;`;
+}
+
+export function playbackPositionScript(requestId, videoId) {
+  return `window.__lingoplay?.position(${JSON.stringify(requestId)}, ${JSON.stringify(videoId)}); true;`;
 }
