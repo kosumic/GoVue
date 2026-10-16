@@ -193,13 +193,11 @@ fn save_tokens(root: &Path, p: &Provider, job: &Arc<Job>, data: Value) -> Result
     connections::check_current(root, p, job)?;
     let previous = read_secret(&p.id)?;
     if let (Some(saved), Some(received)) = (previous["subject"].as_str(), data["subject"].as_str())
+        && saved != received
     {
-        if saved != received {
-            return Err(
-                "Sign-in used a different account. Add a separate connection for that account."
-                    .into(),
-            );
-        }
+        return Err(
+            "Sign-in used a different account. Add a separate connection for that account.".into(),
+        );
     }
     let mut data = if p.kind == "openrouter" {
         let key = string(&data, "key")?;
@@ -440,7 +438,7 @@ fn verify_oidc(
     nonce: &str,
     job: &Arc<Job>,
 ) -> Result<Value> {
-    use jsonwebtoken::{decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation};
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
     let meta = checked(raw(
         &format!("{issuer}/.well-known/openid-configuration"),
         None,
@@ -629,10 +627,12 @@ pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<St
             let mut data = reply["data"].clone();
             if p.kind == "copilot" {
                 data["access_token"] = data["token"].clone();
-                data["expires_in"] = json!(data["expires_at"]
-                    .as_u64()
-                    .unwrap_or(now() + 1200)
-                    .saturating_sub(now()));
+                data["expires_in"] = json!(
+                    data["expires_at"]
+                        .as_u64()
+                        .unwrap_or(now() + 1200)
+                        .saturating_sub(now())
+                );
                 data["github_token"] = s["github_token"].clone();
             }
             s = token_bundle(data, &s)?;

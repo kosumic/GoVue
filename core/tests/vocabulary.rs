@@ -1,5 +1,5 @@
 use lingoplay_core::execute;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -84,11 +84,13 @@ fn unicode_boundaries_preserve_caption_text_and_keep_punctuation_out_of_words() 
         );
         for token in tokens {
             if token["word"] == true {
-                assert!(token["text"]
-                    .as_str()
-                    .unwrap()
-                    .chars()
-                    .any(char::is_alphanumeric));
+                assert!(
+                    token["text"]
+                        .as_str()
+                        .unwrap()
+                        .chars()
+                        .any(char::is_alphanumeric)
+                );
             }
         }
     }
@@ -150,12 +152,14 @@ fn saves_source_context_deduplicates_by_language_and_survives_cache_eviction() {
     assert_eq!(disk, before);
     store.value(json!({"op":"vocabulary_remove","id":entry["id"]}));
     assert_eq!(store.list("").as_array().unwrap().len(), 2);
-    assert!(store
-        .list("")
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|e| e["id"] != entry["id"]));
+    assert!(
+        store
+            .list("")
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["id"] != entry["id"])
+    );
 }
 
 #[test]

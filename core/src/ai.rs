@@ -1,7 +1,7 @@
 //! Provider protocols, OAuth and transcript context are shared by both platforms.
 //! Native adapters only handle HTTPS bytes and protected credential storage.
-use crate::{json, string, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use crate::{Result, json, string};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -10,8 +10,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicI32, Ordering},
         Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicI32, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -281,14 +281,15 @@ fn public_config(root: &Path) -> Result<Value> {
         .iter()
         .map(|g| {
             let mut row = serde_json::to_value(g).unwrap_or(Value::Null);
-            row["connected"] = json!(g.members.iter().any(|member| rows.iter().any(|p| p["id"]
-                == member.provider_id
-                && p["enabled"] == true
-                && p["connected"] == true
-                && p["needsReauth"] != true
-                && p["models"]
-                    .as_array()
-                    .is_some_and(|models| models.iter().any(|m| m["id"] == member.model)))));
+            row["connected"] = json!(g.members.iter().any(|member| rows.iter().any(|p| {
+                p["id"] == member.provider_id
+                    && p["enabled"] == true
+                    && p["connected"] == true
+                    && p["needsReauth"] != true
+                    && p["models"]
+                        .as_array()
+                        .is_some_and(|models| models.iter().any(|m| m["id"] == member.model))
+            })));
             row
         })
         .collect();
@@ -401,7 +402,7 @@ impl AiResponse {
         let result = if s.total > 20_000_000 {
             Err("Provider response is too large.".into())
         } else if (200..300).contains(&s.status) && s.stream.is_some() {
-            s.stream.as_mut().unwrap().push(&bytes).and_then(|_| {
+            s.stream.as_mut().unwrap().push(&bytes).map(|_| {
                 if let Some(job) = &self.job {
                     let parser = s.stream.as_ref().unwrap();
                     let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -409,7 +410,6 @@ impl AiResponse {
                     state["reasoning"] = json!(parser.reasoning);
                     state["usage"] = parser.usage.clone();
                 }
-                Ok(())
             })
         } else if s.bytes.len() + bytes.len() <= MAX_OUTPUT {
             s.bytes.extend(bytes);
@@ -752,10 +752,9 @@ fn token_set(mut response: Value, previous: &Value) -> Result<Value> {
     if let (Some(saved), Some(received)) = (
         previous["client_id"].as_str(),
         response["client_id"].as_str(),
-    ) {
-        if saved != received {
-            return Err("Login returned another account registration.".into());
-        }
+    ) && saved != received
+    {
+        return Err("Login returned another account registration.".into());
     }
     if response["access_token"].as_str().is_none_or(str::is_empty)
         || !response["token_type"]
@@ -860,10 +859,10 @@ fn headers(p: &Provider, token: String) -> Vec<(&'static str, String)> {
         hs.push(("Version", "0.153.3".into()));
         hs.push(("User-Agent", "codex_cli_rs/0.153.3 (Android; arm64)".into()));
         hs.push(("Openai-Beta", "responses=experimental".into()));
-        if let Ok(s) = read_secret(&p.id) {
-            if let Some(account) = s["account_id"].as_str() {
-                hs.push(("ChatGPT-Account-Id", account.into()));
-            }
+        if let Ok(s) = read_secret(&p.id)
+            && let Some(account) = s["account_id"].as_str()
+        {
+            hs.push(("ChatGPT-Account-Id", account.into()));
         }
     }
     if !p.custom_user_agent.is_empty() {
@@ -1356,7 +1355,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
 }
 
 fn verify_identity(token: &str, client: &str, nonce: &str, job: &Arc<Job>) -> Result<Value> {
-    use jsonwebtoken::{decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation};
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
     let metadata = json_http(
         format!("{AUTH}/.well-known/openid-configuration"),
         vec![],
@@ -1422,7 +1421,7 @@ fn callback(url: &str, expected: &str, client: Option<&str>) -> Result<(String, 
     }
     let issued = match (client, fields.get("client_id")) {
         (Some(saved), Some(id)) if id != saved => {
-            return Err("Login returned another account registration.".into())
+            return Err("Login returned another account registration.".into());
         }
         (Some(saved), _) => saved.to_owned(),
         (None, Some(id)) if id != "dynamic_agent_client" && !id.is_empty() && id.len() <= 200 => {
@@ -1582,10 +1581,10 @@ fn login(root: PathBuf, p: Provider) -> Result<Value> {
                 )?;
                 let claims =
                     verify_identity(string(&response, "id_token")?, &issued, &nonce, &worker)?;
-                if let Some(subject) = saved["subject"].as_str() {
-                    if claims["sub"] != subject {
-                        return Err("Sign-in used a different ChatGPT account. Add another provider for that account.".into());
-                    }
+                if let Some(subject) = saved["subject"].as_str()
+                    && claims["sub"] != subject
+                {
+                    return Err("Sign-in used a different ChatGPT account. Add another provider for that account.".into());
                 }
                 let mut tokens = token_set(response, &json!({"client_id":issued}))?;
                 tokens["subject"] = claims["sub"].clone();
@@ -1624,44 +1623,44 @@ fn disconnect(root: &Path, p: &Provider, remove: bool, job: &Arc<Job>) -> Result
         Err(_) => (json!({}), false),
     };
     let mut revoked = !catalog::oauth(p) || (p.kind == "chatgpt" && readable);
-    if p.kind == "chatgpt" {
-        if let Some(token) = s["refresh_token"].as_str() {
-            let metadata = json_http(
-                format!("{AUTH}/.well-known/openid-configuration"),
-                vec![],
+    if p.kind == "chatgpt"
+        && let Some(token) = s["refresh_token"].as_str()
+    {
+        let metadata = json_http(
+            format!("{AUTH}/.well-known/openid-configuration"),
+            vec![],
+            None,
+            job,
+        );
+        revoked = (|| {
+            let metadata = metadata?;
+            let url = Url::parse(string(&metadata, "revocation_endpoint")?)
+                .map_err(|_| "Invalid revocation endpoint.")?;
+            if url.scheme() != "https"
+                || url.host_str() != Some("auth.openai.com")
+                || url.port_or_known_default() != Some(443)
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
+                return Err("Invalid revocation endpoint.".into());
+            }
+            let body = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs([
+                    ("token", token),
+                    ("token_type_hint", "refresh_token"),
+                    ("client_id", string(&s, "client_id")?),
+                ])
+                .finish();
+            http(
+                url.into(),
+                "POST",
+                vec![("Content-Type", "application/x-www-form-urlencoded".into())],
+                body,
                 None,
-                job,
-            );
-            revoked = (|| {
-                let metadata = metadata?;
-                let url = Url::parse(string(&metadata, "revocation_endpoint")?)
-                    .map_err(|_| "Invalid revocation endpoint.")?;
-                if url.scheme() != "https"
-                    || url.host_str() != Some("auth.openai.com")
-                    || url.port_or_known_default() != Some(443)
-                    || !url.username().is_empty()
-                    || url.password().is_some()
-                {
-                    return Err("Invalid revocation endpoint.".into());
-                }
-                let body = url::form_urlencoded::Serializer::new(String::new())
-                    .extend_pairs([
-                        ("token", token),
-                        ("token_type_hint", "refresh_token"),
-                        ("client_id", string(&s, "client_id")?),
-                    ])
-                    .finish();
-                http(
-                    url.into(),
-                    "POST",
-                    vec![("Content-Type", "application/x-www-form-urlencoded".into())],
-                    body,
-                    None,
-                    Some(job),
-                )
-            })()
-            .is_ok();
-        }
+                Some(job),
+            )
+        })()
+        .is_ok();
     }
     // Always finish an explicitly requested local sign-out, even if revocation is offline.
     let remaining = if remove {

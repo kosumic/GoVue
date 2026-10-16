@@ -1,15 +1,15 @@
 //! Connection regressions after Android discovery/inference checks on a local endpoint.
 use lingoplay_core::{
-    ai_execute, install_ai_platform, AiHttpRequest, AiPlatform, AiResponse, AiSecret,
+    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -196,10 +196,12 @@ fn connection_edits_preserve_identity_and_apply_to_all_request_paths() {
     let calls = b.requests.lock().unwrap()[before..].to_vec();
     assert_eq!(calls.len(), 2);
     for r in &calls {
-        assert!(r["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("https://relay.example.test/alpha/v1/models"));
+        assert!(
+            r["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("https://relay.example.test/alpha/v1/models")
+        );
         assert_eq!(header(r, "user-agent"), vec!["Provider-QA/1.0"]);
     }
     run(root, &id, "chat");
@@ -309,7 +311,10 @@ fn connection_edits_preserve_identity_and_apply_to_all_request_paths() {
     p["azure"] = json!(true);
     ok(root, json!({"op":"ai_save","provider":p}));
     run(root, &id, "chat");
-    assert_eq!(last(&b)["url"],"https://azure.example.test/openai/deployments/one/responses?api-version=2025-04-01-preview");
+    assert_eq!(
+        last(&b)["url"],
+        "https://azure.example.test/openai/deployments/one/responses?api-version=2025-04-01-preview"
+    );
     assert_eq!(
         header(&last(&b), "api-key"),
         vec!["SYNTHETIC_CONNECTION_KEY"]

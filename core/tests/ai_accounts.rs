@@ -1,15 +1,15 @@
 //! Account protocol tests use synthetic keys/tokens; they do not establish plan access.
 use lingoplay_core::{
-    ai_execute, install_ai_platform, AiHttpRequest, AiPlatform, AiResponse, AiSecret,
+    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -31,7 +31,7 @@ fn now() -> u64 {
         .as_secs()
 }
 fn token(ec: bool, nonce: &str) -> String {
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     let mut header = Header::new(if ec {
         Algorithm::ES256
     } else {
@@ -329,14 +329,18 @@ fn account_flows_verify_callbacks_refresh_and_keep_credential_boundaries() {
         assert_eq!(req["headers"]["X-Preserved"], "MODEL_SECRET");
         if kind == "anthropic" {
             assert!(req["headers"].get("x-api-key").is_none());
-            assert!(req["headers"]["anthropic-beta"]
-                .as_str()
-                .unwrap()
-                .contains("oauth-2025-04-20"));
-            assert!(req["body"]["system"]
-                .as_str()
-                .unwrap()
-                .starts_with("You are Claude Code"));
+            assert!(
+                req["headers"]["anthropic-beta"]
+                    .as_str()
+                    .unwrap()
+                    .contains("oauth-2025-04-20")
+            );
+            assert!(
+                req["body"]["system"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("You are Claude Code")
+            );
         }
         if kind == "codex" {
             assert_eq!(req["headers"]["ChatGPT-Account-Id"], "fixture-account");
@@ -372,12 +376,14 @@ fn account_flows_verify_callbacks_refresh_and_keep_credential_boundaries() {
     *backend.mode.lock().unwrap() = "wrong-nonce".into();
     let result = browser_login(root, &bad, &backend);
     assert_eq!(result["status"], "failed");
-    assert!(!backend
-        .secrets
-        .lock()
-        .unwrap()
-        .get(&format!("ai.{bad}"))
-        .is_some_and(|s| s.contains("fixture-access")));
+    assert!(
+        !backend
+            .secrets
+            .lock()
+            .unwrap()
+            .get(&format!("ai.{bad}"))
+            .is_some_and(|s| s.contains("fixture-access"))
+    );
     *backend.mode.lock().unwrap() = String::new();
     for kind in ["kimi", "copilot"] {
         let id = add(root, kind);
@@ -462,12 +468,14 @@ fn account_flows_verify_callbacks_refresh_and_keep_credential_boundaries() {
     ok(root, json!({"op":"ai_cancel","taskId":task}));
     assert_eq!(wait(root, task)["status"], "cancelled");
     thread::sleep(Duration::from_millis(150));
-    assert!(!backend
-        .secrets
-        .lock()
-        .unwrap()
-        .get(&format!("ai.{pending}"))
-        .is_some_and(|v| v.contains("access_token")));
+    assert!(
+        !backend
+            .secrets
+            .lock()
+            .unwrap()
+            .get(&format!("ai.{pending}"))
+            .is_some_and(|v| v.contains("access_token"))
+    );
     let export = ok(root, json!({"op":"ai_export"})).to_string();
     for secret in [
         "fixture-access",
@@ -477,8 +485,10 @@ fn account_flows_verify_callbacks_refresh_and_keep_credential_boundaries() {
         "MODEL_SECRET",
     ] {
         assert!(!export.contains(secret));
-        assert!(!fs::read_to_string(root.join("ai/providers.json"))
-            .unwrap()
-            .contains(secret));
+        assert!(
+            !fs::read_to_string(root.join("ai/providers.json"))
+                .unwrap()
+                .contains(secret)
+        );
     }
 }

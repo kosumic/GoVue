@@ -1,4 +1,4 @@
-use super::{clean, folded, Result};
+use super::{Result, clean, folded};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashSet, fs, io::ErrorKind, path::Path};

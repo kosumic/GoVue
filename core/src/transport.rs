@@ -1,17 +1,18 @@
 //! YouTube file streams require bounded byte ranges. This loopback transport
 //! adapts those responses to the ordinary HTTP ranges used by AVPlayer/Media3.
 use crate::{
+    Result,
     media::{media_url, playback},
-    string, Result,
+    string,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     io::{self, Read, Write},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
@@ -488,7 +489,9 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
         Ok(format!("{key}.m3u8"))
     };
     let audio_uri = add_track(audio, "audio")?;
-    let mut master = format!("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{audio_uri}\"\n");
+    let mut master = format!(
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{audio_uri}\"\n"
+    );
     let variants: Vec<_> = if requested == 0 {
         videos
             .into_iter()

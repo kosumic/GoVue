@@ -166,12 +166,12 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
         write_secret(&p.id, next)?;
     }
     if let Err(error) = super::save(root, &cfg) {
-        if let Some((previous, _)) = &credentials {
-            if write_secret(&p.id, previous).is_err() {
-                return Err(format!(
-                    "{error} Credentials could not be restored; reconnect this provider."
-                ));
-            }
+        if let Some((previous, _)) = &credentials
+            && write_secret(&p.id, previous).is_err()
+        {
+            return Err(format!(
+                "{error} Credentials could not be restored; reconnect this provider."
+            ));
         }
         return Err(error);
     }
