@@ -13,6 +13,8 @@ use url::Url;
 uniffi::setup_scaffolding!();
 mod media;
 mod transport;
+mod ai;
+pub use ai::{ai_execute, install_ai_platform, AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 
 #[derive(uniffi::Record)]
 pub struct MediaRangeReply {

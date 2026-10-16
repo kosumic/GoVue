@@ -8,6 +8,7 @@
     "userInterfaceStyle": "light",
     "android": {
       "package": "io.github.kaminarios.lingoplay",
+      "allowBackup": false,
       "permissions": [
         "INTERNET"
       ],
@@ -35,7 +36,8 @@
         }
       ],
       "expo-sharing",
-      "./plugins/withLocalMedia.cjs"
+      "./plugins/withLocalMedia.cjs",
+      "expo-web-browser"
     ]
   }
 }

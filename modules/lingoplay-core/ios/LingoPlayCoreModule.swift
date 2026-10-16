@@ -39,7 +39,15 @@ private final class NativeMediaHttp: MediaHttp, @unchecked Sendable {
 public final class LingoPlayCoreModule: Module {
   public func definition() -> ModuleDefinition {
     Name("LingoPlayCore")
-    OnCreate { installMediaHttp(backend: NativeMediaHttp()) }
+    OnCreate {
+      installMediaHttp(backend: NativeMediaHttp())
+      installAiPlatform(platform: NativeAiPlatform())
+    }
+    AsyncFunction("ai") { (request: String) -> String in
+      let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("LingoPlay/transcripts", isDirectory: true)
+      return aiExecute(request: request, storagePath: directory.path)
+    }
     AsyncFunction("execute") { (request: String) -> String in
       let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("LingoPlay/transcripts", isDirectory: true)

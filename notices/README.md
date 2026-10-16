@@ -7,3 +7,5 @@ Litube was used as an implementation reference. Its Kotlin downloader, Android p
 SponsorBlock data comes from the [SponsorBlock API](https://wiki.sponsor.ajay.app/w/API_Docs). Requests use the hash-prefix endpoint, and the client only applies matching-video segments in enabled categories.
 
 The Android build patches Expo Video's PiP activity lookup. Expo Video's MIT license is included in `Expo-Video-MIT.txt`.
+
+OpenMinis was studied as an architectural reference for model providers and account connections. No OpenMinis code was copied or translated. LingoPlay implements the provider protocols independently in its shared Rust core and native adapters. Identity-token verification uses jsonwebtoken; its MIT notice is included in `Jsonwebtoken-MIT.txt`.
