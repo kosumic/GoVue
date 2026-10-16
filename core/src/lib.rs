@@ -15,6 +15,7 @@ mod media;
 mod transport;
 mod ai;
 mod languages;
+mod vocabulary;
 pub use ai::{ai_execute, install_ai_platform, AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 
 #[derive(uniffi::Record)]
@@ -355,6 +356,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    if op.starts_with("vocabulary_") {
+        return vocabulary::dispatch(&command, root);
+    }
     if op == "language_settings" {
         return languages::settings(&command, root);
     }

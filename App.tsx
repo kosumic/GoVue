@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, BackHandler, Keyboard, KeyboardAvoidingView, 
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
-import { ArrowLeft, ArrowRight, Captions, Download, FolderDown, Globe2, House, PictureInPicture2, Play, RotateCw, Settings2, Sparkles, X } from 'lucide-react-native';
+import { ArrowLeft, ArrowRight, Bookmark, Captions, Download, FolderDown, Globe2, House, PictureInPicture2, Play, RotateCw, Settings2, Sparkles, X } from 'lucide-react-native';
 import { useEvent } from 'expo';
 import { VideoView } from 'expo-video';
 import { browserAddress, isWebUrl, isYouTubeUrl, youtubeVideoId } from './src/browser/address';
@@ -23,6 +23,7 @@ import { PlayerRuntime, type PlayerRuntimeHandle } from './src/media/PlayerRunti
 import { embeddedPlayerFrame } from './src/media/playerLayout';
 import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 import { AiSheet, type SummaryRequest } from './src/components/AiSheet';
+import { SavedWordsSheet } from './src/components/SavedWordsSheet';
 
 type PendingRequest = { id: string; videoId: string; timer: ReturnType<typeof setTimeout> };
 
@@ -53,6 +54,7 @@ function Browser() {
   const sequence = useRef(0);
   const [mediaSheet, setMediaSheet] = useState<MediaSheetMode>(null);
   const [aiVisible, setAiVisible] = useState(false);
+  const [wordsVisible, setWordsVisible] = useState(false);
   const [aiSummaryRequest, setAiSummaryRequest] = useState<SummaryRequest | null>(null);
   const downloads = useDownloads();
   const playerRuntime = useRef<PlayerRuntimeHandle>(null);
@@ -194,7 +196,7 @@ function Browser() {
       <StatusBar style="dark" />
       <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top}>
         <View style={styles.topbar}><Text style={styles.brand}>lingoplay<Text style={styles.brandDot}>.</Text></Text>
-          <View style={styles.mediaControls}><IconButton icon={Sparkles} label="Open AI assistant" onPress={() => { setAiSummaryRequest(null); setAiVisible(true); }} /><IconButton icon={FolderDown} label="Open downloads" onPress={() => setMediaSheet('library')} /><IconButton icon={Settings2} label="Settings" onPress={() => setMediaSheet('settings')} /></View></View>
+          <View style={styles.mediaControls}><IconButton icon={Bookmark} label="Open saved words" onPress={() => setWordsVisible(true)} /><IconButton icon={Sparkles} label="Open AI assistant" onPress={() => { setAiSummaryRequest(null); setAiVisible(true); }} /><IconButton icon={FolderDown} label="Open downloads" onPress={() => setMediaSheet('library')} /><IconButton icon={Settings2} label="Settings" onPress={() => setMediaSheet('settings')} /></View></View>
         {!home && (canExtract || media.playback) && <View style={styles.mediaToolbar}>
           <Pressable accessibilityRole="button" accessibilityLabel={media.playback?.offline ? 'Close offline player' : media.playback ? 'Return to web player' : 'Use native player for background playback'} disabled={media.busy} style={styles.mediaButton} onPress={() => {
             if (media.playback) { const offline = media.playback.offline; media.closePlayer(!offline); if (offline && !source) setHome(true); }
@@ -298,6 +300,12 @@ function Browser() {
         </View>
       </KeyboardAvoidingView>
       <PlayerRuntime ref={playerRuntime} />
+      <SavedWordsSheet visible={wordsVisible} onClose={() => setWordsVisible(false)} onOpen={entry => {
+        setWordsVisible(false);
+        if (!home && currentVideo.current === entry.videoId) {
+          if (!media.seek(entry.start)) webView.current?.injectJavaScript(seekScript(entry.videoId, entry.start));
+        } else navigate(`https://m.youtube.com/watch?v=${entry.videoId}&t=${Math.floor(entry.start)}s`);
+      }} />
       <AiSheet visible={aiVisible} onClose={() => { setAiVisible(false); setAiSummaryRequest(null); }} transcript={transcript} videoId={youtubeVideoId(url)} summaryRequest={aiSummaryRequest} />
       <MediaSheet mode={mediaSheet} onClose={() => setMediaSheet(null)} catalog={media.catalog} loading={media.busy} error={media.error}
         onRefresh={() => { media.resolveMedia().catch(() => {}); }} downloads={downloads}
