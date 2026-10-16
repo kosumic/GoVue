@@ -8,6 +8,8 @@ SponsorBlock data comes from the [SponsorBlock API](https://wiki.sponsor.ajay.ap
 
 The Android build patches Expo Video's PiP activity lookup. Expo Video's MIT license is included in `Expo-Video-MIT.txt`.
 
+The bundled language picker uses language codes and aliases from the [Library of Congress ISO 639 list](https://www.loc.gov/standards/iso639-2/ISO-639-2_utf-8.txt), and Unicode CLDR display names captured through `Intl.DisplayNames`. The Unicode data license is included in `Unicode-3.0.txt`.
+
 OpenMinis was studied as an architectural reference for model providers and account connections. No OpenMinis code was copied or translated. LingoPlay implements the provider protocols independently in its shared Rust core and native adapters. Identity-token verification uses jsonwebtoken; its MIT notice is included in `Jsonwebtoken-MIT.txt`.
 
 AI replies and video summaries use [Enriched Markdown](https://github.com/software-mansion/enriched-markdown) for native Markdown rendering. Its license and the bundled parser, syntax-highlighting, Unicode, and math notices are included in `EnrichedMarkdown-ThirdParty.txt`.

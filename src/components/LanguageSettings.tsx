@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Keyboard, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Check, Pencil, Plus, Trash2 } from 'lucide-react-native';
 import { languageLevels, languageSettings, type LanguageLevel, type LanguageSettings as Settings } from '../core/languages';
 import { colors } from '../theme';
 import { IconButton } from './IconButton';
+import { LanguagePicker } from './LanguagePicker';
 
 type Group = keyof Settings;
 type Editor = { group: Group; index: number | null; language: string; level: LanguageLevel };
@@ -65,8 +66,8 @@ export function LanguageSettings() {
       })}
       {editor?.group === group.key ? <View style={styles.editor}>
         <Text style={styles.label}>{editor.index === null ? 'Add a language' : 'Edit language'}</Text>
-        <TextInput accessibilityLabel={group.key === 'known' ? 'Language I know' : 'Language I want to learn'} placeholder="Language name, e.g. Spanish" placeholderTextColor={colors.muted} style={styles.input}
-          value={editor.language} onChangeText={language => setEditor({ ...editor, language })} maxLength={80} editable={!saving} autoCapitalize="words" autoCorrect={false} returnKeyType="done" onSubmitEditing={() => Keyboard.dismiss()} />
+        <LanguagePicker label={group.key === 'known' ? 'Language I know' : 'Language I want to learn'} value={editor.language} onChange={language => setEditor({ ...editor, language })}
+          disabled={saving} excluded={settings[group.key].filter((_, index) => index !== editor.index).map(entry => entry.language)} />
         <Text style={styles.label}>{group.key === 'known' ? 'Current level' : 'Target level'}</Text>
         <View accessibilityRole="radiogroup" accessibilityLabel={group.key === 'known' ? 'Current language level' : 'Target language level'} style={styles.levels}>
           {languageLevels.filter(level => group.key === 'known' || level.value !== 'native').map(level => <Pressable key={level.value} accessibilityRole="radio"
@@ -107,7 +108,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
   description: { flex: 1, gap: 4 },
   editor: { gap: 12, paddingVertical: 12 },
-  input: { color: colors.ink, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 14, fontSize: 16 },
   levels: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   level: { minWidth: 48, minHeight: 48, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
   selectedLevel: { backgroundColor: colors.accentSoft, borderColor: colors.accent },

@@ -14,6 +14,7 @@ uniffi::setup_scaffolding!();
 mod media;
 mod transport;
 mod ai;
+mod language_catalog;
 mod languages;
 mod vocabulary;
 pub use ai::{ai_execute, install_ai_platform, AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret};
@@ -361,6 +362,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     if op == "language_settings" {
         return languages::settings(&command, root);
+    }
+    if op == "language_choices" {
+        return language_catalog::choices(&command);
     }
     if op.starts_with("media_") || op.starts_with("sponsor_") || op.starts_with("downloads_") {
         return media::dispatch(&command, root);
