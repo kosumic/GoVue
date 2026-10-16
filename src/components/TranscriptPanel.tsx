@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { Copy, LocateFixed, RotateCw, Search, Share2, Sparkles, X } from 'lucide-react-native';
 import { colors } from '../theme';
@@ -9,12 +9,14 @@ import { IconButton } from './IconButton';
 import { TranscriptWords } from './TranscriptWords';
 import { saveWord } from '../core/vocabulary';
 
-export function TranscriptPanel({ data, loading, error, cached, position, onClose, onExtract, onSeek, onSummarize }: {
+export function TranscriptPanel({ data, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onSummarize }: {
   data: Transcript | null;
   loading: boolean;
   error: string | null;
   cached: boolean;
   position: number | null;
+  pauseAfterLine: boolean;
+  onPauseAfterLine: (enabled: boolean) => void;
   onClose: () => void;
   onExtract: (track?: string) => void;
   onSeek: (seconds: number) => void;
@@ -111,6 +113,11 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
         <View style={styles.empty}><Text style={styles.emptyTitle}>Transcript unavailable</Text><Text accessibilityRole="alert" style={styles.help}>{error}</Text>
           <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>
       ) : data ? <>
+        <View style={styles.pauseRow}>
+          <Text style={styles.pauseLabel}>Pause after each line</Text>
+          <Switch accessibilityLabel="Pause after each transcript line" accessibilityHint="Resume playback when you are ready for the next line"
+            value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
+        </View>
         <View style={styles.summaryRow}><Pressable accessibilityRole="button" accessibilityLabel="Summarize video with AI"
           accessibilityHint="Send this transcript to your selected AI provider and open the summary"
           onPress={onSummarize} style={({ pressed }) => [styles.summary, pressed && styles.pressedSegment]}>
@@ -161,6 +168,8 @@ export function TranscriptPanel({ data, loading, error, cached, position, onClos
 }
 
 const styles = StyleSheet.create({
+  pauseRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, minHeight: 48 },
+  pauseLabel: { flex: 1, color: colors.ink, fontSize: 13 },
   panel: { flex: 1, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.line },
   heading: { flexDirection: 'row', alignItems: 'center', paddingLeft: 20, paddingRight: 6, paddingVertical: 8 },
   headingText: { flex: 1, gap: 3 },

@@ -67,7 +67,7 @@ function Browser() {
   const downloads = useDownloads();
   const playerRuntime = useRef<PlayerRuntimeHandle>(null);
   const media = useMediaBrowser(webView, youtubeVideoId(url), pageAgent, playerRuntime);
-  const transcriptPlayback = useTranscriptPosition(webView, media.player, youtubeVideoId(url), panel && !home && !!transcript && (!pageStopped.current || !!media.playback), media.playback?.videoId ?? null);
+  const transcriptPlayback = useTranscriptPosition(webView, media.player, youtubeVideoId(url), panel && !home && !!transcript && !extracting && !transcriptError && (!pageStopped.current || !!media.playback), media.playback?.videoId ?? null, transcript, media.settings.pauseAfterLine);
   const playerState = useEvent(media.player, 'statusChange', { status: media.player.status, error: undefined });
   const playerStatus = playerState?.status ?? media.player.status;
   const playerError = playerState?.error;
@@ -348,6 +348,7 @@ function Browser() {
           }} />}
           {panel && <View style={[styles.transcript, browserMinimized && styles.fill]}><TranscriptPanel key={currentVideo.current} data={transcript} loading={extracting} error={transcriptError} cached={cachedTranscript}
             position={transcriptPlayback.position}
+            pauseAfterLine={media.settings.pauseAfterLine} onPauseAfterLine={pauseAfterLine => media.updateSettings({ pauseAfterLine })}
             onSummarize={() => {
               if (!transcript || extracting || transcriptError || transcript.videoId !== currentVideo.current) return;
               Keyboard.dismiss();
@@ -356,6 +357,7 @@ function Browser() {
             }}
             onClose={closePanel} onExtract={requestTranscript} onSeek={seconds => {
               Keyboard.dismiss();
+              transcriptPlayback.reset();
               if (!media.seek(seconds) && currentVideo.current) webView.current?.injectJavaScript(seekScript(currentVideo.current, seconds));
             }} /></View>}
         </View>

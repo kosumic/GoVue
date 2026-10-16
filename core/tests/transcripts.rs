@@ -66,6 +66,93 @@ fn operation(op: &str) -> Value {
     json!({"op":op,"videoId":VIDEO,"trackId":".en"})
 }
 
+fn playback(store: &Store, cursor: Value, position: Value, changes: Value) -> Value {
+    let mut command = operation("transcript_playback");
+    command["cursor"] = cursor;
+    command["position"] = position;
+    command["playing"] = json!(true);
+    command["rate"] = json!(1.0);
+    command["elapsed"] = json!(0.2);
+    for (key, value) in changes.as_object().unwrap() {
+        command[key] = value.clone();
+    }
+    store.value(command)
+}
+
+#[test]
+fn line_pauses_cover_gaps_overlaps_missing_durations_and_resume() {
+    let store = Store::new();
+    let mut response = reply();
+    response["transcript"]["segments"] = json!([
+        {"start":0,"duration":1,"text":"First"},
+        {"start":2,"duration":0,"text":"Missing duration"},
+        {"start":4,"duration":4,"text":"Overlapping"},
+        {"start":6,"duration":1,"text":"Final timed line"},
+        {"start":8,"duration":0,"text":"Unknown ending"}
+    ]);
+    store.value(accept(response));
+    let mut cursor = Value::Null;
+    for (position, expected) in [
+        (0.9, false),
+        (1.01, true),
+        (1.01, false),
+        (1.1, false),
+        (1.2, false), // The gap does not cause another pause.
+        (3.9, false),
+        (4.01, true), // Missing duration ends at the next line.
+        (5.9, false),
+        (6.01, true), // The next line cuts off an overlap.
+        (6.9, false),
+        (7.01, true), // The final timed line still pauses.
+        (8.9, false),
+        (9.01, false), // Do not invent a final duration.
+    ] {
+        let result = playback(&store, cursor, json!(position), json!({}));
+        assert_eq!(result["pause"], expected, "position {position}");
+        cursor = result["cursor"].clone();
+    }
+}
+
+#[test]
+fn line_pauses_rearm_after_seeks_ads_and_delayed_or_paused_samples() {
+    let store = Store::new();
+    store.value(accept(reply()));
+    let initial = playback(&store, Value::Null, json!(14.4), json!({}));
+    assert_eq!(initial["pause"], false);
+    let cursor = initial["cursor"].clone();
+    assert_eq!(
+        playback(&store, cursor.clone(), json!(14.51), json!({}))["pause"],
+        true
+    );
+    for (position, changes) in [
+        (json!(30), json!({})),
+        (json!(13), json!({})),
+        (json!(14.51), json!({"seeking":true})),
+        (json!(14.51), json!({"playing":false})),
+        (json!(14.51), json!({"elapsed":2})),
+        (Value::Null, json!({})),
+    ] {
+        let result = playback(&store, cursor.clone(), position, changes);
+        assert_eq!(result["pause"], false);
+    }
+    let reset = playback(&store, cursor, Value::Null, json!({}));
+    assert!(reset["cursor"].is_null());
+    assert_eq!(
+        playback(&store, reset["cursor"].clone(), json!(14.6), json!({}))["pause"],
+        false
+    );
+    let fast = playback(&store, Value::Null, json!(13.9), json!({"rate":4}));
+    assert_eq!(
+        playback(
+            &store,
+            fast["cursor"].clone(),
+            json!(14.6),
+            json!({"rate":4})
+        )["pause"],
+        true
+    );
+}
+
 #[test]
 fn validates_origins_and_correlates_requests_and_video_identity() {
     let store = Store::new();

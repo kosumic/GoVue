@@ -162,13 +162,19 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         "media_playback" => super::transport::playback(command),
         "media_speeds" => Ok(json!(playback::SPEEDS)),
         "media_settings" => {
-            let defaults = json!({"adBlock":true,"sponsorBlock":true,"backgroundPlayback":true,"autoPip":false,
+            let defaults = json!({"adBlock":true,"sponsorBlock":true,"backgroundPlayback":true,"autoPip":false,"pauseAfterLine":false,
                 "playbackSpeed":1.0,"qualityHeight":0,"categories":["sponsor","selfpromo","interaction"]});
             let mut settings = read(root, "settings.json", defaults.clone());
             if !settings.is_object() {
                 settings = defaults.clone();
             }
-            for key in ["adBlock", "sponsorBlock", "backgroundPlayback", "autoPip"] {
+            for key in [
+                "adBlock",
+                "sponsorBlock",
+                "backgroundPlayback",
+                "autoPip",
+                "pauseAfterLine",
+            ] {
                 if !settings[key].is_boolean() {
                     settings[key] = defaults[key].clone();
                 }
@@ -201,7 +207,13 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     }
                     settings["qualityHeight"] = height.clone();
                 }
-                for key in ["adBlock", "sponsorBlock", "backgroundPlayback", "autoPip"] {
+                for key in [
+                    "adBlock",
+                    "sponsorBlock",
+                    "backgroundPlayback",
+                    "autoPip",
+                    "pauseAfterLine",
+                ] {
                     if let Some(value) = update.get(key).filter(|v| v.is_boolean()) {
                         settings[key] = value.clone();
                     }
@@ -452,10 +464,12 @@ mod tests {
         let migrated = dispatch(&json!({"op":"media_settings"}), root).unwrap();
         assert_eq!(migrated["playbackSpeed"], 1.0);
         assert_eq!(migrated["qualityHeight"], 0);
-        dispatch(&json!({"op":"media_settings","settings":{"playbackSpeed":1.5,"qualityHeight":1080,"url":"https://r1.googlevideo.com/private"}}), root).unwrap();
+        assert_eq!(migrated["pauseAfterLine"], false);
+        dispatch(&json!({"op":"media_settings","settings":{"playbackSpeed":1.5,"qualityHeight":1080,"pauseAfterLine":true,"url":"https://r1.googlevideo.com/private"}}), root).unwrap();
         let restored = dispatch(&json!({"op":"media_settings"}), root).unwrap();
         assert_eq!(restored["playbackSpeed"], 1.5);
         assert_eq!(restored["qualityHeight"], 1080);
+        assert_eq!(restored["pauseAfterLine"], true);
         assert_eq!(restored["adBlock"], false);
         assert_eq!(restored["categories"], json!(["sponsor"]));
         for invalid in [

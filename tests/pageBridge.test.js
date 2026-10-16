@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { YOUTUBE_BRIDGE, extractionScript, playbackPositionScript, seekScript } from '../src/youtube/pageBridge.js';
+import { YOUTUBE_BRIDGE, cancelPositionScript, extractionScript, pauseScript, playbackPositionScript, seekScript } from '../src/youtube/pageBridge.js';
 
 const videoId = 'abcdefghijk';
 const otherVideoId = '0123456789a';
@@ -511,5 +511,46 @@ test('playback positions reject a stale SPA player and hide ad or unavailable ti
     env.window.eval(playbackPositionScript('position:2', otherVideoId));
     assert.equal(env.messages.at(-1).videoId, otherVideoId);
     assert.equal(env.messages.at(-1).seconds, 31.25);
+  } finally { env.close(); }
+});
+
+test('line pauses require the current request, player, and timeline and can be cancelled', () => {
+  const env = setup(async () => env.response({}));
+  try {
+    const player = env.window.document.createElement('div');
+    player.id = 'movie_player';
+    let owner = videoId;
+    player.getVideoData = () => ({ video_id: owner });
+    let pauses = 0;
+    player.pauseVideo = () => { pauses++; };
+    env.window.document.body.append(player);
+    const video = env.window.document.querySelector('video');
+    player.append(video);
+    video.currentTime = 2;
+    video.playbackRate = 1.5;
+    Object.defineProperty(video, 'paused', { value: false });
+    env.window.eval(YOUTUBE_BRIDGE);
+    env.window.eval(playbackPositionScript('current', videoId, true));
+    assert.deepEqual(env.messages.at(-1), { type: 'playbackPosition', requestId: 'current', videoId,
+      seconds: 2, playing: true, seeking: false, rate: 1.5 });
+    env.window.eval(pauseScript('old', videoId, 2));
+    env.window.eval(pauseScript('current', otherVideoId, 2));
+    env.window.eval(pauseScript('current', videoId, 20));
+    player.classList.add('ad-showing');
+    env.window.eval(pauseScript('current', videoId, 2));
+    player.classList.remove('ad-showing');
+    owner = otherVideoId;
+    env.window.eval(pauseScript('current', videoId, 2));
+    owner = videoId;
+    assert.equal(pauses, 0);
+    env.window.eval(pauseScript('current', videoId, 2));
+    assert.equal(pauses, 1);
+    env.window.eval(cancelPositionScript('current'));
+    env.window.eval(pauseScript('current', videoId, 2));
+    assert.equal(pauses, 1, 'closing the reader cancels queued pauses');
+    env.window.eval(playbackPositionScript('next', videoId, true));
+    Object.defineProperty(video, 'seeking', { value: true });
+    env.window.eval(pauseScript('next', videoId, 2));
+    assert.equal(pauses, 1, 'a seek invalidates the sampled timeline');
   } finally { env.close(); }
 });

@@ -16,6 +16,7 @@ mod language_catalog;
 mod languages;
 mod media;
 mod trace;
+mod transcript_playback;
 mod transport;
 mod vocabulary;
 pub use ai::{
@@ -465,8 +466,22 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         }
         return Ok(Value::Null);
     }
-    let data = load(root, id, string(&command, "trackId")?)?;
+    let track = string(&command, "trackId")?;
+    if op == "transcript_playback" {
+        // Position samples are frequent. Borrow the cached document rather
+        // than cloning every caption string for each playback update.
+        let path = cache_path(root, id, track)?;
+        let docs = DOCUMENTS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((_, data)) = docs.iter().find(|(p, _)| p == &path) {
+            return transcript_playback::step(data, &command);
+        }
+    }
+    let data = load(root, id, track)?;
     match op {
+        "transcript_playback" => transcript_playback::step(&data, &command),
         "load" => {
             Ok(serde_json::to_value(data).map_err(|_| "Could not encode cached transcript.")?)
         }
