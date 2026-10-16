@@ -1,17 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Plus } from 'lucide-react-native';
 import { aiRequest } from '../../modules/lingoplay-core';
-import type { AiController, Group, Model, Provider, ProviderChoice, ProviderDraft } from '../ai/useAi';
+import type { AiController, ConnectionPreview, Group, Model, Provider, ProviderChoice, ProviderDraft } from '../ai/useAi';
 import { colors } from '../theme';
 import { AiMarkdown } from './AiMarkdown';
 
 const protocolNames: [string, string][] = [['', 'Provider default'], ['chat', 'Chat Completions'], ['responses', 'Responses'], ['anthropic', 'Anthropic Messages'], ['gemini', 'Gemini']];
 const levels = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
-const draftOf = (p: Provider): ProviderDraft => ({ id: p.id, label: p.label, kind: p.kind, baseUrl: p.baseUrl, model: p.model, enabled: p.enabled, auth: p.auth, protocol: p.protocol, azure: p.azure, models: p.models });
+const draftOf = (p: Provider): ProviderDraft => ({ id: p.id, label: p.label, kind: p.kind, baseUrl: p.baseUrl, model: p.model, enabled: p.enabled, auth: p.auth, protocol: p.protocol, azure: p.azure, appendV1Suffix: !!p.appendV1Suffix, customUserAgent: p.customUserAgent || '', models: p.models });
 function Action({ title, onPress, disabled = false }: { title: string; onPress: () => void; disabled?: boolean }) {
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.action, disabled && s.disabled]}><Text style={s.actionText}>{title}</Text></Pressable>;
 }
@@ -43,13 +43,35 @@ export function AiProviders({ ai }: { ai: AiController }) {
   const [transfer, setTransfer] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState<ConnectionPreview | null>(null);
+  const [keySettings, setKeySettings] = useState<Pick<ProviderDraft, 'baseUrl' | 'protocol' | 'azure' | 'appendV1Suffix'> | null>(null);
   const editing = ai.providers.find(p => p.id === draft?.id);
   const choice = ai.choices.find(c => c.kind === draft?.kind);
   const oauth = draft?.auth === 'oauth' || ['chatgpt', 'codex', 'copilot'].includes(draft?.kind || '');
+  const authChanged = !!editing && (draft?.auth || 'key') !== (editing.auth || 'key');
+  const connected = !!editing?.connected && !authChanged;
   const busy = !!ai.busy || saving;
+  useEffect(() => {
+    let active = true;
+    setPreview(null);
+    if (!draft) return;
+    const timer = setTimeout(() => {
+      void aiRequest<ConnectionPreview>({ op: 'ai_connection_preview', provider: { ...draft, models: undefined } }).then(result => { if (active) setPreview(result); }).catch(e => { if (active) setError(e.message); });
+    }, 120);
+    return () => { active = false; clearTimeout(timer); };
+  }, [draft]);
   function clear() { ai.clear(); setError(''); setKey(''); setQuery(''); }
-  function editProvider(p: Provider) { clear(); setDraft(draftOf(p)); }
-  function add(c: ProviderChoice) { clear(); setDraft({ id: '', kind: c.kind, label: c.name, auth: c.auth[0], baseUrl: '', model: '', models: [], enabled: true, protocol: '', azure: false }); }
+  function editProvider(p: Provider) { clear(); setKeySettings(null); setDraft(draftOf(p)); }
+  function add(c: ProviderChoice) { clear(); setKeySettings(null); setDraft({ id: '', kind: c.kind, label: c.name, auth: c.auth[0], baseUrl: '', model: '', models: [], enabled: true, protocol: '', azure: false, appendV1Suffix: false, customUserAgent: '' }); }
+  function changeAuth(auth: string) {
+    if (!draft || auth === (draft.auth || 'key')) return;
+    setKey('');
+    const defaults = { baseUrl: '', protocol: '', azure: false, appendV1Suffix: false };
+    if (auth === 'oauth') {
+      setKeySettings({ baseUrl: draft.baseUrl, protocol: draft.protocol, azure: draft.azure, appendV1Suffix: draft.appendV1Suffix });
+      setDraft({ ...draft, auth, ...defaults });
+    } else setDraft({ ...draft, auth, ...(keySettings || defaults) });
+  }
   async function saveProvider() {
     if (!draft || saving) return null;
     setSaving(true);
@@ -154,33 +176,40 @@ export function AiProviders({ ai }: { ai: AiController }) {
       <Text style={s.help}>{choice?.description}</Text>
       <Field label="Connection name" value={draft.label} onChange={label => setDraft({ ...draft, label })} />
       <Toggle label="Enabled" value={draft.enabled !== false} onChange={enabled => setDraft({ ...draft, enabled })} />
-      {!draft.id && !!choice && choice.auth.length > 1 && <><Text style={s.label}>Authentication</Text><Choices value={draft.auth || 'key'} items={choice.auth.map(v => [v, v === 'oauth' ? 'Account sign-in' : 'API key'])} onChange={auth => { setDraft({ ...draft, auth }); setKey(''); }} /></>}
+      {!!choice && choice.auth.length > 1 && <><Text style={s.label}>Authentication</Text><Choices value={draft.auth || 'key'} items={choice.auth.map(v => [v, v === 'oauth' ? 'Account sign-in' : 'API key'])} onChange={changeAuth} /></>}
+      {authChanged && <Text style={s.help}>Saving this authentication change signs out the previous credentials. Your models, groups and chats stay linked to this connection.</Text>}
       {oauth ? <>
-        {editing?.account && <Text style={s.label}>{editing.account}</Text>}
-        <Text style={s.help}>{editing?.needsReauth ? 'Your account needs to sign in again.' : editing?.connected ? 'Account connected' : 'Sign in to connect this account.'}</Text>
-        <Action title={editing?.connected ? 'Reconnect account' : `Continue with ${choice?.name || draft.label}`} disabled={busy} onPress={connect} />
+        {connected && editing?.account && <Text style={s.label}>{editing.account}</Text>}
+        <Text style={s.help}>{!authChanged && editing?.needsReauth ? 'Your account needs to sign in again.' : connected ? 'Account connected' : 'Sign in to connect this account.'}</Text>
+        <Action title={connected ? 'Reconnect account' : `Continue with ${choice?.name || draft.label}`} disabled={busy} onPress={connect} />
         {draft.kind === 'chatgpt' && <Text style={s.help}>Available models depend on ChatGPT plan sharing eligibility. You can also add a separate ChatGPT / Codex connection.</Text>}
-        {editing?.connected && <Action title="Disconnect account" disabled={busy} onPress={() => { setKey(''); void ai.run('disconnect', editing.id); }} />}
+        {connected && editing && <Action title="Disconnect account" disabled={busy} onPress={() => { setKey(''); void ai.run('disconnect', editing.id); }} />}
         {draft.kind === 'chatgpt' && <Action title="Manage ChatGPT usage" onPress={() => { void Linking.openURL('https://chatgpt.com/settings/usage').catch(() => setError('Could not open account settings.')); }} />}
       </> : <>
-        <Field label={editing?.connected ? 'Replace API key (optional)' : 'API key'} secure value={key} onChange={setKey} placeholder={editing?.connected ? 'Leave blank to keep saved key' : draft.kind === 'custom' ? 'Optional for a keyless endpoint' : 'Enter your API key'} />
-        <Field label="API base URL" value={draft.baseUrl} onChange={baseUrl => setDraft({ ...draft, baseUrl })} editable={!draft.id} placeholder={draft.kind === 'custom' ? 'https://example.com/v1' : 'Use provider endpoint'} />
-        <Text style={s.help}>Include the API version path, such as /v1. HTTPS is required except on localhost. Add a new connection to use another endpoint.</Text>
-        <Text style={s.label}>API protocol</Text><Choices value={draft.protocol || ''} items={protocolNames} onChange={protocol => setDraft({ ...draft, protocol })} />
-        <Toggle label="Azure OpenAI deployment" value={!!draft.azure} onChange={azure => setDraft({ ...draft, azure })} />
+        <Field label={connected ? 'Replace API key (optional)' : 'API key'} secure value={key} onChange={setKey} placeholder={connected ? 'Leave blank to keep saved key' : draft.kind === 'custom' ? 'Optional for a keyless endpoint' : 'Enter your API key'} />
+        <Field label="API base URL" value={draft.baseUrl} onChange={baseUrl => setDraft({ ...draft, baseUrl })} placeholder={draft.kind === 'custom' ? 'https://example.com' : 'Use provider endpoint'} />
+        <Text style={s.help}>HTTPS is required except on localhost. The saved API key will be used with this endpoint.</Text>
+        <Text style={s.label}>API protocol</Text><Choices value={draft.protocol || ''} items={protocolNames} onChange={protocol => setDraft({ ...draft, protocol, ...(protocol === 'gemini' ? { appendV1Suffix: false } : {}) })} />
+        <Toggle label="Azure OpenAI deployment" value={!!draft.azure} onChange={azure => setDraft({ ...draft, azure, ...(azure ? { appendV1Suffix: false } : {}) })} />
         {draft.azure && <Text style={s.help}>Use the Azure resource endpoint with its api-version query. Model IDs are deployment names.</Text>}
+        {(preview?.canAppendV1 || draft.appendV1Suffix) && <Toggle label="Append /v1 automatically" value={!!draft.appendV1Suffix} onChange={appendV1Suffix => setDraft({ ...draft, appendV1Suffix })} />}
       </>}
+      <Field label="User-Agent" value={draft.customUserAgent || ''} onChange={customUserAgent => setDraft({ ...draft, customUserAgent })} placeholder="Use provider default" />
+      <Text style={s.help}>Applies to model discovery and AI replies. A model-specific User-Agent takes precedence for that model.</Text>
+      {!!preview?.effectiveBaseUrl && <View style={s.field}><Text style={s.label}>Effective API base URL</Text><Text selectable style={s.help}>{preview.effectiveBaseUrl}</Text></View>}
+      {oauth && <Text style={s.help}>Account sign-in uses this provider’s own endpoint.</Text>}
+      {!!preview?.error && <Text accessibilityRole="alert" style={s.error}>{preview.error}</Text>}
       <Action title="Save connection" disabled={busy || !draft.label.trim()} onPress={() => { void saveProvider(); }} />
       {editing && <>
         <Text style={s.section}>Saved models · {editing.models.length}</Text>
-        <View style={s.row}><View style={s.grow}><Action title="Refresh model list" disabled={busy || !editing.connected || !editing.enabled} onPress={() => { void ai.run('models', editing.id); }} /></View><Action title="Add model ID" disabled={busy} onPress={() => { void editModel({ id: '', name: '', reasoning: '', hidden: false }); }} /></View>
+        <View style={s.row}><View style={s.grow}><Action title="Refresh model list" disabled={busy || !connected || !editing.enabled} onPress={() => { void saveProvider().then(p => { if (p) void ai.run('models', p.id); }); }} /></View><Action title="Add model ID" disabled={busy} onPress={() => { void editModel({ id: '', name: '', reasoning: '', hidden: false }); }} /></View>
         <Field label="Search saved models" value={query} onChange={setQuery} />
         {editing.models.filter(m => `${m.id} ${m.name}`.toLowerCase().includes(query.toLowerCase())).slice(0, 80).map(m => {
           const i = editing.models.indexOf(m);
           return <View key={m.id} style={[s.row, m.hidden && s.disabled]}><Pressable accessibilityRole="button" accessibilityLabel={`Configure ${m.name}`} onPress={() => { void editModel(m); }} style={s.grow}><Text style={s.label}>{m.name}</Text><Text style={s.help}>{m.id}{m.hidden ? ' · Hidden' : ''}{editing.model === m.id ? ' · Selected' : ''}</Text></Pressable><Order up={!busy && i ? () => { void reorder(editing.models.map(m => m.id), i, -1, { id: editing.id }); } : undefined} down={!busy && i < editing.models.length - 1 ? () => { void reorder(editing.models.map(m => m.id), i, 1, { id: editing.id }); } : undefined} /><ChevronRight size={17} color={colors.muted} /></View>;
         })}
         {editing.models.length > 80 && <Text style={s.help}>Search to narrow the model list.</Text>}
-        <Action title="Test selected model" disabled={busy || !editing.connected || !editing.model || !editing.enabled} onPress={() => { void ai.run('chat', editing.id, { prompt: 'Reply with exactly: Connection successful.', includeTranscript: false }); }} />
+        <Action title="Test selected model" disabled={busy || !connected || !editing.model || !editing.enabled} onPress={() => { void saveProvider().then(p => { if (p) void ai.run('chat', p.id, { prompt: 'Reply with exactly: Connection successful.', includeTranscript: false }); }); }} />
         {!!ai.text && <AiMarkdown content={ai.text} streaming={ai.busy === 'chat'} />}
         <Action title="Remove connection" disabled={busy} onPress={() => removeProvider(editing)} />
       </>}
