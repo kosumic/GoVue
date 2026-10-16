@@ -47,17 +47,19 @@ final class NativeAiPlatform: AiPlatform, @unchecked Sendable {
     return SecItemAdd(q.merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess
   }
   func request(request: AiHttpRequest, response: AiResponse) {
-    guard let url = URL(string: request.url), url.scheme == "https", ["GET", "POST"].contains(request.method) else { response.failed(); return }
+    guard let url = URL(string: request.url),
+      url.scheme == "https" || (url.scheme == "http" && ["127.0.0.1", "localhost"].contains(url.host ?? "")),
+      url.user == nil, url.password == nil, ["GET", "POST"].contains(request.method) else { response.failed(); return }
     var req = URLRequest(url: url); req.httpMethod = request.method
     if request.method == "POST" { req.httpBody = Data(request.body.utf8) }
     for header in request.headers { req.setValue(header.value, forHTTPHeaderField: header.name) }
     let delegate = AiHttpDelegate(response)
     let configuration = URLSessionConfiguration.ephemeral
     configuration.httpCookieStorage = nil; configuration.urlCache = nil
-    configuration.timeoutIntervalForRequest = 180; configuration.timeoutIntervalForResource = 300
+    configuration.timeoutIntervalForRequest = 600; configuration.timeoutIntervalForResource = 900
     let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     let task = session.dataTask(with: req); task.resume()
-    let deadline = Date().addingTimeInterval(305)
+    let deadline = Date().addingTimeInterval(905)
     while delegate.done.wait(timeout: .now() + 0.2) == .timedOut {
       if response.isCancelled() { task.cancel(); break }
       if Date() >= deadline { task.cancel(); response.failed(); break }
