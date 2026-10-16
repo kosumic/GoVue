@@ -158,6 +158,8 @@ Normalized transcripts are cached in app-private storage (up to 20 documents / 2
 
 The WebView keeps its initial source and full page height when the transcript opens; its visible region is clipped so YouTube does not mistake the smaller window for picture-in-picture and pause playback. Caption taps use the existing player's seek and play controls.
 
+If a browser renderer terminates, pending page requests are cancelled while the transcript and native player remain available. Android disposes the dead WebView immediately; **Reload** creates a fresh view at the current address. iOS reloads its existing WebView. Recovery reloads the page rather than restoring its DOM or unsaved forms. The isolated signature runtime rejects interrupted jobs and recovers on the next evaluation, waiting for its script to be ready before accepting work. Neither path automatically replays interrupted requests.
+
 YouTube's internal endpoints can change. Videos without captions, restricted videos, unavailable live captions, and token-protected responses may not yield a transcript. Retry after playing or reloading the video. This app reads available captions; it does not transcribe audio or translate text.
 
 Downloads support finite AVC/AAC MP4 streams and M4A audio. Native online playback currently requires a combined video/audio stream. Live-stream downloads are unavailable. Pause/resume works while the app process survives; an interrupted process requires opening the video and retrying. Saved files and download history persist across restarts. Ad blocking hides known placements, blocks known ad requests, and skips detected video ads; YouTube changes can affect its effectiveness. SponsorBlock uses community data and continues playback if the service is unavailable.
