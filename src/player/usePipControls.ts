@@ -134,11 +134,14 @@ export function usePipControls(input: {
   useEffect(() => {
     active.current = true;
     const subscription = observePipActions((sample) => {
-      const videoId =
-        sample.action === 'foreground'
-          ? (current.current.media.playback?.videoId ?? sample.videoId)
-          : sample.videoId;
-      void perform(sample.action, videoId, sample.handoff);
+      // Foreground restoration must survive an in-flight PiP action. Dropping
+      // it in perform's duplicate-action guard can leave video disabled after
+      // the headphones handoff. request serializes it behind pending work.
+      if (sample.action === 'foreground') {
+        void request('foreground', sample.handoff).catch(() => {});
+        return;
+      }
+      void perform(sample.action, sample.videoId, sample.handoff);
     });
     const player = input.media.player;
     const playing = player.addListener('playingChange', () => {

@@ -228,6 +228,17 @@ function Browser() {
   );
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  useEffect(() => {
+    if (
+      session.fullscreen || session.pip ||
+      workspaceSize.width <= 0 || workspaceSize.height <= 0
+    ) return;
+    // PiP and layout events can arrive in either order. Reconcile again when
+    // PiP ends even if the workspace's final layout event already arrived.
+    setFrame(previous =>
+      previous.width === workspaceSize.width && previous.height === workspaceSize.height
+        ? previous : { width: workspaceSize.width, height: workspaceSize.height });
+  }, [session.fullscreen, session.pip, workspaceSize.width, workspaceSize.height]);
   const mediaRef = useRef(media);
   mediaRef.current = media;
   useEffect(() => {
@@ -670,7 +681,6 @@ function Browser() {
             style={s.workspace}
             onLayout={(e) => {
               setWorkspaceSize(e.nativeEvent.layout);
-              if (!session.fullscreen) setFrame(e.nativeEvent.layout);
             }}
           >
             {browserIdentity.ready &&
@@ -724,7 +734,7 @@ function Browser() {
             {(media.playback || media.preparing) && (
               <Animated.View
                 pointerEvents={playerHidden ? 'none' : 'auto'}
-                style={[s.native, nativeFrame, playerHidden && s.hidden]}
+                style={[s.native, nativeFrame, mini.motionStyle, playerHidden && s.hidden]}
                 {...(session.mini ? mini.panHandlers : {})}
               >
                 <PlayerSurface

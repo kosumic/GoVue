@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Animated, Easing, PanResponder, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { coreRequest } from '../../modules/lingoplay-core';
@@ -124,12 +124,13 @@ export function useMiniPlayer({
     }
   };
   const submit = (request: Request) => {
+    if (!mounted.current || !latest.current.active) return;
     pending.current = request;
     if (running.current) return;
     running.current = true;
     void (async () => {
       try {
-        while (pending.current && mounted.current) {
+        while (pending.current && mounted.current && latest.current.active) {
           const request = pending.current;
           pending.current = null;
           const current = latest.current;
@@ -143,7 +144,11 @@ export function useMiniPlayer({
               mode: request.mode,
               pinch: request.pinch,
             });
-            if (mounted.current && request.generation === generation.current)
+            if (
+              mounted.current &&
+              latest.current.active &&
+              request.generation === generation.current
+            )
               apply(next, request);
           } catch (error) {
             if (
@@ -262,7 +267,7 @@ export function useMiniPlayer({
       opacity.stopAnimation();
     };
   }, [motion, scale, opacity]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     generation.current++;
     pending.current = null;
     origin.current = null;
@@ -270,10 +275,17 @@ export function useMiniPlayer({
     draggingRef.current = false;
     setDragging(false);
     closing.current = false;
+    motion.stopAnimation();
     scale.stopAnimation();
     opacity.stopAnimation();
     scale.setValue(1);
     opacity.setValue(1);
+    if (!active) {
+      // These nodes remain attached to the mounted video host. Stop and reset
+      // them before the full-size frame is shown, and never settle while idle.
+      motion.setValue({ x: 0, y: 0 });
+      return;
+    }
     if (size.width >= 32 && size.height >= 32)
       submit({ mode: 'settle', generation: generation.current });
   }, [size.width, size.height, bottomInset, active]);
@@ -300,6 +312,10 @@ export function useMiniPlayer({
       borderRadius: 16,
       borderWidth: 1,
       borderColor: '#ffffff12',
+    },
+    // Keep one native animated binding across embedded/mini/fullscreen modes.
+    // Removing a native-driven transform can leave its last offset on the view.
+    motionStyle: {
       opacity,
       transform: [
         { translateX: motion.x },

@@ -91,6 +91,127 @@ else
     'dialog restore',
   );
 
+// Auto-entry eligibility changes on pause, buffering, source changes and the
+// headphones action. It must not replace the view already moved into PiP:
+// otherwise exit can leave PlayerView in the window root instead of React's
+// mounted VideoView. LiTube likewise retains the active surface across PiP.
+patch(
+  '  private var pipHelperFragment: PictureInPictureHelperFragment? = null',
+  `  private var activePiPView = WeakReference<VideoView>(null)
+  private var pipHelperFragment: PictureInPictureHelperFragment? = null`,
+  'active PiP surface',
+);
+patch(
+  `  override fun onPictureInPictureStart() {
+    maybeWarnAboutAutoEnterViews()
+
+    val candidate = currentPiPViewCandidate.get()`,
+  `  override fun onPictureInPictureStart() {
+    if (isInPiP) return
+    maybeWarnAboutAutoEnterViews()
+
+    val candidate = currentPiPViewCandidate.get()
+    activePiPView = WeakReference(candidate)`,
+  'retain PiP surface',
+);
+patch(
+  `    currentPiPViewCandidate.get()?.let {
+      layoutForPiPExit(it)
+    }
+    strongVideoViews.forEach {
+      it.onStopPictureInPicture(currentPiPViewCandidate.get())
+    }
+
+    isInPiP = false`,
+  `    val candidate = activePiPView.get()
+    // Restore the root even if the video view was released during PiP.
+    layoutForPiPExit(candidate)
+    strongVideoViews.forEach {
+      it.onStopPictureInPicture(candidate)
+    }
+
+    activePiPView.clear()
+    isInPiP = false
+    findAndSetupPipCandidate()`,
+  'restore retained PiP surface',
+);
+patch(
+  `  override fun onAppBackgrounded() {
+    // At this point`,
+  `  override fun onAppBackgrounded() {
+    if (isInPiP) return
+    // At this point`,
+  'retain PiP owner on background callbacks',
+);
+patch(
+  `    appContext.get()?.mainQueue?.launch {
+      strongVideoViews.forEach {
+        if (shouldPauseOnBackground(it)) {`,
+  `    appContext.get()?.mainQueue?.launch {
+      // A queued background callback can run after the user has returned and
+      // pressed Play. It no longer owns playback in a resumed activity or PiP.
+      val host = mainActivity.get() as? FragmentActivity
+      if (isInPiP || host?.lifecycle?.currentState?.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) == true) return@launch
+      strongVideoViews.forEach {
+        if (shouldPauseOnBackground(it)) {`,
+  'ignore stale background pause',
+);
+patch(
+  '    videoView?.addView(playerView)',
+  `    videoView?.let {
+      it.addView(playerView)
+      // Re-measure the child against the current embedded/fullscreen bounds,
+      // rather than retaining the pinned window's last dimensions.
+      it.requestLayout()
+    }`,
+  'restore PiP layout',
+);
+patch(
+  '  private var activePiPView = WeakReference<VideoView>(null)',
+  `  private var activePiPPlayerView = WeakReference<View>(null)
+  private var playerViewLayoutParams: ViewGroup.LayoutParams? = null
+  private var activePiPView = WeakReference<VideoView>(null)`,
+  'retain PiP child layout',
+);
+patch(
+  `    val playerView = videoView.playerView
+    val decorView = mainActivity.window.decorView`,
+  `    val playerView = videoView.playerView
+    activePiPPlayerView = WeakReference(playerView)
+    playerViewLayoutParams = playerView.layoutParams
+    val decorView = mainActivity.window.decorView`,
+  'save embedded child layout',
+);
+patch(
+  '    val playerView = videoView?.playerView',
+  '    val playerView = videoView?.playerView ?: activePiPPlayerView.get()',
+  'remove retained PiP child',
+);
+patch(
+  '    rootView.removeView(playerView)',
+  `    rootView.removeView(playerView)
+    playerViewLayoutParams?.let { playerView?.layoutParams = it }`,
+  'restore embedded child layout',
+);
+patch(
+  `    hiddenPiPDialogs.clear()
+  }`,
+  `    hiddenPiPDialogs.clear()
+    playerViewLayoutParams = null
+    activePiPPlayerView.clear()
+    rootView.requestLayout()
+    // The React root was GONE while the window resized. Measure the restored
+    // child after making that root visible, even when Yoga's bounds did not
+    // change and React Native has no new layout to deliver.
+    videoView?.let { view ->
+      view.post {
+        if (!isInPiP && view.playerView.parent === view) view.measureAndLayout()
+      }
+    }
+  }`,
+  'measure restored PiP child',
+);
+
 writeFileSync(path, source);
 
 // Android can reject a service start after a foreground/background race. Keep
