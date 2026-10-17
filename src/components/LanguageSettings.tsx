@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Check, Pencil, Plus, Trash2 } from 'lucide-react-native';
 import { languageLevels, languageSettings, type LanguageLevel, type LanguageSettings as Settings } from '../core/languages';
-import { colors } from '../theme';
+import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { IconButton } from './IconButton';
 import { LanguagePicker } from './LanguagePicker';
 
@@ -14,6 +14,8 @@ const groups: { key: Group; title: string; help: string }[] = [
 ];
 
 export function LanguageSettings() {
+  const colors = useThemeColors();
+  const styles = useThemeStyles(makeStyles);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -97,7 +99,7 @@ export function LanguageSettings() {
   </View>;
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: { gap: 12, paddingBottom: 24, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
   intro: { color: colors.ink, fontSize: 20, fontWeight: '600' },
   title: { color: colors.ink, fontSize: 17, fontWeight: '600' },

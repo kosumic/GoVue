@@ -3,12 +3,14 @@ import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Platform, Pre
 import { Check, ChevronDown, RotateCw, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { languageChoices, type LanguageChoices } from '../core/languageCatalog';
-import { colors } from '../theme';
+import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { IconButton } from './IconButton';
 
 export function LanguagePicker({ value, onChange, excluded, disabled, label }: {
   value: string; onChange: (language: string) => void; excluded: readonly string[]; disabled: boolean; label: string;
 }) {
+  const colors = useThemeColors();
+  const styles = useThemeStyles(makeStyles);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [choices, setChoices] = useState<LanguageChoices | null>(null);
@@ -58,7 +60,7 @@ export function LanguagePicker({ value, onChange, excluded, disabled, label }: {
   </>;
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   fill: { flex: 1 },
   heading: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
