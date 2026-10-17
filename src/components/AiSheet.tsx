@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, BackHandler, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronLeft, Menu, Play, SquarePen, X } from 'lucide-react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAi } from '../ai/useAi';
 import type { Transcript } from '../youtube/transcript';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -52,6 +51,17 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   const [page, setPage] = useState<'chat' | 'providers' | 'models'>('chat');
   const [historyVisible, setHistoryVisible] = useState(false);
   const [usageVisible, setUsageVisible] = useState(false);
+  useEffect(() => {
+    if (!visible) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (transcriptVisible) setTranscriptVisible(false);
+      else if (historyVisible) setHistoryVisible(false);
+      else if (page !== 'chat') showPage('chat');
+      else close();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [visible, transcriptVisible, historyVisible, page, onClose]);
   useEffect(() => { if (!visible) { setUsageVisible(false); setHistoryVisible(false); setTranscriptVisible(false); } }, [visible]);
   useEffect(() => { setTranscriptVisible(false); }, [chatVideoId]);
   const [prompt, setPrompt] = useState('');
@@ -90,6 +100,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
     return () => { controller.abort(); if (contextAbort.current === controller) contextAbort.current = null; };
   }, [visible, chatVideoId, contextRetry]);
 
+  function close() { Keyboard.dismiss(); onClose(); }
   function showPage(next: typeof page) { Keyboard.dismiss(); setHistoryVisible(false); ai.clear(); setPage(next); }
   function newChat() { contextAbort.current?.abort(); setChatVideoId(null); chats.newChat(); setNewChatVersion(value => value + 1); setPrompt(''); setAttachment(null); showPage('chat'); }
   async function choose(id: string, model: string) {
@@ -135,8 +146,10 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
     void chats.send(selected.id, 'Summarize this video', availableTranscript, 'summary');
   }
 
-  return <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => transcriptVisible ? setTranscriptVisible(false) : historyVisible ? setHistoryVisible(false) : page === 'chat' ? onClose() : showPage('chat')}>
-    <SafeAreaView style={styles.safe}>
+  if (!visible) return null;
+  // Share the app window so the mounted VideoView can float above chat and
+  // enter system PiP without a full-screen dialog covering either surface.
+  return <View style={styles.overlay}>
       <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.safe} accessibilityElementsHidden={historyVisible || transcriptVisible} importantForAccessibility={historyVisible || transcriptVisible ? 'no-hide-descendants' : 'auto'}>
         <View style={styles.heading}>
@@ -146,7 +159,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
             <View style={styles.modelLabel}><Text numberOfLines={1} style={styles.modelName}>{selectedModel?.replace(/^gpt-/, 'GPT-') || 'Choose a model'}</Text><ChevronDown size={12} color={colors.muted} /></View>
           </Pressable> : <Text accessibilityRole="header" style={styles.pageTitle}>{page === 'models' ? 'Choose a model' : 'Providers'}</Text>}
           {page === 'chat' && <IconButton icon={SquarePen} label="New chat" onPress={newChat} />}
-          <IconButton icon={X} label="Close AI assistant" onPress={onClose} />
+          <IconButton icon={X} label="Close AI assistant" onPress={close} />
         </View>
         {page === 'chat' && chatVideoId && onOpenVideo && <Pressable accessibilityRole="button" accessibilityLabel="Open video" onPress={() => { Keyboard.dismiss(); onOpenVideo(chatVideoId); }} style={styles.videoLink}>
           <Play size={16} color={colors.ink} /><Text style={styles.videoLinkText}>Open video</Text>
@@ -173,11 +186,11 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
             : <TranscriptPanel data={null} loading={contextLoading} error={contextError || null} cached={false} position={null} pauseAfterLine={false} onClose={() => setTranscriptVisible(false)} />}
         </View>}
       </KeyboardAvoidingView>
-    </SafeAreaView>
-  </Modal>;
+  </View>;
 }
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  overlay: { ...StyleSheet.absoluteFill, zIndex: 1, backgroundColor: colors.background },
   safe: { flex: 1, backgroundColor: colors.background },
   transcriptReader: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.background },
   heading: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 5 },
