@@ -570,15 +570,15 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
 
 pub(super) fn choices() -> Value {
     json!([
-        {"kind":"chatgpt","name":"ChatGPT plan","auth":["oauth"],"description":"Sign in with ChatGPT"},
-        {"kind":"codex","name":"ChatGPT / Codex","auth":["oauth"],"description":"Codex subscription connection"},
-        {"kind":"openai","name":"OpenAI API","auth":["key"],"description":"OpenAI API billing"},
+        {"kind":"codex","name":"ChatGPT / Codex","auth":["oauth"],"description":"Sign in with your ChatGPT account"},
+        {"kind":"openai","name":"OpenAI API","auth":["key"],"description":"API key · Usage-based billing"},
         {"kind":"anthropic","name":"Anthropic / Claude","auth":["key","oauth"],"description":"API key or Claude account"},
         {"kind":"gemini","name":"Google Gemini","auth":["key"],"description":"Google AI Studio API key"},
         {"kind":"openrouter","name":"OpenRouter","auth":["key","oauth"],"description":"API key or browser authorization"},
         {"kind":"xai","name":"xAI / Grok","auth":["key","oauth"],"description":"API key or Grok account"},
         {"kind":"kimi","name":"Kimi Code","auth":["key","oauth"],"description":"Coding Plan device sign-in or API key"},
         {"kind":"copilot","name":"GitHub Copilot","auth":["oauth"],"description":"Optional, unofficial Copilot connection"},
-        {"kind":"custom","name":"Compatible endpoint","auth":["key"],"description":"OpenAI, Anthropic, Gemini or Responses over HTTPS"}
+        {"kind":"custom","name":"Compatible endpoint","auth":["key"],"description":"OpenAI, Anthropic, Gemini or Responses over HTTPS"},
+        {"kind":"chatgpt","name":"ChatGPT plan sharing","auth":["oauth"],"description":"Alternative sign-in for eligible ChatGPT plans","advanced":true}
     ])
 }
