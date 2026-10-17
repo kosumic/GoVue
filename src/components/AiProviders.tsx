@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, BackHandler, Linking, Pressable, ScrollView, 
 import Clipboard from '@react-native-clipboard/clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Plus } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Gauge, Plus } from 'lucide-react-native';
 import { aiRequest } from '../../modules/lingoplay-core';
 import type { AiController, ConnectionPreview, Group, Model, Provider, ProviderChoice, ProviderDraft } from '../ai/useAi';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -36,7 +36,7 @@ function Order({ up, down }: { up?: () => void; down?: () => void }) {
   return <View style={s.order}><Pressable accessibilityRole="button" accessibilityLabel="Move up" disabled={!up} onPress={up} style={[s.orderButton, !up && s.disabled]}><ArrowUp size={16} color={colors.muted} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Move down" disabled={!down} onPress={down} style={[s.orderButton, !down && s.disabled]}><ArrowDown size={16} color={colors.muted} /></Pressable></View>;
 }
 
-export function AiProviders({ ai }: { ai: AiController }) {
+export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () => void }) {
   const colors = useThemeColors();
   const s = useThemeStyles(makeStyles);
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
@@ -243,6 +243,7 @@ export function AiProviders({ ai }: { ai: AiController }) {
       <Field label="Provider configuration JSON" value={transfer} onChange={setTransfer} multiline />
       <Action title="Import configuration" disabled={busy || !transfer.trim()} onPress={() => { try { const data = JSON.parse(transfer); void ai.mutate({ op: 'ai_import', data }).then(r => { if (r) setTransfer(null); }); } catch { setError('Enter valid provider configuration JSON.'); } }} />
     </> : <>
+      {onUsage && <Pressable accessibilityRole="button" accessibilityLabel="Token usage" onPress={onUsage} style={s.entry}><Gauge size={24} color={colors.ink} /><View style={s.grow}><Text style={s.label}>Token usage</Text><Text style={s.help}>Totals, cache and model breakdowns</Text></View><ChevronRight size={20} color={colors.muted} /></Pressable>}
       <Text style={s.help}>Connect accounts, choose your models, and control how requests are routed.</Text>
       <Text style={s.section}>Connections</Text>
       {ai.providers.map((p, i) => <View key={p.id} style={s.row}><Pressable accessibilityRole="button" accessibilityLabel={`Edit provider ${p.label}`} style={s.grow} onPress={() => editProvider(p)}><Text style={s.label}>{p.label}</Text><Text style={s.help}>{!p.enabled ? 'Disabled' : p.needsReauth ? 'Sign-in expired' : p.connected ? `${p.models.filter(m => !m.hidden).length} models` : 'Connect to get started'}</Text></Pressable><Order up={!busy && i ? () => { void reorder(ai.providers.map(p => p.id), i, -1); } : undefined} down={!busy && i < ai.providers.length - 1 ? () => { void reorder(ai.providers.map(p => p.id), i, 1); } : undefined} /><ChevronRight size={18} color={colors.muted} /></View>)}

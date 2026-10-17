@@ -14,6 +14,6 @@ The Android build patches Expo Video's PiP activity lookup. Expo Video's MIT lic
 
 The bundled language picker uses language codes and aliases from the [Library of Congress ISO 639 list](https://www.loc.gov/standards/iso639-2/ISO-639-2_utf-8.txt), and Unicode CLDR display names captured through `Intl.DisplayNames`. The Unicode data license is included in `Unicode-3.0.txt`.
 
-OpenMinis was studied as an architectural reference for model providers and account connections. No OpenMinis code was copied or translated. LingoPlay implements the provider protocols independently in its shared Rust core and native adapters. Identity-token verification uses jsonwebtoken; its MIT notice is included in `Jsonwebtoken-MIT.txt`.
+OpenMinis was studied as an architectural reference for model providers, account connections and token-usage reporting, including the Android usage screens at commit `b4c0661d5631ebab4d1a2e6f3fd4c805d4030a6c`. No OpenMinis code was copied or translated. LingoPlay implements the provider protocols and usage aggregation independently in its shared Rust core with shared React Native presentation and native adapters. Identity-token verification uses jsonwebtoken; its MIT notice is included in `Jsonwebtoken-MIT.txt`.
 
 AI replies and video summaries use [Enriched Markdown](https://github.com/software-mansion/enriched-markdown) for native Markdown rendering. Its license and the bundled parser, syntax-highlighting, Unicode, and math notices are included in `EnrichedMarkdown-ThirdParty.txt`.

@@ -21,6 +21,7 @@ mod accounts;
 mod catalog;
 mod connections;
 mod conversations;
+mod usage;
 
 const AUTH: &str = "https://auth.openai.com";
 const RESOURCE: &str = "https://api.openai.com/v1";
@@ -541,6 +542,9 @@ struct Sse {
     text: String,
     reasoning: String,
     usage: Value,
+    counter: usage::Counter,
+    first_output: Option<Instant>,
+    last_output: Option<Instant>,
     done: bool,
     stopped: bool,
 }
@@ -553,6 +557,9 @@ impl Sse {
             text: String::new(),
             reasoning: String::new(),
             usage: Value::Null,
+            counter: usage::Counter::default(),
+            first_output: None,
+            last_output: None,
             done: false,
             stopped: false,
         }
@@ -594,6 +601,7 @@ impl Sse {
         }
         let v: Value =
             serde_json::from_str(data).map_err(|_| "Provider sent an unreadable stream event.")?;
+        let previous_output = self.text.len() + self.reasoning.len();
         let usage = if self.kind == "gemini" {
             &v["usageMetadata"]
         } else if self.kind == "responses" {
@@ -604,30 +612,7 @@ impl Sse {
             &v["usage"]
         };
         if usage.is_object() {
-            if !self.usage.is_object() {
-                self.usage = json!({});
-            }
-            for (name, keys) in [
-                (
-                    "inputTokens",
-                    &["input_tokens", "prompt_tokens", "promptTokenCount"][..],
-                ),
-                (
-                    "outputTokens",
-                    &["output_tokens", "completion_tokens", "candidatesTokenCount"][..],
-                ),
-                ("reasoningTokens", &["thoughtsTokenCount"][..]),
-            ] {
-                if let Some(n) = keys.iter().find_map(|k| usage[*k].as_u64()) {
-                    self.usage[name] = json!(n);
-                }
-            }
-            if let Some(n) = usage["output_tokens_details"]["reasoning_tokens"]
-                .as_u64()
-                .or_else(|| usage["completion_tokens_details"]["reasoning_tokens"].as_u64())
-            {
-                self.usage["reasoningTokens"] = json!(n);
-            }
+            self.counter.update(&self.kind, usage);
         }
         if matches!(
             v["type"].as_str(),
@@ -725,6 +710,18 @@ impl Sse {
             }
         };
         self.text.push_str(delta);
+        if self.text.len() + self.reasoning.len() > previous_output {
+            let tick = Instant::now();
+            self.first_output.get_or_insert(tick);
+            self.last_output = Some(tick);
+        }
+        self.usage = self.counter.value(&self.kind);
+        if let (Some(first), Some(last)) = (self.first_output, self.last_output) {
+            let ms = last.saturating_duration_since(first).as_millis() as u64;
+            if ms > 0 && self.usage["outputTokens"].as_u64().is_some_and(|n| n > 0) {
+                self.usage["streamMs"] = json!(ms.min(usage::MAX_COUNT));
+            }
+        }
         Ok(())
     }
 }
@@ -1343,6 +1340,9 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
         state["model"] = json!(p.model);
         state["providerLabel"] = json!(p.label);
+        state["modelName"] = json!(model.name);
+        state["contextWindow"] = json!(limit);
+        state["maxOutputTokens"] = json!(max_output);
     }
     hs.push(("Content-Type", "application/json".into()));
     hs.push(("Accept", "text/event-stream".into()));
@@ -1693,9 +1693,8 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         return catalog::dispatch(c, root);
     }
     match string(&c, "op")? {
-        "ai_chats" | "ai_chat_get" | "ai_chat_delete" | "ai_chat_send" | "ai_chat_reasoning" => {
-            conversations::dispatch(c, root)
-        }
+        "ai_chats" | "ai_chat_get" | "ai_chat_delete" | "ai_chat_send" | "ai_chat_reasoning"
+        | "ai_usage" => conversations::dispatch(c, root),
         "ai_foreground" => {
             FOREGROUND.store(c["active"] == true, Ordering::Relaxed);
             Ok(Value::Null)

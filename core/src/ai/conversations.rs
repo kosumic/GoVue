@@ -33,6 +33,16 @@ struct Message {
     provider_label: String,
     #[serde(default)]
     reasoning_effort: String,
+    #[serde(default)]
+    provider_id: String,
+    #[serde(default)]
+    model_name: String,
+    #[serde(default)]
+    completed_at: u64,
+    #[serde(default)]
+    context_window: Option<u64>,
+    #[serde(default)]
+    max_output_tokens: Option<u64>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -89,15 +99,12 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
                 || m.model.len() > 200
                 || m.provider_label.len() > 100
                 || !catalog::valid_reasoning(&m.reasoning_effort)
-                || (!m.usage.is_null()
-                    && !m.usage.as_object().is_some_and(|usage| {
-                        usage.iter().all(|(key, value)| {
-                            matches!(
-                                key.as_str(),
-                                "inputTokens" | "outputTokens" | "reasoningTokens"
-                            ) && value.as_u64().is_some()
-                        })
-                    }))
+                || (!m.provider_id.is_empty() && !valid_id(&m.provider_id))
+                || m.model_name.chars().count() > 200
+                || m.completed_at > usage::MAX_COUNT
+                || m.context_window.is_some_and(|n| n > usage::MAX_COUNT)
+                || m.max_output_tokens.is_some_and(|n| n > usage::MAX_COUNT)
+                || !usage::valid(&m.usage)
         })
     {
         return Err("This saved chat is invalid.".into());
@@ -248,6 +255,10 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
         message.model = state["model"].as_str().unwrap_or_default().into();
         message.provider_label = state["providerLabel"].as_str().unwrap_or_default().into();
         message.reasoning_effort = state["reasoningEffort"].as_str().unwrap_or_default().into();
+        message.provider_id = state["providerId"].as_str().unwrap_or_default().into();
+        message.model_name = state["modelName"].as_str().unwrap_or_default().into();
+        message.context_window = usage::count(&state["contextWindow"]);
+        message.max_output_tokens = usage::count(&state["maxOutputTokens"]);
     }
     message.status = if job.cancelled.load(Ordering::Relaxed) {
         "stopped"
@@ -262,6 +273,7 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
     } else {
         None
     };
+    message.completed_at = now();
     chat.active_task = None;
     chat.updated_at = now();
     save(root, &chat)?;
@@ -381,6 +393,11 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         model: String::new(),
         provider_label: String::new(),
         reasoning_effort: String::new(),
+        provider_id: String::new(),
+        model_name: String::new(),
+        completed_at: 0,
+        context_window: None,
+        max_output_tokens: None,
     });
     chat.messages.push(Message {
         id: random()?,
@@ -393,6 +410,11 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         model: String::new(),
         provider_label: String::new(),
         reasoning_effort: String::new(),
+        provider_id: String::new(),
+        model_name: String::new(),
+        completed_at: 0,
+        context_window: None,
+        max_output_tokens: None,
     });
     chat.updated_at = now();
     let job = new_job(&p.id)?;
@@ -417,12 +439,99 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
     });
     Ok(json!({"taskId":job.id,"conversation":chat}))
 }
+fn usage_report(command: &Value, root: &Path) -> Result<Value> {
+    let selected = command
+        .get("chatId")
+        .map(|v| v.as_str().ok_or("Invalid conversation identity."))
+        .transpose()?;
+    let chats = list(root)?;
+    if selected.is_some_and(|id| !chats.iter().any(|chat| chat.id == id)) {
+        return Err("This chat is no longer available.".into());
+    }
+    let cfg = config(root)?;
+    let mut turns = Vec::new();
+    let mut context = Value::Null;
+    for chat in chats
+        .iter()
+        .filter(|chat| selected.is_none_or(|id| chat.id == id))
+    {
+        for message in chat
+            .messages
+            .iter()
+            .filter(|m| m.role == "assistant" && m.status != "streaming")
+        {
+            let model_id = if message.model.is_empty() {
+                &chat.model
+            } else {
+                &message.model
+            };
+            let label = if message.provider_label.is_empty() {
+                &chat.provider_label
+            } else {
+                &message.provider_label
+            };
+            if selected.is_some() && usage::count(&message.usage["inputTokens"]).is_some() {
+                let model = cfg
+                    .providers
+                    .iter()
+                    .filter(|p| {
+                        p.id == message.provider_id
+                            || (message.provider_id.is_empty()
+                                && (p.id == chat.provider_id || p.label == *label))
+                    })
+                    .flat_map(|p| &p.models)
+                    .find(|m| m.id == *model_id);
+                let window = message
+                    .context_window
+                    .or_else(|| model.and_then(|m| m.context_window));
+                let group_limit = cfg
+                    .groups
+                    .iter()
+                    .find(|g| g.id == chat.provider_id)
+                    .and_then(|g| g.context_limit);
+                let window = match (window, group_limit) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+                context = json!({"used":message.usage["latestContextTokens"].as_u64().or_else(|| message.usage["inputTokens"].as_u64()),
+                    "window":window,"maxOutputTokens":message.max_output_tokens.or_else(|| model.and_then(|m| m.max_output_tokens)),
+                    "reasoningEffort":message.reasoning_effort,"model":model_id,"providerLabel":label});
+            }
+            turns.push(usage::Turn {
+                chat_id: chat.id.clone(),
+                provider_id: message.provider_id.clone(),
+                provider_label: label.clone(),
+                model: model_id.clone(),
+                model_name: if message.model_name.is_empty() {
+                    model_id.clone()
+                } else {
+                    message.model_name.clone()
+                },
+                estimated: message.model.is_empty() || message.provider_label.is_empty(),
+                completed_at: message.completed_at,
+                usage: message.usage.clone(),
+            });
+        }
+    }
+    let mut report = usage::report(&turns, &cfg)?;
+    report["chatId"] = json!(selected);
+    report["context"] = context;
+    report["title"] = json!(
+        selected
+            .and_then(|id| chats.iter().find(|c| c.id == id))
+            .map(|c| c.title.as_str())
+    );
+    report["chats"] = json!(chats.iter().map(|chat| json!({"id":chat.id,"title":chat.title,"model":chat.model,"providerLabel":chat.provider_label})).collect::<Vec<_>>());
+    Ok(report)
+}
+
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     if c["op"] == "ai_chat_send" {
         return send(c, root);
     }
     let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
     match string(&c, "op")? {
+        "ai_usage" => usage_report(&c, &root),
         "ai_chats" => Ok(
             json!({"chats":list(&root)?.iter().map(|chat| json!({"id":chat.id,"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title)})).collect::<Vec<_>>()}),
         ),

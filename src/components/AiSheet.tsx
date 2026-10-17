@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { ChevronDown, ChevronLeft, History, MessageSquare, SquarePen, Trash2, X } from 'lucide-react-native';
+import { ChevronDown, ChevronLeft, Gauge, History, MessageSquare, SquarePen, Trash2, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAi } from '../ai/useAi';
 import type { Transcript } from '../youtube/transcript';
@@ -9,6 +9,7 @@ import { IconButton } from './IconButton';
 import { AiChat } from './AiChat';
 import { AiProviders } from './AiProviders';
 import { AiModels } from './AiModels';
+import { AiUsageSheet } from './AiUsageSheet';
 import { reasoningName } from './AiReasoning';
 import { useChats, type ChatTranscript, type SavedChat } from '../ai/useChats';
 
@@ -22,6 +23,8 @@ export function AiSheet({ visible, onClose, transcript, videoId, summaryRequest,
   const ai = useAi(visible, `${videoId || ''}:${transcript?.trackId || ''}`);
   const chats = useChats(visible, `${videoId || ''}:${transcript?.trackId || ''}`);
   const [page, setPage] = useState<'chat' | 'providers' | 'history' | 'models'>('chat');
+  const [usageVisible, setUsageVisible] = useState(false);
+  useEffect(() => { if (!visible) setUsageVisible(false); }, [visible]);
   const [prompt, setPrompt] = useState('');
   const [attachment, setAttachment] = useState<ChatTranscript | null>(null);
   const [pendingSummary, setPendingSummary] = useState<SummaryRequest | null>(null);
@@ -98,6 +101,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, summaryRequest,
             <View style={styles.modelLabel}><Text numberOfLines={1} style={styles.modelName}>{selectedModel?.replace(/^gpt-/, 'GPT-') || 'Choose a model'}</Text><ChevronDown size={12} color={colors.muted} /></View>
           </Pressable> : <Text accessibilityRole="header" style={styles.pageTitle}>{page === 'history' ? 'Chats' : page === 'models' ? 'Choose a model' : 'Providers'}</Text>}
           {(page === 'chat' || page === 'history') && <IconButton icon={SquarePen} label="New chat" onPress={newChat} />}
+          {page === 'chat' && <IconButton icon={Gauge} label="Token usage" onPress={() => { Keyboard.dismiss(); setUsageVisible(true); }} />}
           <IconButton icon={X} label="Close AI assistant" onPress={onClose} />
         </View>
         {browserControl}
@@ -119,7 +123,8 @@ export function AiSheet({ visible, onClose, transcript, videoId, summaryRequest,
             </View>)}
           </> : <View style={styles.historyWelcome}><MessageSquare size={30} color={colors.muted} /><Text style={styles.pageTitle}>No chats yet</Text><Text style={styles.help}>Your conversations will appear here.</Text><Button title="Start a chat" onPress={newChat} /></View>}
           {!!chats.error && <Text accessibilityRole="alert" style={styles.error}>{chats.error}</Text>}
-        </ScrollView> : page === 'models' ? <AiModels ai={ai} selectedId={selected?.id} selectedModel={selectedModel} onSelect={(id, model) => { void choose(id, model); }} onManage={() => showPage('providers')} /> : <AiProviders ai={ai} />}
+        </ScrollView> : page === 'models' ? <AiModels ai={ai} selectedId={selected?.id} selectedModel={selectedModel} onSelect={(id, model) => { void choose(id, model); }} onManage={() => showPage('providers')} /> : <AiProviders ai={ai} onUsage={() => { Keyboard.dismiss(); setUsageVisible(true); }} />}
+        <AiUsageSheet visible={visible && usageVisible} chatId={chats.conversation?.id} onClose={() => setUsageVisible(false)} />
 
       </KeyboardAvoidingView>
     </SafeAreaView>

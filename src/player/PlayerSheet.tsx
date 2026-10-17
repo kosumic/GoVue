@@ -153,6 +153,7 @@ export function PlayerSheet({
   showHeading = true,
   maxContentHeight,
   popupWidth,
+  contentKey,
 }: {
   visible: boolean;
   title: string;
@@ -168,6 +169,7 @@ export function PlayerSheet({
   showHeading?: boolean;
   maxContentHeight?: number;
   popupWidth?: number;
+  contentKey?: string;
 }) {
   const inset = useSafeAreaInsets();
   const playerColors = useThemeColors();
@@ -361,6 +363,7 @@ export function PlayerSheet({
                   ? undefined
                   : { maxHeight: maxContentHeight }
               }
+              key={contentKey}
               keyboardShouldPersistTaps="handled"
               onContentSizeChange={(_width, height) => setContentHeight(height)}
               contentContainerStyle={[s.content, dialog && s.dialogContent]}
