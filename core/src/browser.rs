@@ -195,7 +195,27 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     match op {
         "browser_state" => {}
         "browser_open" => {
-            let (url, kind) = address(string(command, "url")?)?;
+            let (url, kind) = if command.get("videoId").is_some() {
+                let id = string(command, "videoId")?;
+                if !crate::video_id(id) {
+                    return Err("Invalid video identity.".into());
+                }
+                let retained = browser.tabs.iter().find(|tab| {
+                    address(&tab.url)
+                        .is_ok_and(|(_, kind)| matches!(kind.as_str(), "watch" | "shorts"))
+                        && Url::parse(&tab.url)
+                            .ok()
+                            .and_then(|url| video(&url))
+                            .as_deref()
+                            == Some(id)
+                });
+                let url = retained
+                    .map(|tab| tab.url.clone())
+                    .unwrap_or_else(|| format!("https://m.youtube.com/watch?v={id}"));
+                address(&url)?
+            } else {
+                address(string(command, "url")?)?
+            };
             if command["suspendWatch"] == true
                 && kind != "watch"
                 && browser

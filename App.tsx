@@ -51,6 +51,7 @@ import {
 } from './src/components/DownloadConfirm';
 import { DownloadLibrary } from './src/components/DownloadLibrary';
 import { TranscriptPanel } from './src/components/TranscriptPanel';
+import { AiSheet } from './src/components/AiSheet';
 import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 import {
   MediaResolver,
@@ -124,6 +125,8 @@ function Browser() {
   const nativeVideo = useRef<VideoView | null>(null);
   const [pageAgent, setPageAgent] = useState('');
   const [page, setPage] = useState<Page>(null);
+  const [aiVisible, setAiVisible] = useState(false);
+  const [aiVideoId, setAiVideoId] = useState<string | null>(null);
   const [sheet, setSheet] = useState<'library' | null>(null);
   const [card, setCard] = useState<QueueItem | null>(null);
   const [gallery, setGallery] = useState<{
@@ -196,13 +199,13 @@ function Browser() {
     }
     return next;
   }
-  const navigate = useCallback((url: string) => {
+  const navigate = useCallback((target: string | { videoId: string }) => {
     sessionRef.current?.transcript.close();
     const sequence = ++navigationSequence.current;
     run(async () => {
       const current = mediaRef.current;
       const next = await browserAction('open', {
-        url,
+        ...(typeof target === 'string' ? { url: target } : target),
         suspendWatch:
           !!current.playback &&
           !current.playback.offline &&
@@ -525,6 +528,11 @@ function Browser() {
         setSheet('library');
         return;
       }
+      if (message.action === 'chat') {
+        setAiVideoId(youtubeVideoId(message.documentUrl));
+        setAiVisible(true);
+        return;
+      }
       if (message.action === 'about') {
         setPage('about');
         return;
@@ -749,6 +757,10 @@ function Browser() {
                     )
                   }
                   onDownload={(id) => openDownload(id)}
+                  onAi={() => {
+                    setAiVideoId(media.playback?.videoId ?? null);
+                    setAiVisible(true);
+                  }}
                   onDownloadQueue={() =>
                     setDownloadTarget({
                       name: 'Queue',
@@ -843,6 +855,18 @@ function Browser() {
               </View>
             )}
           </View>
+          <AiSheet
+            visible={aiVisible}
+            onClose={() => setAiVisible(false)}
+            transcript={session.transcript.data}
+            videoId={aiVideoId}
+            onOpenVideo={videoId => {
+              navigate({ videoId });
+              session.setMini(false);
+              session.setLocked(false);
+              setAiVisible(false);
+            }}
+          />
           <TokenRuntime />
           <MediaResolver ref={resolver} />
           <DownloadConfirm

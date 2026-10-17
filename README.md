@@ -17,11 +17,19 @@ The port follows LiTube commit `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f`
 The port is in progress; an implemented control is not evidence of verified
 feature parity.
 
-The player's transcript button, beside speed and quality, opens a searchable
-reader with language selection, playback following, and tap-to-seek captions.
+The player's Transcript and AI buttons appear before speed and quality. Transcript
+opens a searchable reader with language selection, playback following, and
+tap-to-seek captions. AI opens the same full-screen conversation workspace as
+**Chat** in the bottom navigation. Open the conversation drawer for saved chats,
+new chats, providers, and token usage. Opening AI from a video reopens its one
+saved conversation, or creates an empty chat with the transcript as context.
+Opening chat never sends a message or starts a summary. Choose a model from the
+header and send your own question; model changes keep the video's conversation.
+Use **Open video** in chat to return to its existing video tab or open it again.
+Tap the transcript context card to read or search the captions used by the AI.
+Reasoning changes made during a response apply to the next message.
 Open **Extensions → AI** to manage AI providers, accounts, models and model
-groups. Chat and video summaries remain deferred; existing chats and stored data
-are retained.
+groups.
 Choose **Token usage** in AI settings for saved-chat totals, provider/model
 breakdowns, cache hit rates and output speed. Open a conversation for its context
 and reasoning details. Missing provider counts are shown as unavailable; older

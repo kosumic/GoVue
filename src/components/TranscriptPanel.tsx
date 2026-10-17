@@ -18,11 +18,11 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   pauseAfterLine: boolean;
   onPauseAfterLine?: (enabled: boolean) => void;
   onClose: () => void;
-  onExtract: (track?: string) => void;
-  onSeek: (seconds: number) => void;
+  onExtract?: (track?: string) => void;
+  onSeek?: (seconds: number) => void;
   onSummarize?: () => void;
-  onDownload: () => void;
-  downloadDisabled: boolean;
+  onDownload?: () => void;
+  downloadDisabled?: boolean;
 }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
@@ -100,7 +100,7 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
       <View style={styles.heading}>
         <View style={styles.headingText}><Text accessibilityRole="header" numberOfLines={1} style={styles.title}>Transcript</Text>
           <Text numberOfLines={1} style={styles.subtitle}>{cached ? 'Saved · ' : ''}{data?.title || 'YouTube captions'}</Text></View>
-        <IconButton compact icon={RotateCw} label="Refresh transcript" disabled={loading} onPress={() => { setCopied(false); onExtract(); }} />
+        {onExtract && <IconButton compact icon={RotateCw} label="Refresh transcript" disabled={loading} onPress={() => { setCopied(false); onExtract(); }} />}
         <IconButton compact icon={Copy} label={copied ? 'Transcript copied' : 'Copy transcript'} disabled={!data || loading} onPress={async () => {
           if (!data) return;
           try { Clipboard.setString(await exportTranscript(data)); setCopied(true); } catch { Alert.alert('Could not copy transcript'); }
@@ -110,33 +110,33 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
           try { await Share.share({ message: await exportTranscript(data), title: data.title }); } catch { Alert.alert('Could not share transcript'); }
         }} />
         {onSummarize && <IconButton compact icon={Sparkles} label="Summarize video with AI" disabled={!data || loading || !!error} onPress={onSummarize} />}
-        <IconButton compact icon={Download} label="Download this video" disabled={downloadDisabled} onPress={onDownload} />
+        {onDownload && <IconButton compact icon={Download} label="Download this video" disabled={downloadDisabled} onPress={onDownload} />}
         <IconButton compact icon={X} label="Close transcript" onPress={onClose} />
       </View>
       {copied && <Text accessibilityLiveRegion="polite" style={styles.feedback}>Transcript copied</Text>}
       {!!wordFeedback && <Text accessibilityLiveRegion="polite" style={styles.feedback}>{wordFeedback}</Text>}
       {loading ? <View style={styles.empty}><ActivityIndicator color={colors.accent} /><Text style={styles.emptyTitle}>Extracting captions…</Text><Text style={styles.help}>You can keep watching while this loads.</Text></View> : error ? (
         <View style={styles.empty}><Text style={styles.emptyTitle}>Transcript unavailable</Text><Text accessibilityRole="alert" style={styles.help}>{error}</Text>
-          <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>
+          {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable>}</View>
       ) : data ? <>
         {onPauseAfterLine && <View style={styles.pauseRow}>
           <Text style={styles.pauseLabel}>Pause after each line</Text>
           <Switch accessibilityLabel="Pause after each transcript line" accessibilityHint="Resume playback when you are ready for the next line"
             value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
         </View>}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tracks, { height: Math.max(48, Math.ceil(20 * fontScale) + 28) }]} contentContainerStyle={styles.trackContent}>
+        {onExtract && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tracks, { height: Math.max(48, Math.ceil(20 * fontScale) + 28) }]} contentContainerStyle={styles.trackContent}>
           {data.tracks.map(track => <Pressable key={track.id} accessibilityRole="button" accessibilityState={{ selected: track.id === data.trackId }}
             onPress={() => { setCopied(false); onExtract(track.id); }} style={[styles.track, track.id === data.trackId && styles.selectedTrack]}>
             <Text style={[styles.trackText, track.id === data.trackId && styles.selectedText]}>{track.label}{track.automatic ? ' · Auto' : ''}</Text>
           </Pressable>)}
-        </ScrollView>
+        </ScrollView>}
         <View style={styles.search}><Search size={16} color={colors.muted} /><TextInput accessibilityLabel="Search transcript" placeholder="Find in transcript" placeholderTextColor={colors.muted}
           value={query} onChangeText={setQuery} style={styles.searchInput} />
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${segments.length} of ${data.segments.length}` : segments.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>
         <View style={styles.languageRow}>
-          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language} · Tap a line to play · Hold a word to save</Text>
-          {!query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
+          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language}{onSeek ? ' · Tap a line to play' : ''} · Hold a word to save</Text>
+          {onSeek && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
             onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
             <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
@@ -154,13 +154,13 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
           keyboardShouldPersistTaps="handled" ListEmptyComponent={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
           renderItem={({ item }) => <Pressable accessible={false}
             accessibilityState={{ selected: item === activeSegment }}
-            accessibilityHint={item === activeSegment ? 'Current line. Jump to this line and play the video' : 'Jump to this line and play the video'}
-            onPress={() => { setFollowPlayback(true); onSeek(item.start); }}
+            accessibilityHint={onSeek ? item === activeSegment ? 'Current line. Jump to this line and play the video' : 'Jump to this line and play the video' : undefined}
+            onPress={onSeek ? () => { setFollowPlayback(true); onSeek(item.start); } : undefined}
             style={({ pressed }) => [styles.segment, item === activeSegment && styles.activeSegment, pressed && styles.pressedSegment]}>
-            <Text style={styles.time} accessibilityRole="button" accessibilityLabel={`Play line at ${timestamp(item.start)}`}
-              onPress={() => { setFollowPlayback(true); onSeek(item.start); }}>{timestamp(item.start)}</Text>
+            <Text style={styles.time} accessibilityRole={onSeek ? 'button' : undefined} accessibilityLabel={onSeek ? `Play line at ${timestamp(item.start)}` : undefined}
+              onPress={onSeek ? () => { setFollowPlayback(true); onSeek(item.start); } : undefined}>{timestamp(item.start)}</Text>
             <TranscriptWords text={item.text} selected={item === activeSegment} style={[styles.segmentText, item === activeSegment && styles.activeText]}
-              onSeek={() => { setFollowPlayback(true); onSeek(item.start); }}
+              onSeek={onSeek ? () => { setFollowPlayback(true); onSeek(item.start); } : undefined}
               onSave={(tokenIndex, word) => { void saveCaptionWord(item, tokenIndex, word); }} />
           </Pressable>} />
       </> : null}

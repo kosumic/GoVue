@@ -27,8 +27,7 @@ export function usePlayerChromeMeasure(
     widths.time! +
       Math.max(48, widths.speed! + 12) +
       Math.max(48, widths.quality! + 12) +
-      48 +
-      48 +
+      3 * 48 + // Transcript, AI, and fullscreen controls.
       16 >
       width;
   const probe = (

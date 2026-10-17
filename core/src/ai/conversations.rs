@@ -48,6 +48,8 @@ struct Message {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Conversation {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    video_id: Option<String>,
     title: String,
     provider_id: String,
     provider_label: String,
@@ -78,7 +80,15 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
     let chat: Conversation =
         serde_json::from_slice(&bytes).map_err(|_| "This saved chat is unreadable.")?;
     if chat.id != id
-        || !valid_id(&chat.provider_id)
+        || !(valid_id(&chat.provider_id) || chat.provider_id.is_empty() && chat.messages.is_empty())
+        || chat
+            .video_id
+            .as_ref()
+            .is_some_and(|id| !crate::video_id(id))
+        || chat
+            .video_id
+            .as_ref()
+            .is_some_and(|id| chat.transcript.as_ref().is_some_and(|t| &t.video_id != id))
         || chat.model.len() > 200
         || chat.title.len() > 1000
         || chat
@@ -182,6 +192,32 @@ fn list(root: &Path) -> Result<Vec<Conversation>> {
     rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(b.id.cmp(&a.id)));
     Ok(rows)
 }
+fn visible_chats(root: &Path) -> Result<Vec<Conversation>> {
+    let rows = list(root)?;
+    let bound: std::collections::HashSet<_> = rows
+        .iter()
+        .filter_map(|chat| chat.video_id.as_ref())
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    Ok(rows
+        .iter()
+        .filter(|chat| {
+            !(chat.video_id.is_none()
+                && chat
+                    .transcript
+                    .as_ref()
+                    .is_some_and(|t| bound.contains(&t.video_id)))
+        })
+        .filter(|chat| {
+            let video = chat
+                .video_id
+                .as_ref()
+                .or_else(|| chat.transcript.as_ref().map(|t| &t.video_id));
+            video.is_none_or(|id| seen.insert(id.clone()))
+        })
+        .cloned()
+        .collect())
+}
 fn caption(root: &Path, value: &Value) -> Result<Option<TranscriptRef>> {
     if value.is_null() {
         return Ok(None);
@@ -204,6 +240,75 @@ fn caption(root: &Path, value: &Value) -> Result<Option<TranscriptRef>> {
         title: transcript.title,
         language: transcript.language,
     }))
+}
+
+// CHATS serializes lookup and creation, including simultaneous opens on both entry points.
+fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
+    let id = string(c, "videoId")?;
+    if !crate::video_id(id) {
+        return Err("Invalid video identity.".into());
+    }
+    let rows = list(root)?;
+    let existing = rows
+        .iter()
+        .find(|chat| chat.video_id.as_deref() == Some(id))
+        .or_else(|| {
+            rows.iter().find(|chat| {
+                chat.video_id.is_none()
+                    && chat.transcript.as_ref().is_some_and(|t| t.video_id == id)
+            })
+        });
+    let mut chat = if let Some(chat) = existing {
+        chat.clone()
+    } else {
+        if rows.len() >= MAX_CHATS {
+            return Err("Chat history is full. Delete an older chat first.".into());
+        }
+        let selected = {
+            let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            config(root)?.active_id
+        };
+        let p = selected.as_deref().and_then(|id| provider(root, id).ok());
+        Conversation {
+            id: format!("video_{id}"),
+            video_id: Some(id.into()),
+            title: c["title"]
+                .as_str()
+                .unwrap_or("Video chat")
+                .chars()
+                .take(100)
+                .collect(),
+            provider_id: p.as_ref().map(|p| p.id.clone()).unwrap_or_default(),
+            provider_label: p.as_ref().map(|p| p.label.clone()).unwrap_or_default(),
+            model: p.map(|p| p.model).unwrap_or_default(),
+            created_at: now(),
+            updated_at: now(),
+            transcript: None,
+            messages: Vec::new(),
+            active_task: None,
+            reasoning_effort: None,
+        }
+    };
+    chat.video_id = Some(id.into());
+    if !c["transcript"].is_null() {
+        let transcript = caption(root, &c["transcript"])?;
+        if transcript.as_ref().is_none_or(|t| t.video_id != id) {
+            return Err("This transcript belongs to a different video.".into());
+        }
+        chat.transcript = transcript;
+        if chat.messages.is_empty() {
+            chat.title = chat
+                .transcript
+                .as_ref()
+                .unwrap()
+                .title
+                .chars()
+                .take(100)
+                .collect();
+        }
+    }
+    save(root, &chat)?;
+    Ok(chat)
 }
 /// Only completed user/assistant pairs become context for the next turn.
 pub(super) fn history(value: &Value) -> Result<Vec<Value>> {
@@ -295,6 +400,11 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
             return Err("This chat is already responding. Stop it first.".into());
         }
         chat
+    } else if c["transcript"]["videoId"].is_string() {
+        open_video(
+            &root,
+            &json!({"videoId":c["transcript"]["videoId"],"transcript":c["transcript"]}),
+        )?
     } else {
         if list(&root)?.len() >= MAX_CHATS {
             return Err("Chat history is full. Delete an older chat first.".into());
@@ -302,6 +412,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         let p = provider(&root, string(&c, "id")?)?;
         Conversation {
             id: random()?,
+            video_id: None,
             title: String::new(),
             provider_id: p.id,
             provider_label: p.label,
@@ -314,6 +425,15 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
             reasoning_effort: None,
         }
     };
+    if chat.active_task.is_some() {
+        return Err("This chat is already responding. Stop it first.".into());
+    }
+    if chat.provider_id.is_empty() {
+        let selected = provider(&root, string(&c, "id")?)?;
+        chat.provider_id = selected.id;
+        chat.provider_label = selected.label;
+        chat.model = selected.model;
+    }
     let mut p = provider(&root, &chat.provider_id)?;
     p.model = chat.model.clone();
     if p.model.is_empty() {
@@ -345,8 +465,36 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
     if chat.messages.len() >= 198 {
         return Err("This chat is full. Start a new chat to continue.".into());
     }
-    if let Some(value) = c.get("transcript") {
-        chat.transcript = caption(&root, value)?;
+    if let Some(value) = c.get("transcript")
+        && (!value.is_null() || chat.video_id.is_none())
+    {
+        let transcript = caption(&root, value)?;
+        if chat
+            .video_id
+            .as_ref()
+            .is_some_and(|id| transcript.as_ref().is_none_or(|t| &t.video_id != id))
+        {
+            return Err("This transcript belongs to a different video.".into());
+        }
+        if chat.video_id.is_none()
+            && let Some(t) = &transcript
+        {
+            if list(&root)?.iter().any(|other| {
+                other.id != chat.id
+                    && (other.video_id.as_deref() == Some(t.video_id.as_str())
+                        || other
+                            .transcript
+                            .as_ref()
+                            .is_some_and(|r| r.video_id == t.video_id))
+            }) {
+                return Err("This video already has a chat. Open it from the video.".into());
+            }
+            chat.video_id = Some(t.video_id.clone());
+        }
+        chat.transcript = transcript;
+    }
+    if chat.video_id.is_some() && chat.transcript.is_none() {
+        return Err("Load this video's transcript before sending a message.".into());
     }
     let history_rows = chat
         .messages
@@ -533,8 +681,23 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     match string(&c, "op")? {
         "ai_usage" => usage_report(&c, &root),
         "ai_chats" => Ok(
-            json!({"chats":list(&root)?.iter().map(|chat| json!({"id":chat.id,"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title)})).collect::<Vec<_>>()}),
+            json!({"chats":visible_chats(&root)?.iter().map(|chat| json!({"id":chat.id,"videoId":chat.video_id.as_ref().or_else(|| chat.transcript.as_ref().map(|t| &t.video_id)),"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title)})).collect::<Vec<_>>()}),
         ),
+        "ai_chat_video_open" => serde_json::to_value(open_video(&root, &c)?)
+            .map_err(|_| "Could not open this video's chat.".into()),
+        "ai_chat_model" => {
+            let mut chat = read(&root, string(&c, "chatId")?)?;
+            recover(&root, &mut chat)?;
+            if chat.active_task.is_some() {
+                return Err("Stop the response before changing models.".into());
+            }
+            let selected = provider(&root, string(&c, "id")?)?;
+            chat.provider_id = selected.id;
+            chat.provider_label = selected.label;
+            chat.model = selected.model;
+            save(&root, &chat)?;
+            serde_json::to_value(chat).map_err(|_| "Could not update this chat.".into())
+        }
         "ai_chat_get" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;
             recover(&root, &mut chat)?;
@@ -543,9 +706,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         "ai_chat_reasoning" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;
             recover(&root, &mut chat)?;
-            if chat.active_task.is_some() {
-                return Err("Stop the response before changing reasoning.".into());
-            }
+            // Running requests own their wire settings; this preference affects the next turn.
             chat.reasoning_effort = parse_reasoning(&c["reasoningEffort"])?;
             save(&root, &chat)?;
             Ok(serde_json::to_value(chat).map_err(|_| "Could not update this chat.")?)

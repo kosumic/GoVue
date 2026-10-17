@@ -52,7 +52,7 @@ import {
   Segments,
 } from './icons';
 import type { LucideIcon } from 'lucide-react-native';
-import { FileText } from 'lucide-react-native';
+import { FileText, Sparkles } from 'lucide-react-native';
 import {
   coreRequest,
   getSystemVolume,
@@ -91,6 +91,7 @@ type Props = {
   videoRef: React.RefObject<VideoView | null>;
   onDownload: (id?: string) => void;
   onDownloadQueue?: () => void;
+  onAi: () => void;
   onPip: () => void;
   onBack: () => void;
   onRestore: () => void;
@@ -187,6 +188,7 @@ export function PlayerSurface({
   videoRef,
   onDownload,
   onDownloadQueue,
+  onAi,
   onPip,
   onBack,
   onRestore,
@@ -1004,6 +1006,25 @@ export function PlayerSurface({
                 >{`${time(position)} / ${time(duration)}`}</Text>
               )}
               <View style={s.grow} />
+              <Control
+                icon={FileText}
+                iconSize={chrome.icon}
+                label={session.transcript.open ? 'Hide transcript' : 'Show transcript'}
+                selected={session.transcript.open}
+                color={session.transcript.open ? '#ff0000' : 'white'}
+                disabled={!media.playback}
+                onPress={() => {
+                  session.transcript.toggle();
+                  show();
+                }}
+              />
+              <Control
+                icon={Sparkles}
+                iconSize={chrome.icon}
+                label="Open AI chat"
+                disabled={!media.playback}
+                onPress={onAi}
+              />
               {!bottomChrome.compact && (
                 <Pressable
                   ref={speedAnchor}
@@ -1034,18 +1055,6 @@ export function PlayerSurface({
                   </Text>
                 </Pressable>
               )}
-              <Control
-                icon={FileText}
-                iconSize={chrome.icon}
-                label={session.transcript.open ? 'Hide transcript' : 'Show transcript'}
-                selected={session.transcript.open}
-                color={session.transcript.open ? '#ff0000' : 'white'}
-                disabled={!media.playback}
-                onPress={() => {
-                  session.transcript.toggle();
-                  show();
-                }}
-              />
               <Control
                 icon={session.fullscreen ? Minimize : Maximize}
                 iconSize={chrome.icon}

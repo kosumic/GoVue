@@ -28,6 +28,7 @@
     getPreferences: () => JSON.stringify(preferences),
     extension: () => post('settings'),
     download: () => post('library'),
+    chat: () => post('chat'),
     about: () => post('about'),
     openWith: (url) => post('share', { url }),
     addToQueue: (value) => post('queueAdd', parse(value)),
