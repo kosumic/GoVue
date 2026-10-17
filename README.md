@@ -22,6 +22,11 @@ reader with language selection, playback following, and tap-to-seek captions.
 Open **Extensions → AI** to manage AI providers, accounts, models and model
 groups. Chat and video summaries remain deferred; existing chats and stored data
 are retained.
+Choose **Token usage** in AI settings for saved-chat totals, provider/model
+breakdowns, cache hit rates and output speed. Open a conversation for its context
+and reasoning details. Missing provider counts are shown as unavailable; older
+replies may lack cache, timing and completion-date metadata. These are local
+saved-history statistics, not the provider's billing or subscription quota.
 Choose **ChatGPT / Codex** for account sign-in or **OpenAI API** for an API key.
 The alternative **ChatGPT plan sharing** connection is under **Advanced connections**.
 Earlier feature documentation remains in

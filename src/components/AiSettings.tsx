@@ -11,6 +11,7 @@ import { useAi } from '../ai/useAi';
 import { useThemeColors } from '../theme';
 import { SheetRow } from '../player/PlayerSheet';
 import { AiProviders } from './AiProviders';
+import { AiUsageSheet } from './AiUsageSheet';
 
 export function AiSettings() {
   const [attempt, setAttempt] = useState(0);
@@ -25,6 +26,7 @@ export function AiSettings() {
 }
 
 function Content({ onRetry }: { onRetry: () => void }) {
+  const [usageVisible, setUsageVisible] = useState(false);
   const ai = useAi(true, 'settings');
   const colors = useThemeColors();
   if (!ai.ready) return (
@@ -37,7 +39,7 @@ function Content({ onRetry }: { onRetry: () => void }) {
       </> : <ActivityIndicator accessibilityLabel="Loading AI settings" color={colors.ink} />}
     </View>
   );
-  return <AiProviders ai={ai} />;
+  return <><AiProviders ai={ai} onUsage={() => setUsageVisible(true)} /><AiUsageSheet visible={usageVisible} onClose={() => setUsageVisible(false)} /></>;
 }
 
 const styles = StyleSheet.create({

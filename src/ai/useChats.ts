@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { aiRequest } from '../../modules/lingoplay-core';
+import type { TokenUsage } from './usage';
 
 export type ChatTranscript = { videoId: string; trackId: string; title: string; language: string };
-export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: { inputTokens?: number; outputTokens?: number; reasoningTokens?: number }; model?: string; providerLabel?: string };
+export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; model?: string; providerLabel?: string };
 export type Conversation = { id: string; title: string; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null };
 export type SavedChat = Pick<Conversation, 'id' | 'title' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string };
 type Started = { taskId: string; conversation: Conversation };
