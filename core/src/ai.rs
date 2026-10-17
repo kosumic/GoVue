@@ -1884,6 +1884,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         | "ai_chat_speech_hints"
         | "ai_chat_audio"
         | "ai_game_action"
+        | "ai_game_export"
         | "ai_game_audio"
         | "ai_usage" => conversations::dispatch(c, root),
         "ai_foreground" => {

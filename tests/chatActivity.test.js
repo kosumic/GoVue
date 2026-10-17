@@ -29,7 +29,7 @@ const mocks = {
   theme: { useThemeColors: () => colors, useThemeStyles: factory => factory(colors) },
   AiMarkdown: { AiMarkdown: props => h('Markdown', props) },
   AiReasoning: { AiReasoning: () => null },
-  LearningGameCard: { LearningGameCard: props => h('GameCard', { gameId: props.game.id, enabled: props.enabled }) },
+  LearningGameCard: { LearningGameCard: props => h('GameCard', { gameId: props.game.id, active: props.active, enabled: props.enabled, onActivate: props.onActivate, onDeactivate: props.onDeactivate }) },
   useVoiceInput: { useVoiceInput: () => ({ active: false, disabled: true, phase: 'idle', interimText: '', changeDraft: noop, toggle: noop }) },
   PlayerSheet: { PlayerSheet: ({ visible, children, title }) => visible ? h('Sheet', { title }, children) : null },
 };
@@ -101,4 +101,34 @@ test('legacy messages retain their answer, optional reasoning, and exercise', as
   assert.equal(root.root.findByType('GameCard').props.gameId, 'game');
   await act(async () => root.root.findByProps({ accessibilityLabel: 'Reasoning' }).props.onPress());
   assert.deepEqual(root.root.findAllByType('Markdown').map(node => node.props.content), ['Legacy reasoning', 'Legacy answer']);
+});
+
+test('the latest game opens automatically, stays closed on text updates, and yields to a newly created game', async t => {
+  let root;
+  const old = { ...reply(undefined), id: 'old', games: [{ ...game, id: 'old-game' }] };
+  const fresh = { ...reply([tool]), id: 'fresh', status: 'streaming' };
+  const show = (messages, chatId = 'chat') => act(async () => {
+    const value = props(messages.at(-1), true);
+    value.voiceEnabled = true;
+    value.chat.conversation = { id: chatId, messages };
+    if (root) root.update(h(AiChat, value));
+    else root = create(h(AiChat, value));
+  });
+  t.after(() => act(async () => root?.unmount()));
+  const cards = () => root.root.findAllByType('GameCard');
+  const active = () => cards().filter(card => card.props.active).map(card => card.props.gameId);
+  await show([old]);
+  assert.deepEqual(active(), ['old-game'], 'opening a saved chat opens its latest game');
+  await show([old, fresh]);
+  assert.deepEqual(active(), ['game']);
+  assert.equal(cards().at(-1).props.enabled, true, 'a committed game is playable while the answer continues streaming');
+  await act(async () => cards().at(-1).props.onDeactivate());
+  await show([old, { ...fresh, content: 'The rest of the answer', status: 'completed' }]);
+  assert.deepEqual(active(), [], 'a later response snapshot must respect Close');
+  await act(async () => cards()[0].props.onActivate());
+  assert.deepEqual(active(), ['old-game'], 'older games remain available on request');
+  await show([old, fresh, { ...reply(undefined), id: 'newest', games: [{ ...game, id: 'new-game' }] }]);
+  assert.deepEqual(active(), ['new-game'], 'only one game surface is selected');
+  await show([old], 'another-chat');
+  assert.deepEqual(active(), ['old-game'], 'changing conversations selects that chat’s latest game');
 });

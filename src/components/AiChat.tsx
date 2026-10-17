@@ -24,7 +24,7 @@ const Message = memo(function Message({ message, last, busy, onRetry, reduceMoti
   const blocks = message.blocks ?? [];
   const linkedGames = new Set(blocks.flatMap(block => block.kind === 'tool' && block.gameId ? [block.gameId] : []));
   const gameCard = (game: NonNullable<ChatMessage['games']>[number]) => <LearningGameCard key={game.id} game={game} chatId={chatId} messageId={message.id} active={game.id === activeGameId}
-    enabled={gamesEnabled && message.status !== 'streaming'} onActivate={() => onActiveGame(game.id)} onDeactivate={() => onActiveGame(null)} onAction={onGameAction} onBeforeAudio={onBeforeGameAudio} />;
+    enabled={gamesEnabled} onActivate={() => onActiveGame(game.id)} onDeactivate={() => onActiveGame(null)} onAction={onGameAction} onBeforeAudio={onBeforeGameAudio} />;
   return <Animated.View style={[styles.message, user && styles.userMessage, { opacity: entrance, transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }] }]}>
     {user ? <View style={styles.userBubble}><Text selectable style={styles.userText}>{message.content}</Text></View> : <>
       {blocks.length ? blocks.map(block => <View key={block.id}>
@@ -79,8 +79,9 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   const [reduceMotion, setReduceMotion] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   const [activeGameId, setActiveGameId] = useState<string | null>(null);
-  useEffect(() => { setActiveGameId(null); }, [chat.conversation?.id]);
   const messages = chat.conversation?.messages ?? [];
+  const latestGameId = messages.flatMap(message => message.games ?? []).at(-1)?.id ?? null;
+  useEffect(() => { setActiveGameId(latestGameId); }, [chat.conversation?.id, latestGameId]);
   const voice = useVoiceInput({ enabled: voiceEnabled && !loading && contextReady, chatId: chat.conversation?.id, transcript: attachment ?? availableTranscript, draft, onDraftChange });
   function scrollToEnd(animated = false) {
     nearBottom.current = true; setShowJump(false);
