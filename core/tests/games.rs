@@ -1,0 +1,528 @@
+//! Regressions for generated cards, streamed tools, durable actions and lazy clips.
+use lingoplay_core::{
+    AiHttpRequest, AiPlatform, AiResponse, AiSecret, MediaHttp, MediaRangeReply, ai_execute,
+    execute, install_ai_platform, install_media_http,
+};
+use serde_json::{Value, json};
+use std::{
+    collections::HashMap,
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+#[derive(Default)]
+struct Backend {
+    secrets: Mutex<HashMap<String, String>>,
+    definition: Mutex<Value>,
+    requests: Mutex<Vec<Value>>,
+    answer_only: AtomicBool,
+    fail_final: AtomicBool,
+    repeat: AtomicBool,
+    legacy_gemini: AtomicBool,
+}
+struct Platform(Arc<Backend>);
+fn event(value: Value) -> String {
+    format!("data: {value}\n\n")
+}
+impl AiPlatform for Platform {
+    fn secret_read(&self, key: String) -> AiSecret {
+        AiSecret {
+            ok: true,
+            value: self
+                .0
+                .secrets
+                .lock()
+                .unwrap()
+                .get(&key)
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+    fn secret_write(&self, key: String, value: String) -> bool {
+        self.0.secrets.lock().unwrap().insert(key, value);
+        true
+    }
+    fn request(&self, request: AiHttpRequest, response: Arc<AiResponse>) {
+        let body: Value = serde_json::from_str(&request.body).unwrap();
+        self.0.requests.lock().unwrap().push(body.clone());
+        let protocol = if request.url.ends_with("/responses") {
+            "responses"
+        } else if request.url.ends_with("/messages") {
+            "anthropic"
+        } else if request.url.contains("streamGenerateContent") {
+            "gemini"
+        } else {
+            "chat"
+        };
+        let continued = body["input"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|r| r["type"] == "function_call_output"))
+            || body["messages"].as_array().is_some_and(|rows| {
+                rows.iter().any(|r| {
+                    r["role"] == "tool"
+                        || r["content"]
+                            .as_array()
+                            .is_some_and(|parts| parts.iter().any(|p| p["type"] == "tool_result"))
+                })
+            })
+            || body["contents"].as_array().is_some_and(|rows| {
+                rows.iter().any(|r| {
+                    r["parts"].as_array().is_some_and(|parts| {
+                        parts.iter().any(|p| p["functionResponse"].is_object())
+                    })
+                })
+            });
+        response.start(200);
+        let final_reply = self.0.answer_only.load(Ordering::SeqCst)
+            || continued && !self.0.repeat.swap(false, Ordering::SeqCst);
+        let mut stream = String::new();
+        if final_reply {
+            match protocol {
+                "responses" => {
+                    stream += &event(
+                        json!({"type":"response.output_text.delta","delta":"Try the game. 你好"}),
+                    );
+                    if !self.0.fail_final.load(Ordering::SeqCst) {
+                        stream += &event(json!({"type":"response.completed","response":{}}));
+                    }
+                }
+                "anthropic" => {
+                    stream += &event(
+                        json!({"type":"content_block_delta","delta":{"type":"text_delta","text":"Try the game. 你好"}}),
+                    );
+                    if !self.0.fail_final.load(Ordering::SeqCst) {
+                        stream += &event(json!({"type":"message_stop"}));
+                    }
+                }
+                "gemini" => {
+                    stream += &event(
+                        json!({"candidates":[{"content":{"parts":[{"text":"Try the game. 你好"}]}}]}),
+                    );
+                    if !self.0.fail_final.load(Ordering::SeqCst) {
+                        stream += &event(json!({"candidates":[{"finishReason":"STOP"}]}));
+                    }
+                }
+                _ => {
+                    stream +=
+                        &event(json!({"choices":[{"delta":{"content":"Try the game. 你好"}}]}));
+                    if !self.0.fail_final.load(Ordering::SeqCst) {
+                        stream += &event(json!({"choices":[{"delta":{},"finish_reason":"stop"}]}));
+                        stream += "data: [DONE]\n\n";
+                    }
+                }
+            }
+        } else {
+            let definition = self.0.definition.lock().unwrap().clone();
+            let raw = definition.to_string();
+            let middle = raw.char_indices().nth(raw.chars().count() / 2).unwrap().0;
+            match protocol {
+                "responses" => {
+                    let reasoning = json!({"id":"reasoning-1","type":"reasoning","summary":[],"encrypted_content":"OPAQUE_CONTINUATION"});
+                    stream += &event(
+                        json!({"type":"response.output_item.done","output_index":0,"item":reasoning}),
+                    );
+                    let mut item = json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"create_interactive_game","arguments":""});
+                    stream += &event(
+                        json!({"type":"response.output_item.added","output_index":1,"item":item}),
+                    );
+                    for part in [&raw[..middle], &raw[middle..]] {
+                        stream += &event(
+                            json!({"type":"response.function_call_arguments.delta","output_index":1,"delta":part}),
+                        );
+                    }
+                    item["arguments"] = json!(raw);
+                    stream += &event(
+                        json!({"type":"response.output_item.done","output_index":1,"item":item}),
+                    );
+                    stream += &event(
+                        json!({"type":"response.completed","response":{"output":[reasoning,item]}}),
+                    );
+                }
+                "anthropic" => {
+                    stream += &event(
+                        json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+                    );
+                    stream += &event(
+                        json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Make a game."}}),
+                    );
+                    stream += &event(
+                        json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"OPAQUE_CONTINUATION"}}),
+                    );
+                    stream += &event(
+                        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-1","name":"create_interactive_game","input":{}}}),
+                    );
+                    for part in [&raw[..middle], &raw[middle..]] {
+                        stream += &event(
+                            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":part}}),
+                        );
+                    }
+                    stream +=
+                        &event(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}));
+                    stream += &event(json!({"type":"message_stop"}));
+                }
+                "gemini" => {
+                    let mut call =
+                        json!({"id":"call-1","name":"create_interactive_game","args":definition});
+                    if self.0.legacy_gemini.load(Ordering::SeqCst) {
+                        call.as_object_mut().unwrap().remove("id");
+                    }
+                    stream += &event(
+                        json!({"candidates":[{"content":{"parts":[{"functionCall":call,"thoughtSignature":"OPAQUE_CONTINUATION"}]},"finishReason":"STOP"}]}),
+                    );
+                }
+                _ => {
+                    stream += &event(
+                        json!({"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","text":"Make a game.","signature":"signed-chunk","id":"reasoning-1","format":"anthropic-claude-v1","index":0}]}}]}),
+                    );
+                    stream += &event(
+                        json!({"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"OPAQUE_CONTINUATION","id":"encrypted-1","format":"anthropic-claude-v1","index":1}]}}]}),
+                    );
+                    stream += &event(
+                        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"create_interactive_","arguments":&raw[..middle]}}]}}]}),
+                    );
+                    stream += &event(
+                        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"game","arguments":&raw[middle..]}}]},"finish_reason":"tool_calls"}]}),
+                    );
+                    stream += "data: [DONE]\n\n";
+                }
+            }
+        }
+        // Includes splits inside multibyte text and escaped tool argument strings.
+        for chunk in stream.as_bytes().chunks(7) {
+            if !response.push(chunk.to_vec()) {
+                break;
+            }
+        }
+    }
+}
+struct Temp(PathBuf);
+impl Temp {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "lingoplay-games-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+}
+impl Drop for Temp {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+fn call(root: &Path, value: Value) -> Value {
+    serde_json::from_str(&ai_execute(
+        value.to_string(),
+        root.to_str().unwrap().into(),
+    ))
+    .unwrap()
+}
+fn ok(root: &Path, value: Value) -> Value {
+    let reply = call(root, value);
+    assert_eq!(reply["ok"], true, "{reply}");
+    reply["value"].clone()
+}
+fn wait(root: &Path, started: &Value) -> Value {
+    for _ in 0..1000 {
+        let state = ok(root, json!({"op":"ai_poll","taskId":started["taskId"]}));
+        if state["status"] != "running" {
+            return state;
+        }
+        thread::sleep(Duration::from_millis(3));
+    }
+    panic!("game request timed out")
+}
+fn definition() -> Value {
+    json!({"title":"Arrange 你好","html":"<button id=choice>你好</button>","css":"button{min-height:44px}","script":"game.onState(state => {});","cueIds":[],"rules":json!({"initialState":{"selected":[],"correct":false,"round":0},"actions":[
+        {"name":"choose","when":{"op":"and","args":[{"op":"contains","args":[{"literal":["a","b"]},{"input":"id"}]},{"op":"not","args":[{"op":"contains","args":[{"state":"selected"},{"input":"id"}]}]}]},"updates":[{"key":"selected","value":{"op":"append","args":[{"state":"selected"},{"input":"id"}]}}]},
+        {"name":"check","updates":[{"key":"correct","value":{"op":"eq","args":[{"state":"selected"},{"literal":["b","a"]}]}},{"key":"round","value":{"op":"add","args":[{"state":"round"},{"literal":1}]}}],"notify":true}
+    ]}).to_string()})
+}
+fn provider(root: &Path, protocol: &str) -> String {
+    let config = ok(
+        root,
+        json!({"op":"ai_save","provider":{"id":"","kind":"custom","label":protocol,"baseUrl":"http://127.0.0.1:12345/v1","protocol":protocol,"model":"fixture","models":[{"id":"fixture"}]}}),
+    );
+    config["providers"].as_array().unwrap().last().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+
+#[derive(Default)]
+struct Ranges(Mutex<Vec<(u64, u64)>>);
+struct Media(Arc<Ranges>);
+impl MediaHttp for Media {
+    fn fetch_range(
+        &self,
+        _: String,
+        _: String,
+        _: String,
+        _: String,
+        start: u64,
+        end: u64,
+    ) -> MediaRangeReply {
+        self.0.0.lock().unwrap().push((start, end));
+        let body = if start == 100 && end == 155 {
+            let mut data = vec![0u8; 56];
+            data[0..4].copy_from_slice(&56u32.to_be_bytes());
+            data[4..8].copy_from_slice(b"sidx");
+            data[16..20].copy_from_slice(&1000u32.to_be_bytes());
+            data[30..32].copy_from_slice(&2u16.to_be_bytes());
+            for at in [32, 44] {
+                data[at..at + 4].copy_from_slice(&400u32.to_be_bytes());
+                data[at + 4..at + 8].copy_from_slice(&10000u32.to_be_bytes());
+            }
+            data
+        } else {
+            (start..=end).map(|n| n as u8).collect()
+        };
+        MediaRangeReply { status: 206, body }
+    }
+}
+
+#[test]
+fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
+    let backend = Arc::new(Backend::default());
+    install_ai_platform(Box::new(Platform(backend.clone())));
+    let ranges = Arc::new(Ranges::default());
+    install_media_http(Box::new(Media(ranges.clone())));
+    for (protocol, legacy) in [
+        ("chat", false),
+        ("responses", false),
+        ("anthropic", false),
+        ("gemini", false),
+        ("gemini", true),
+    ] {
+        backend.legacy_gemini.store(legacy, Ordering::SeqCst);
+        let store = Temp::new();
+        let root = &store.0;
+        let id = provider(root, protocol);
+        *backend.definition.lock().unwrap() = definition();
+        backend.requests.lock().unwrap().clear();
+        backend.answer_only.store(false, Ordering::SeqCst);
+        backend.repeat.store(true, Ordering::SeqCst);
+        let started = ok(
+            root,
+            json!({"op":"ai_chat_send","id":id,"prompt":"Make a game"}),
+        );
+        assert_eq!(wait(root, &started)["status"], "completed");
+        let chat = ok(
+            root,
+            json!({"op":"ai_chat_get","chatId":started["conversation"]["id"]}),
+        );
+        let reply = chat["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(
+            reply["games"].as_array().unwrap().len(),
+            1,
+            "repeated calls must not duplicate cards"
+        );
+        assert!(reply["content"].as_str().unwrap().contains("你好"));
+        let game = &reply["games"][0];
+        let requests = backend.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(
+            requests[1].to_string().contains("OPAQUE_CONTINUATION"),
+            "preserve signed/opaque protocol items"
+        );
+        if protocol == "chat" {
+            let details = &requests[1]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["tool_calls"].is_array())
+                .unwrap()["reasoning_details"];
+            assert_eq!(details.as_array().unwrap().len(), 2);
+            assert_eq!(details[0]["signature"], "signed-chunk");
+            assert_eq!(details[1]["data"], "OPAQUE_CONTINUATION");
+        }
+        assert!(
+            !fs::read_to_string(
+                root.join("ai/chats")
+                    .join(format!("{}.json", chat["id"].as_str().unwrap()))
+            )
+            .unwrap()
+            .contains("OPAQUE_CONTINUATION")
+        );
+        if legacy {
+            assert!(requests[1]["contents"].as_array().unwrap().last().unwrap()["parts"][0]["functionResponse"].get("id").is_none());
+        }
+        drop(requests);
+        let base = json!({"op":"ai_game_action","chatId":chat["id"],"messageId":reply["id"],"gameId":game["id"],"action":"choose","input":{"id":"b"},"eventId":"tap-1","revision":0});
+        let mut bad = base.clone();
+        bad["input"] = json!({"id":"invented"});
+        assert_eq!(call(root, bad)["ok"], false);
+        let first = ok(root, base.clone());
+        assert_eq!(first["game"]["state"]["selected"], json!(["b"]));
+        assert_eq!(
+            ok(root, base.clone())["game"]["revision"],
+            1,
+            "duplicates are idempotent even with their old revision"
+        );
+        bad = base.clone();
+        bad["eventId"] = json!("stale");
+        assert_eq!(call(root, bad)["ok"], false);
+        let mut second = base.clone();
+        second["eventId"] = json!("tap-2");
+        second["revision"] = json!(1);
+        second["input"] = json!({"id":"a"});
+        ok(root, second);
+        let mut check = base.clone();
+        check["action"] = json!("check");
+        check["eventId"] = json!("submit");
+        check["revision"] = json!(2);
+        check["input"] = json!({});
+        let checked = ok(root, check.clone());
+        assert_eq!(checked["notify"], true);
+        assert_eq!(checked["game"]["state"]["correct"], true);
+        assert_eq!(checked["game"]["state"]["round"], 1);
+        assert_eq!(
+            ok(root, check)["notify"],
+            false,
+            "a retried submit must not trigger another model turn"
+        );
+        backend.answer_only.store(true, Ordering::SeqCst);
+        let next = ok(
+            root,
+            json!({"op":"ai_chat_send","id":id,"chatId":chat["id"],"prompt":"How did I do?","focusGameId":game["id"]}),
+        );
+        assert_eq!(wait(root, &next)["status"], "completed");
+        let input = backend.requests.lock().unwrap().last().unwrap().to_string();
+        assert!(input.contains("game_activity"));
+        assert!(input.contains("submit"));
+        assert!(
+            !input.contains("<button id=choice>"),
+            "game source is not replayed into model context"
+        );
+        let restored = ok(root, json!({"op":"ai_chat_get","chatId":chat["id"]}));
+        assert_eq!(
+            restored["messages"][1]["games"][0]["state"]["correct"],
+            true
+        );
+        assert!(
+            ranges.0.lock().unwrap().is_empty(),
+            "creating and playing text games must not fetch audio"
+        );
+    }
+    // A final stream failure must preserve a successfully committed card.
+    let store = Temp::new();
+    let root = &store.0;
+    let id = provider(root, "responses");
+    backend.answer_only.store(false, Ordering::SeqCst);
+    backend.fail_final.store(true, Ordering::SeqCst);
+    let started = ok(
+        root,
+        json!({"op":"ai_chat_send","id":id,"prompt":"Make another game"}),
+    );
+    assert_eq!(wait(root, &started)["status"], "failed");
+    assert_eq!(
+        ok(
+            root,
+            json!({"op":"ai_chat_get","chatId":started["conversation"]["id"]})
+        )["messages"][1]["games"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    backend.fail_final.store(false, Ordering::SeqCst);
+    // Unknown operations are returned as tool errors and never install a card.
+    let mut invalid = definition();
+    invalid["rules"]=json!(json!({"initialState":{},"actions":[{"name":"escape","updates":[{"key":"x","value":{"op":"eval","args":[]}}]}]}).to_string());
+    *backend.definition.lock().unwrap() = invalid;
+    let started = ok(
+        root,
+        json!({"op":"ai_chat_send","id":id,"prompt":"Invalid game"}),
+    );
+    assert_eq!(wait(root, &started)["status"], "completed");
+    assert!(
+        ok(
+            root,
+            json!({"op":"ai_chat_get","chatId":started["conversation"]["id"]})
+        )["messages"][1]["games"]
+            .is_null()
+    );
+    // Caption references are frozen; lazily fetched audio survives transcript eviction.
+    let video = "abcdefghijk";
+    let raw = json!({"type":"transcript","requestId":"game-audio","videoId":video,"ok":true,"transcript":{"videoId":video,"title":"Clip fixture","trackId":".en","language":"English","tracks":[{"id":".en","label":"English","language":"en","automatic":false}],"segments":[{"start":12.5,"duration":2,"text":"Spoken words from the video"}]}});
+    let accepted:Value=serde_json::from_str(&execute(json!({"op":"accept","videoId":video,"requestId":"game-audio","origin":"https://www.youtube.com","raw":raw.to_string()}).to_string(),root.to_str().unwrap().into())).unwrap();
+    assert_eq!(accepted["ok"], true);
+    let mut def = definition();
+    def["cueIds"] = json!(["cue-0"]);
+    *backend.definition.lock().unwrap() = def;
+    let started = ok(
+        root,
+        json!({"op":"ai_chat_send","id":id,"prompt":"Audio game","transcript":{"videoId":video,"trackId":".en"}}),
+    );
+    assert_eq!(wait(root, &started)["status"], "completed");
+    let chat = ok(
+        root,
+        json!({"op":"ai_chat_get","chatId":started["conversation"]["id"]}),
+    );
+    let reply = &chat["messages"][1];
+    let mut command = json!({"op":"ai_game_audio","chatId":chat["id"],"messageId":reply["id"],"gameId":reply["games"][0]["id"],"cueId":"cue-0"});
+    assert_eq!(ok(root, command.clone())["needsMedia"], true);
+    assert!(ranges.0.lock().unwrap().is_empty());
+    command["catalog"] = json!({"videoId":video,"origin":"https://m.youtube.com","live":false,"streams":[{"itag":140,"kind":"audio","mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","audioOriginal":true,"bitrate":128000,"bytes":1000,"url":"https://r1.googlevideo.com/audio?sig=PRIVATE_SIGNED_AUDIO","initRange":{"start":0,"end":99},"indexRange":{"start":100,"end":155}}]});
+    let clip = ok(root, command.clone());
+    assert_eq!(clip["start"], 2.5);
+    assert_eq!(clip["end"], 4.5);
+    assert_eq!(
+        *ranges.0.lock().unwrap(),
+        vec![(100, 155), (0, 99), (556, 955)],
+        "only initialization, index and overlapping audio are fetched"
+    );
+    let uri = clip["uri"].as_str().unwrap();
+    let manifest = ureq::get(uri).call().unwrap().into_string().unwrap();
+    assert!(manifest.contains("segment-0.m4s"));
+    assert!(!manifest.contains("PRIVATE_SIGNED_AUDIO"));
+    let segment = url::Url::parse(uri).unwrap().join("segment-0.m4s").unwrap();
+    let mut data = Vec::new();
+    ureq::get(segment.as_str())
+        .call()
+        .unwrap()
+        .into_reader()
+        .read_to_end(&mut data)
+        .unwrap();
+    assert_eq!(data.len(), 400);
+    ok(
+        root,
+        json!({"op":"ai_game_audio_release","token":clip["token"]}),
+    );
+    assert!(ureq::get(uri).call().is_err());
+    command.as_object_mut().unwrap().remove("catalog");
+    let cached = ok(root, command.clone());
+    assert_eq!(cached["needsMedia"], false);
+    assert_eq!(
+        ranges.0.lock().unwrap().len(),
+        3,
+        "replay must use cached bytes"
+    );
+    command["cueId"] = json!("cue-999");
+    assert_eq!(call(root, command)["ok"], false);
+    assert_eq!(ranges.0.lock().unwrap().len(), 3);
+    ok(
+        root,
+        json!({"op":"ai_game_audio_release","token":cached["token"]}),
+    );
+    for entry in fs::read_dir(root.join("ai/game-audio")).unwrap() {
+        let path = entry.unwrap().path().join("clip.json");
+        assert!(
+            !fs::read_to_string(path)
+                .unwrap()
+                .contains("PRIVATE_SIGNED_AUDIO")
+        );
+    }
+}

@@ -7,8 +7,10 @@ import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats
 import { AiMarkdown } from './AiMarkdown';
 import { AiReasoning } from './AiReasoning';
 import { useVoiceInput } from '../ai/useVoiceInput';
+import { LearningGameCard } from './LearningGameCard';
+import type { GameAction } from '../ai/games';
 
-const Message = memo(function Message({ message, last, busy, onRetry, reduceMotion }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; reduceMotion: boolean }) {
+const Message = memo(function Message({ message, last, busy, onRetry, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const entrance = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
@@ -22,6 +24,8 @@ const Message = memo(function Message({ message, last, busy, onRetry, reduceMoti
     {user ? <View style={styles.userBubble}><Text selectable style={styles.userText}>{message.content}</Text></View> : <>
       {!!message.reasoning && <View><Pressable accessibilityRole="button" accessibilityState={{ expanded: showReasoning }} onPress={() => setShowReasoning(!showReasoning)} style={styles.messageAction}><Text style={styles.actionText}>{showReasoning ? 'Hide reasoning' : 'Show reasoning'}</Text></Pressable>{showReasoning && <AiMarkdown content={message.reasoning} streaming={message.status === 'streaming' && busy} />}</View>}
       {message.content ? <AiMarkdown content={message.content} streaming={message.status === 'streaming' && busy} /> : message.status === 'streaming' && busy ? <View accessibilityLiveRegion="polite" style={styles.thinking}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Thinking…</Text></View> : null}
+      {message.games?.map(game => <LearningGameCard key={game.id} game={game} chatId={chatId} messageId={message.id} active={game.id === activeGameId}
+        enabled={gamesEnabled && message.status !== 'streaming'} onActivate={() => onActiveGame(game.id)} onDeactivate={() => onActiveGame(null)} onAction={onGameAction} onBeforeAudio={onBeforeGameAudio} />)}
       {message.error && <Text accessibilityRole="alert" style={styles.error}>{message.error}</Text>}
       {message.status === 'stopped' && !message.error && <Text style={styles.muted}>Response stopped</Text>}
       {message.status !== 'streaming' && <View style={styles.messageActions}>
@@ -32,7 +36,7 @@ const Message = memo(function Message({ message, last, busy, onRetry, reduceMoti
   </Animated.View>;
 });
 
-export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
+export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, onBeforeGameAudio, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
   chat: ChatController;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -42,6 +46,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   loading: boolean;
   contextReady?: boolean;
   voiceEnabled?: boolean;
+  onBeforeGameAudio?: () => Promise<void> | void;
   onSend: () => void;
   onRetry: () => void;
   onAttach: () => void;
@@ -62,6 +67,8 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   const [showJump, setShowJump] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+  const [activeGameId, setActiveGameId] = useState<string | null>(null);
+  useEffect(() => { setActiveGameId(null); }, [chat.conversation?.id]);
   const messages = chat.conversation?.messages ?? [];
   const voice = useVoiceInput({ enabled: voiceEnabled && !loading && contextReady, chatId: chat.conversation?.id, transcript: attachment ?? availableTranscript, draft, onDraftChange });
   function scrollToEnd(animated = false) {
@@ -100,7 +107,9 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
             <Pressable accessibilityRole="button" onPress={() => { voice.changeDraft('Explain this phrase: '); input.current?.focus(); }} style={styles.suggestion}><MessageCircle size={17} color={colors.muted} /><Text style={styles.suggestionText}>Explain a phrase</Text></Pressable>
           </View> : <Pressable accessibilityRole="button" onPress={onModels} style={styles.connect}><Text style={styles.connectText}>Choose a model</Text></Pressable>}
         </View>}
-        renderItem={({ item, index }) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={onRetry} reduceMotion={reduceMotion} />}
+        renderItem={({ item, index }) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={onRetry} reduceMotion={reduceMotion}
+          chatId={chat.conversation?.id ?? ''} activeGameId={activeGameId} onActiveGame={setActiveGameId} gamesEnabled={voiceEnabled && contextReady && !loading && !voice.active}
+          onGameAction={chat.gameAction} onBeforeGameAudio={onBeforeGameAudio} />}
       />
       {showJump && <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => scrollToEnd(!reduceMotion)} style={styles.jump}><ArrowDown size={20} color={colors.ink} /></Pressable>}
     </View>

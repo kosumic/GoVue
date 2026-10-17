@@ -20,6 +20,8 @@ struct Message {
     id: String,
     role: String,
     content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    games: Vec<games::Game>,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -105,6 +107,8 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
                     "completed" | "streaming" | "failed" | "stopped"
                 )
                 || m.content.len() > MAX_OUTPUT
+                || m.games.len() > 3
+                || m.games.iter().any(|game| !game.validate())
                 || m.reasoning.len() > MAX_OUTPUT
                 || m.model.len() > 200
                 || m.provider_label.len() > 100
@@ -390,6 +394,104 @@ pub(super) fn interrupt(job: &Arc<Job>) -> Result<()> {
     }
     Ok(())
 }
+
+/// Commit before continuing the model so a failed final reply cannot lose a game.
+pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
+    let (root, id) = job
+        .conversation
+        .get()
+        .ok_or("Games require a saved conversation.")?;
+    let call_id = string(call, "id")?;
+    if call_id.is_empty() || call_id.len() > 200 {
+        return Err("Invalid tool call identity.".into());
+    }
+    let definition: games::Definition = serde_json::from_str(string(call, "arguments")?)
+        .map_err(|_| "Invalid game arguments. Supply all fields described by the tool schema.")?;
+    let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+    job.pending()?;
+    let mut chat = read(root, id)?;
+    if chat.active_task.as_deref() != Some(&job.id) {
+        return Err("This game request is no longer active.".into());
+    }
+    let transcript = if let Some(reference) = &chat.transcript {
+        let _guard = crate::REQUEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        Some(crate::load(
+            root.to_str().ok_or("Invalid storage path.")?,
+            &reference.video_id,
+            &reference.track_id,
+        )?)
+    } else {
+        None
+    };
+    let reply = chat
+        .messages
+        .last_mut()
+        .ok_or("Missing assistant message.")?;
+    if let Some(game) = reply.games.iter().find(|game| game.call_id == call_id) {
+        return Ok(json!({"gameId":game.id,"title":game.definition.title,"status":"created"}));
+    }
+    if reply.games.len() >= 3 {
+        return Err("At most three games can be created in one reply.".into());
+    }
+    let game = games::Game::create(definition, call_id, transcript.as_ref())?;
+    let result = json!({"gameId":game.id,"title":game.definition.title,"status":"created","message":"The playable card is in chat. Briefly invite the user to play; do not repeat its HTML or answers."});
+    reply.games.push(game);
+    let snapshot = json!(reply.games);
+    job.pending()?;
+    save(root, &chat)?;
+    let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+    state["gameCommitted"] = json!(true);
+    state["games"] = snapshot;
+    Ok(result)
+}
+
+fn game_action(c: &Value, root: &Path) -> Result<Value> {
+    let mut chat = read(root, string(c, "chatId")?)?;
+    let message = chat
+        .messages
+        .iter_mut()
+        .find(|m| m.id == c["messageId"])
+        .ok_or("This game message is no longer available.")?;
+    let game = message
+        .games
+        .iter_mut()
+        .find(|g| g.id == c["gameId"])
+        .ok_or("This game is no longer available.")?;
+    let notify = game.apply(c)?;
+    let result = json!({"game":game,"notify":notify});
+    chat.updated_at = now();
+    save(root, &chat)?;
+    Ok(result)
+}
+
+fn game_audio(c: &Value, root: &Path) -> Result<Value> {
+    let (video_id, cue) = {
+        let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+        let chat = read(root, string(c, "chatId")?)?;
+        let game = chat
+            .messages
+            .iter()
+            .filter(|m| m.id == c["messageId"])
+            .flat_map(|m| &m.games)
+            .find(|g| g.id == c["gameId"])
+            .ok_or("This game is no longer available.")?;
+        let cue = game
+            .cues
+            .iter()
+            .find(|cue| cue.id == c["cueId"])
+            .ok_or("This game cannot play that caption.")?
+            .clone();
+        let video_id = chat
+            .video_id
+            .or_else(|| chat.transcript.map(|t| t.video_id))
+            .ok_or("This game has no source video.")?;
+        (video_id, cue)
+    };
+    games::audio::prepare(root, &video_id, &cue, &c["catalog"])
+}
+
 fn send(c: Value, root: PathBuf) -> Result<Value> {
     let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
     let existing = c["chatId"].as_str().filter(|id| !id.is_empty());
@@ -504,12 +606,36 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         .filter(|pair| pair[1].status == "completed")
         .flat_map(|pair| {
             pair.iter()
-                .map(|m| json!({"role":m.role,"content":m.content}))
+                .map(|m| json!({"role":m.role,"content":if m.games.is_empty() { m.content.clone() } else { format!("{}\n[Interactive games: {}]", m.content, m.games.iter().map(|g| g.definition.title.as_str()).collect::<Vec<_>>().join(", ")) }}))
         })
         .collect::<Vec<_>>();
     history(&json!(history_rows))?;
     let mut wire = json!({"prompt":prompt,"history":history_rows,"intent":c["intent"],"includeTranscript":chat.transcript.is_some()});
     wire["reasoningEffort"] = json!(chat.reasoning_effort);
+    let mut recent_games = chat
+        .messages
+        .iter()
+        .flat_map(|m| &m.games)
+        .rev()
+        .collect::<Vec<_>>();
+    recent_games.sort_by_key(|game| {
+        std::cmp::Reverse((
+            Some(game.id.as_str()) == c["focusGameId"].as_str(),
+            game.last_activity(),
+        ))
+    });
+    let mut activity = Vec::new();
+    let mut activity_bytes = 0;
+    for game in recent_games.into_iter().take(8) {
+        let snapshot = game.context();
+        let size = snapshot.to_string().len();
+        if activity_bytes + size <= 160_000 {
+            activity_bytes += size;
+            activity.push(snapshot);
+        }
+    }
+    wire["gameActivity"] =
+        json!(serde_json::to_string(&activity).map_err(|_| "Could not read game activity.")?);
     if let Some(t) = &chat.transcript {
         wire["videoId"] = json!(t.video_id);
         wire["trackId"] = json!(t.track_id);
@@ -534,6 +660,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         id: random()?,
         role: "user".into(),
         content: prompt,
+        games: Vec::new(),
         status: "completed".into(),
         error: None,
         reasoning: String::new(),
@@ -551,6 +678,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         id: random()?,
         role: "assistant".into(),
         content: String::new(),
+        games: Vec::new(),
         status: "streaming".into(),
         error: None,
         reasoning: String::new(),
@@ -740,8 +868,12 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     if c["op"] == "ai_chat_send" {
         return send(c, root);
     }
+    if c["op"] == "ai_game_audio" {
+        return game_audio(&c, &root);
+    }
     let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
     match string(&c, "op")? {
+        "ai_game_action" => game_action(&c, &root),
         "ai_chat_speech_hints" => speech_hints(&c, &root),
         "ai_usage" => usage_report(&c, &root),
         "ai_chats" => Ok(

@@ -21,7 +21,7 @@ function Button({ title, onPress, disabled = false }: { title: string; onPress: 
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, disabled && styles.disabled]}><Text style={styles.buttonText}>{title}</Text></Pressable>;
 }
 
-export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, browserControl }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; onOpenVideo?: (videoId: string) => void; browserControl?: ReactNode }) {
+export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, browserControl, onBeforeGameAudio }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; onOpenVideo?: (videoId: string) => void; browserControl?: ReactNode; onBeforeGameAudio?: () => Promise<void> | void }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const [chatVideoId, setChatVideoId] = useState(videoId);
@@ -140,6 +140,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
           {!!contextError && <View style={styles.banner}><Text accessibilityRole="alert" style={styles.help}>{contextError}</Text><Button title="Retry transcript" onPress={() => setContextRetry(value => value + 1)} /></View>}
           {chats.conversation?.providerId && ai.ready && !selected?.connected && <View style={styles.banner}><Text style={styles.help}>Reconnect {chats.conversation.providerLabel} to continue this chat.</Text><Button title="Providers" onPress={() => showPage('providers')} /></View>}
           <AiChat key={newChatVersion} chat={chats} draft={prompt} onDraftChange={setPrompt} attachment={attachment} availableTranscript={availableTranscript} voiceEnabled={visible && !historyVisible && !usageVisible && !transcriptVisible}
+            onBeforeGameAudio={onBeforeGameAudio}
             connected={!!selected?.connected && !!selected?.enabled && !selected?.needsReauth && !!selectedModel && !ai.busy} loading={!ai.ready || !chats.ready || chats.loading || contextLoading} contextReady={contextReady}
             reasoning={reasoningName(chats.reasoningEffort ?? savedReasoning)} providerId={selected?.id} model={selectedModel}
             onSend={() => { void sendMessage(); }} onRetry={() => { if (contextReady && selected?.connected) void chats.send(selected.id, '', attachment, undefined, true); }}

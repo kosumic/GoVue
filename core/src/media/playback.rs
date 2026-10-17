@@ -133,11 +133,18 @@ pub(crate) fn codecs(stream: &Value) -> Result<&str> {
         .ok_or("Invalid playback codec.".into())
 }
 
+pub(crate) struct IndexedSegment {
+    pub start: f64,
+    pub duration: f64,
+    pub offset: u64,
+    pub size: u64,
+}
+
 // ISO BMFF Segment Index. Reject nested indexes and references outside the file.
-pub(crate) fn playlist(stream: &Value, data: &[u8], uri: &str) -> Result<String> {
+pub(crate) fn segment_index(stream: &Value, data: &[u8]) -> Result<Vec<IndexedSegment>> {
     let invalid = || "Invalid MP4 segment index.".to_string();
     let length = stream["bytes"].as_u64().ok_or_else(invalid)?;
-    let (init_start, init_end) = range(&stream["initRange"], length).ok_or_else(invalid)?;
+    range(&stream["initRange"], length).ok_or_else(invalid)?;
     let (index_start, index_end) = range(&stream["indexRange"], length).ok_or_else(invalid)?;
     if data.len() as u64 != index_end - index_start + 1 {
         return Err(invalid());
@@ -188,8 +195,12 @@ pub(crate) fn playlist(stream: &Value, data: &[u8], uri: &str) -> Result<String>
         .checked_add(end as u64)
         .and_then(|n| n.checked_add(first_offset))
         .ok_or_else(invalid)?;
-    let mut segments = String::new();
-    let mut target = 1.0f64;
+    let mut segments = Vec::new();
+    let mut time = if version == 0 {
+        u32_at(at + 20)? as f64
+    } else {
+        u64_at(at + 20)? as f64
+    } / timescale as f64;
     for i in 0..count {
         let entry = count_at + 4 + i * 12;
         let size = u32_at(entry)?;
@@ -201,11 +212,30 @@ pub(crate) fn playlist(stream: &Value, data: &[u8], uri: &str) -> Result<String>
             .checked_add(size as u64)
             .filter(|n| *n <= length)
             .ok_or_else(invalid)?;
-        target = target.max(duration.ceil());
-        segments.push_str(&format!(
-            "#EXTINF:{duration:.6},\n#EXT-X-BYTERANGE:{size}@{offset}\n{uri}\n"
-        ));
+        segments.push(IndexedSegment {
+            start: time,
+            duration,
+            offset,
+            size: size as u64,
+        });
+        time += duration;
         offset = next;
+    }
+    Ok(segments)
+}
+
+pub(crate) fn playlist(stream: &Value, data: &[u8], uri: &str) -> Result<String> {
+    let length = stream["bytes"].as_u64().ok_or("Missing media length.")?;
+    let (init_start, init_end) =
+        range(&stream["initRange"], length).ok_or("Invalid initialization range.")?;
+    let mut segments = String::new();
+    let mut target = 1.0f64;
+    for segment in segment_index(stream, data)? {
+        target = target.max(segment.duration.ceil());
+        segments.push_str(&format!(
+            "#EXTINF:{:.6},\n#EXT-X-BYTERANGE:{}@{}\n{uri}\n",
+            segment.duration, segment.size, segment.offset
+        ));
     }
     Ok(format!(
         "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{target:.0}\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"{uri}\",BYTERANGE=\"{}@{init_start}\"\n{segments}#EXT-X-ENDLIST\n",

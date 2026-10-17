@@ -856,6 +856,7 @@ function Browser() {
             )}
           </View>
           <AiSheet
+            onBeforeGameAudio={media.pause}
             visible={aiVisible}
             onClose={() => setAiVisible(false)}
             transcript={session.transcript.data}
