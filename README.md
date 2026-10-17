@@ -27,6 +27,8 @@ Opening chat never sends a message or starts a summary. Choose a model from the
 header and send your own question; model changes keep the video's conversation.
 Use **Open video** in chat to return to its existing video tab or open it again.
 Tap the transcript context card to read or search the captions used by the AI.
+Tap a line to hear its original audio and stop at the end of that caption. Audio
+loads on demand and is cached locally for replay and reuse by the chat's games.
 Reasoning changes made during a response apply to the next message.
 Open **Extensions → AI** to manage AI providers, accounts, models and model
 groups.

@@ -177,6 +177,12 @@ fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
     assert_eq!(attached["messages"], json!([]));
     assert!(backend.requests.lock().unwrap().is_empty());
 
+    // Listening uses the attached caption without starting inference or requiring a game.
+    let audio =
+        json!({"op":"ai_chat_audio","chatId":id,"videoId":video,"trackId":".en","cueId":"cue-0"});
+    assert_eq!(ok(root, audio)["needsMedia"], true);
+    assert!(backend.requests.lock().unwrap().is_empty());
+
     // Explicitly sending null cannot remove a video chat's required context.
     let sent = ok(
         root,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { Copy, Download, LocateFixed, RotateCw, Search, Share2, Sparkles, X } from 'lucide-react-native';
+import { Copy, Download, LocateFixed, RotateCw, Search, Share2, Sparkles, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { currentSegmentIndex, timestamp, type Segment, type Transcript } from '../youtube/transcript';
 import { exportTranscript, searchTranscript } from '../core/transcripts';
@@ -9,7 +9,7 @@ import { IconButton } from './IconButton';
 import { TranscriptWords } from './TranscriptWords';
 import { saveWord } from '../core/vocabulary';
 
-export function TranscriptPanel({ data, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onSummarize, onDownload, downloadDisabled }: {
+export function TranscriptPanel({ data, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, audio, onSummarize, onDownload, downloadDisabled }: {
   data: Transcript | null;
   loading: boolean;
   error: string | null;
@@ -20,6 +20,8 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   onClose: () => void;
   onExtract?: (track?: string) => void;
   onSeek?: (seconds: number) => void;
+  onPlayLine?: (index: number) => void;
+  audio?: { phase: 'idle' | 'loading' | 'playing'; error: string; stop: () => void };
   onSummarize?: () => void;
   onDownload?: () => void;
   downloadDisabled?: boolean;
@@ -59,6 +61,12 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   const segments = !query.trim() ? data?.segments ?? [] : matches?.query === query && matches.data === data ? matches.segments : [];
   const activeIndex = currentSegmentIndex(data?.segments ?? [], position);
   const activeSegment = data?.segments[activeIndex];
+  const canPlay = !!(onSeek || onPlayLine);
+  function playLine(segment: Segment) {
+    setFollowPlayback(true);
+    if (onPlayLine && data) onPlayLine(data.segments.indexOf(segment));
+    else onSeek?.(segment.start);
+  }
   const following = followPlayback && !query.trim();
   const scrollToCurrent = useCallback(() => {
     const target = scrollTarget.current;
@@ -115,6 +123,12 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
       </View>
       {copied && <Text accessibilityLiveRegion="polite" style={styles.feedback}>Transcript copied</Text>}
       {!!wordFeedback && <Text accessibilityLiveRegion="polite" style={styles.feedback}>{wordFeedback}</Text>}
+      {audio && audio.phase !== 'idle' && <View style={styles.audioRow}>
+        {audio.phase === 'loading' && <ActivityIndicator size="small" color={colors.accent} />}
+        <Text accessibilityLiveRegion="polite" style={styles.audioStatus}>{audio.phase === 'loading' ? 'Loading line audio…' : 'Playing line audio'}</Text>
+        <IconButton compact icon={Square} label="Stop line audio" onPress={audio.stop} />
+      </View>}
+      {!!audio?.error && <Text accessibilityRole="alert" style={styles.feedback}>{audio.error}</Text>}
       {loading ? <View style={styles.empty}><ActivityIndicator color={colors.accent} /><Text style={styles.emptyTitle}>Extracting captions…</Text><Text style={styles.help}>You can keep watching while this loads.</Text></View> : error ? (
         <View style={styles.empty}><Text style={styles.emptyTitle}>Transcript unavailable</Text><Text accessibilityRole="alert" style={styles.help}>{error}</Text>
           {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable>}</View>
@@ -135,8 +149,8 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${segments.length} of ${data.segments.length}` : segments.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>
         <View style={styles.languageRow}>
-          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language}{onSeek ? ' · Tap a line to play' : ''} · Hold a word to save</Text>
-          {onSeek && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
+          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language}{canPlay ? ' · Tap a line to play' : ''} · Hold a word to save</Text>
+          {canPlay && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
             onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
             <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
@@ -154,13 +168,13 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
           keyboardShouldPersistTaps="handled" ListEmptyComponent={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
           renderItem={({ item }) => <Pressable accessible={false}
             accessibilityState={{ selected: item === activeSegment }}
-            accessibilityHint={onSeek ? item === activeSegment ? 'Current line. Jump to this line and play the video' : 'Jump to this line and play the video' : undefined}
-            onPress={onSeek ? () => { setFollowPlayback(true); onSeek(item.start); } : undefined}
+            accessibilityHint={canPlay ? onPlayLine ? 'Listen to this transcript line' : 'Jump to this line and play the video' : undefined}
+            onPress={canPlay ? () => playLine(item) : undefined}
             style={({ pressed }) => [styles.segment, item === activeSegment && styles.activeSegment, pressed && styles.pressedSegment]}>
-            <Text style={styles.time} accessibilityRole={onSeek ? 'button' : undefined} accessibilityLabel={onSeek ? `Play line at ${timestamp(item.start)}` : undefined}
-              onPress={onSeek ? () => { setFollowPlayback(true); onSeek(item.start); } : undefined}>{timestamp(item.start)}</Text>
+            <Text style={styles.time} accessibilityRole={canPlay ? 'button' : undefined} accessibilityLabel={canPlay ? `Play line at ${timestamp(item.start)}` : undefined}
+              onPress={canPlay ? event => { event.stopPropagation(); playLine(item); } : undefined}>{timestamp(item.start)}</Text>
             <TranscriptWords text={item.text} selected={item === activeSegment} style={[styles.segmentText, item === activeSegment && styles.activeText]}
-              onSeek={onSeek ? () => { setFollowPlayback(true); onSeek(item.start); } : undefined}
+              onSeek={canPlay ? () => playLine(item) : undefined}
               onSave={(tokenIndex, word) => { void saveCaptionWord(item, tokenIndex, word); }} />
           </Pressable>} />
       </> : null}
@@ -177,6 +191,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   title: { fontSize: 17, fontWeight: '600', letterSpacing: -0.4, color: colors.ink },
   subtitle: { fontSize: 11, color: colors.muted },
   feedback: { color: colors.accent, fontSize: 12, paddingHorizontal: 20, paddingBottom: 8 },
+  audioRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 20, paddingRight: 8 },
+  audioStatus: { flex: 1, color: colors.accent, fontSize: 12 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28, gap: 12 },
   emptyTitle: { fontSize: 17, fontWeight: '600', color: colors.ink },
   help: { fontSize: 13, lineHeight: 21, color: colors.muted, textAlign: 'center', maxWidth: 320 },
