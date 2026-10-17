@@ -19,7 +19,24 @@ feature parity.
 
 The player's Transcript and AI buttons appear before speed and quality. Transcript
 opens a searchable reader with language selection, playback following, and
-tap-to-seek captions. Select up to two transcript languages to compare captions
+tap-to-seek captions. YouTube JSON3 word timings are preserved when available:
+the current word is highlighted, and tapping a word seeks to its start. Hold a
+word to save it with that timestamp. Captions without word timings use the line
+start; refresh an older cached transcript to fetch word timings.
+The reader keeps original line breaks, reconstructs continuations within caption
+windows, and displays authored emphasis and Japanese pronunciation readings.
+Subtle dividers mark possible speaker changes when the caption track supplies
+those flags, including changes within a caption; they do not identify speakers.
+Readings are searchable and included when copying or sharing. **Translate…**
+offers YouTube's available machine translations with their source language;
+default caption selection follows the selected audio track when YouTube supplies
+the association. **Caption details** shows source structure, audio associations,
+and recognition-score and speech-boundary statistics. These scores are not
+calibrated accuracy percentages, and speech-boundary hints do not identify speakers.
+Validated cue fragments, timing, formatting, window definitions, confidence,
+speech-boundary hints, and translation/audio metadata stay in the native caption
+cache; upstream addresses, tokens, and raw responses remain excluded.
+Select up to two transcript languages to compare captions
 interleaved in timestamp order, even when the languages split lines differently.
 Search matches either language and keeps the paired lines together; copy and
 share include both selected languages. Tap a selected language to remove it.

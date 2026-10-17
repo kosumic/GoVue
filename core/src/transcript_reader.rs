@@ -127,7 +127,7 @@ pub(super) fn dispatch(
                     "{}  [{}] {}",
                     timestamp(segment.start),
                     source.language,
-                    segment.text
+                    crate::captions::readable_text(segment)
                 ));
             }
         }
@@ -147,7 +147,7 @@ pub(super) fn dispatch(
     if !query.is_empty() {
         rows.retain(|row| {
             row.lines.iter().any(|line| {
-                folded(&sources[line.track].unwrap().segments[line.index].text).contains(&query)
+                crate::captions::matches(&sources[line.track].unwrap().segments[line.index], &query)
             })
         });
     }

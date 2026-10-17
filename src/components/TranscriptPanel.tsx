@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { Copy, Download, LocateFixed, RotateCw, Search, Share2, Sparkles, Square, X } from 'lucide-react-native';
+import { Copy, Download, Info, LocateFixed, RotateCw, Search, Share2, Sparkles, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { currentSegmentIndex, timestamp, type Transcript } from '../youtube/transcript';
 import { exportTranscript, readTranscripts, type TranscriptReader, type TranscriptRow } from '../core/transcripts';
 import { IconButton } from './IconButton';
 import { TranscriptWords } from './TranscriptWords';
-import { saveWord } from '../core/vocabulary';
+import { TranscriptTranslations } from './TranscriptTranslations';
+import { captionDetails, saveWord } from '../core/vocabulary';
 
 export function TranscriptPanel({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, audio, onSummarize, onDownload, downloadDisabled }: {
   data: Transcript | null;
@@ -36,6 +37,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState(false);
   const [wordFeedback, setWordFeedback] = useState('');
+  const [translationsVisible, setTranslationsVisible] = useState(false);
   const savingWord = useRef(false);
   const activeData = useRef([data, comparison]);
   activeData.current = [data, comparison];
@@ -43,6 +45,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
     activeData.current = [data, comparison];
     setWordFeedback('');
     setCopied(false);
+    setTranslationsVisible(false);
     return () => { activeData.current = []; };
   }, [data, comparison]);
   const [matches, setMatches] = useState<{ query: string; data: Transcript; comparison: Transcript | null; reader: TranscriptReader } | null>(null);
@@ -72,8 +75,9 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   const selectionKey = selectedTracks.join('\0');
   const tracks = data ? [
     ...selectedTracks.flatMap(id => data.tracks.filter(track => track.id === id)),
-    ...data.tracks.filter(track => !selectedTracks.includes(track.id)),
+    ...data.tracks.filter(track => !selectedTracks.includes(track.id) && !track.translatedFrom),
   ] : [];
+  const translations = data?.tracks.filter(track => !!track.translatedFrom) ?? [];
   useEffect(() => { trackList.current?.scrollTo({ x: 0, animated: true }); }, [selectionKey]);
   const activeIndices = sources.map(source => currentSegmentIndex(source?.segments ?? [], position));
   const rowIndices = useMemo(() => {
@@ -130,6 +134,10 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
         <View style={styles.headingText}><Text accessibilityRole="header" numberOfLines={1} style={styles.title}>Transcript</Text>
           <Text numberOfLines={1} style={styles.subtitle}>{cached ? 'Saved · ' : ''}{data?.title || 'YouTube captions'}</Text></View>
         {onExtract && <IconButton compact icon={RotateCw} label="Refresh transcript" disabled={loading} onPress={() => { setCopied(false); onExtract(); }} />}
+        <IconButton compact icon={Info} label="Caption details" disabled={!data || loading} onPress={() => {
+          if (data) void captionDetails(data).then(details => Alert.alert(`${data.language} captions`, details))
+            .catch(() => Alert.alert('Caption details unavailable', 'Refresh the transcript and try again.'));
+        }} />
         <IconButton compact icon={Copy} label={copied ? 'Transcript copied' : 'Copy transcript'} disabled={!data || loading || comparisonLoading} onPress={async () => {
           if (!data) return;
           try { Clipboard.setString(await exportTranscript(data, comparison)); setCopied(true); } catch { Alert.alert('Could not copy transcript'); }
@@ -167,10 +175,14 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
               const disabled = !selected && selectedTracks.length >= 2;
               return <Pressable key={track.id} accessibilityRole="checkbox" accessibilityLabel={track.label + (track.automatic ? ' · Auto' : '')} accessibilityState={{ checked: selected, disabled }}
                 disabled={disabled} onPress={() => onSelectTrack(track.id)} style={[styles.track, selected && styles.selectedTrack, disabled && styles.disabledTrack]}>
-                <Text style={[styles.trackText, selected && styles.selectedText]}>{selected ? `${selectedTracks.indexOf(track.id) + 1} · ` : ''}{track.label}{track.automatic ? ' · Auto' : ''}</Text>
+                <Text style={[styles.trackText, selected && styles.selectedText]}>{selected ? `${selectedTracks.indexOf(track.id) + 1} · ` : ''}{track.label}{track.automatic && !track.translatedFrom ? ' · Auto' : ''}</Text>
               </Pressable>;
             })}
+            {!!translations.length && <Pressable accessibilityRole="button" accessibilityLabel="Translate captions" onPress={() => setTranslationsVisible(true)} style={styles.track}>
+              <Text style={styles.trackText}>Translate…</Text>
+            </Pressable>}
           </ScrollView>
+          <TranscriptTranslations visible={translationsVisible} tracks={translations} selected={selectedTracks} onSelect={onSelectTrack} onClose={() => setTranslationsVisible(false)} />
         </>}
         {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={styles.trackText}>Loading comparison…</Text></View>}
         {!!comparisonError && <View style={styles.comparisonStatus}><Text accessibilityRole="alert" style={styles.comparisonError}>{comparisonError}</Text>
@@ -180,14 +192,14 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>
         <View style={styles.languageRow}>
-          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : [data.language, comparison?.language].filter(Boolean).join(' + ')}{canPlay ? ' · Tap a line to play' : ''} · Hold a word to save</Text>
+          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : [data.language, comparison?.language].filter(Boolean).join(' + ')}{canPlay ? onSeek ? ' · Tap a word or line to play' : ' · Tap a line to play' : ''} · Hold a word to save</Text>
           {canPlay && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
             onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
             <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
           </Pressable>}
         </View>
-        <FlatList ref={list} data={rows} extraData={activeRow} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={styles.list}
+        <FlatList ref={list} data={rows} extraData={position} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={styles.list}
           onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
             const target = scrollTarget.current;
@@ -212,8 +224,11 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
                   onPress={canPlay ? event => { event.stopPropagation(); playLine(source, line.index); } : undefined}>{timestamp(segment.start)}</Text>
                 <View style={styles.lineText}>
                   {!!comparison && <Text style={styles.lineLanguage}>{source.language}</Text>}
-                  <TranscriptWords text={segment.text} selected={active} style={[styles.segmentText, line.track === 1 && styles.comparisonText, active && styles.activeText]}
+                  <TranscriptWords source={source} segmentIndex={line.index} position={active && onSeek ? position : null} selected={active}
+                    style={[styles.segmentText, line.track === 1 && styles.comparisonText, active && styles.activeText]} activeWordStyle={styles.activeWord}
+                    separatorStyle={styles.speakerSeparator}
                     onSeek={canPlay ? () => playLine(source, line.index) : undefined}
+                    onSeekWord={onSeek ? seconds => { setFollowPlayback(true); onSeek(seconds); } : undefined}
                     onSave={(tokenIndex, word) => { void saveCaptionWord(source, line.index, tokenIndex, word); }} />
                 </View>
               </Pressable>;
@@ -225,6 +240,8 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
 }
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  activeWord: { backgroundColor: colors.accent, color: colors.background, fontWeight: '700' },
+  speakerSeparator: { color: colors.muted },
   pauseRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, minHeight: 48 },
   pauseLabel: { flex: 1, color: colors.ink, fontSize: 13 },
   panel: { flex: 1, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.line },

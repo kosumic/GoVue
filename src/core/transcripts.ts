@@ -2,12 +2,12 @@ import { coreRequest } from '../../modules/lingoplay-core';
 import type { Segment, Transcript } from '../youtube/transcript';
 import { extract } from './extraction';
 
-export function extractTranscript(videoId: string, trackId = 'default', signal?: AbortSignal, fresh = false) {
-  return extract<Transcript>('transcript', videoId, { trackId, signal, fresh });
+export function extractTranscript(videoId: string, trackId = 'default', signal?: AbortSignal, fresh = false, audioKey = '') {
+  return extract<Transcript>('transcript', videoId, { trackId, signal, fresh, audioKey });
 }
 
-export function restoreTranscript(videoId: string, trackId?: string) {
-  return coreRequest<Transcript | null>({ op: 'restore', videoId, trackId });
+export function restoreTranscript(videoId: string, trackId?: string, audioKey = '') {
+  return coreRequest<Transcript | null>({ op: 'restore', videoId, trackId, audioKey });
 }
 
 export type TranscriptRow = { start: number; lines: { track: number; index: number }[] };

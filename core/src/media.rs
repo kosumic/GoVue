@@ -232,9 +232,13 @@ pub(crate) fn catalog(command: &Value) -> Result<Value> {
         "author":clean(media["author"].as_str().unwrap_or("")),"duration":media["duration"].as_f64().filter(|n|*n>0.0&&*n<=604800.0).unwrap_or_else(||formats.iter().filter_map(|f|f["approxDurationMs"].as_u64().or_else(||f["approxDurationMs"].as_str()?.parse().ok())).filter(|n|*n>0&&*n<=604800000).max().unwrap_or(0) as f64/1000.0),
         "position":media["position"].as_f64().unwrap_or(0.0).max(0.0),"live":media["live"]==true,
         "streams":streams,"hlsUrl":hls,"hlsUserAgent":media["hlsUserAgent"].as_str().filter(|s|s.len()<=1000&&!s.chars().any(char::is_control)).unwrap_or(""),"audioTracks":audio_tracks,
-        "subtitles":media["subtitles"].as_array().map(|items|items.iter().take(200).filter_map(|t|{
+        "subtitles":media["subtitles"].as_array().map(|items|items.iter().take(300).filter_map(|t|{
             let id=t["id"].as_str().filter(|s|s.len()<=512)?;
-            Some(json!({"id":id,"label":clean(t["label"].as_str().unwrap_or("Captions")),"language":clean(t["language"].as_str().unwrap_or("")),"automatic":t["automatic"]==true}))
+            let mut track=json!({"id":id,"label":clean(t["label"].as_str().unwrap_or("Captions")),"language":clean(t["language"].as_str().unwrap_or("")),"automatic":t["automatic"]==true});
+            if t["translatable"]==true {track["translatable"]=json!(true);}
+            if let Some(source)=t["translatedFrom"].as_str().filter(|s|s.len()<=512) {track["translatedFrom"]=json!(source);}
+            if let Some(ids)=t["audioTrackIds"].as_array() {track["audioTrackIds"]=json!(ids.iter().take(200).filter_map(|id|id.as_str().filter(|s|s.len()<=512)).collect::<Vec<_>>());}
+            Some(track)
         }).collect::<Vec<_>>()).unwrap_or_default(),
         "chapters":chapters}),
     )

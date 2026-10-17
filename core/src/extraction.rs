@@ -1,7 +1,7 @@
 //! Standalone YouTube extraction. Rust owns HTTP, protocol state, validation and
 //! caches. The platform transports bounded HTTPS bytes; an isolated renderer
 //! supplies only BotGuard snapshot/token strings. No YouTube page is executed.
-use crate::{MAX_BYTES, Result, Track, Transcript, clean, json, media, string, video_id};
+use crate::{MAX_BYTES, Result, Track, Transcript, json, media, string, video_id};
 use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD},
@@ -463,24 +463,7 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
     Ok(result)
 }
 fn tracks(player: &Player) -> Vec<Track> {
-    player.data["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .take(200)
-        .enumerate()
-        .map(|(index, track)| Track {
-            id: track["vssId"]
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| {
-                    format!("{}:{index}", track["languageCode"].as_str().unwrap_or(""))
-                }),
-            label: clean(&text(&track["name"])),
-            language: track["languageCode"].as_str().unwrap_or("").into(),
-            automatic: track["kind"] == "asr",
-        })
-        .collect()
+    crate::caption_tracks::extract(&player.data, "").0
 }
 fn parse_challenge(response: &Value) -> Result<Value> {
     if let Some(encoded) = response[1].as_str() {
@@ -603,9 +586,16 @@ fn caption_address(raw: &str, id: &str, po_token: Option<&str>) -> Result<String
     }
     Ok(result)
 }
-fn transcript(job: &Job, root: &str, id: &str, track: &str, fresh: bool) -> Result<Value> {
+fn transcript(
+    job: &Job,
+    root: &str,
+    id: &str,
+    track: &str,
+    audio_key: &str,
+    fresh: bool,
+) -> Result<Value> {
     if !fresh {
-        let mut command = json!({"op":"restore","videoId":id});
+        let mut command = json!({"op":"restore","videoId":id,"audioKey":audio_key});
         if track != "default" {
             command["trackId"] = json!(track);
         }
@@ -615,24 +605,43 @@ fn transcript(job: &Job, root: &str, id: &str, track: &str, fresh: bool) -> Resu
         }
     }
     let player = player(job, root, id, fresh)?;
-    let tracks = tracks(&player);
+    let source_id = track
+        .strip_prefix("translate:")
+        .and_then(|rest| rest.split_once(':'))
+        .map(|(_, source)| source)
+        .or_else(|| (track != "default").then_some(track));
+    let (tracks, track_metadata) =
+        crate::caption_tracks::extract_for_source(&player.data, audio_key, source_id);
     let list = &player.data["captions"]["playerCaptionsTracklistRenderer"];
-    let index = if track == "default" {
-        let audio = list["defaultAudioTrackIndex"].as_u64().unwrap_or(0) as usize;
-        list["audioTracks"][audio]["defaultCaptionTrackIndex"]
-            .as_u64()
-            .unwrap_or(0) as usize
+    let selected = if track == "default" {
+        crate::caption_tracks::default_track(&tracks, &track_metadata)
     } else {
-        tracks
-            .iter()
-            .position(|t| t.id == track)
-            .ok_or("This caption language is unavailable.")?
-    };
-    let selected = tracks
-        .get(index)
-        .ok_or("This video has no caption tracks.")?;
+        tracks.iter().find(|t| t.id == track)
+    }
+    .ok_or(if tracks.is_empty() {
+        "This video has no caption tracks."
+    } else {
+        "This caption language is unavailable."
+    })?;
+    let source_id = selected.translated_from.as_deref().unwrap_or(&selected.id);
+    let index = tracks
+        .iter()
+        .position(|t| t.id == source_id)
+        .ok_or("This caption source is unavailable.")?;
     let raw = string(&list["captionTracks"][index], "baseUrl")?;
-    let address = caption_address(raw, id, None)?;
+    let address_for = |proof| -> Result<String> {
+        let mut address = caption_address(raw, id, proof)?;
+        if selected.translated_from.is_some() {
+            address.push('&');
+            address.push_str(
+                &url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("tlang", &selected.language)
+                    .finish(),
+            );
+        }
+        Ok(address)
+    };
+    let address = address_for(None)?;
     let requires_token = Url::parse(&address)
         .unwrap()
         .query_pairs()
@@ -644,18 +653,12 @@ fn transcript(job: &Job, root: &str, id: &str, track: &str, fresh: bool) -> Resu
     };
     if source.trim().is_empty() {
         let proof = token(job, &player)?;
-        source = fetch(
-            job,
-            &caption_address(raw, id, Some(&proof))?,
-            None,
-            false,
-            &[],
-        )?;
+        source = fetch(job, &address_for(Some(&proof))?, None, false, &[])?;
     }
     if source.trim().is_empty() {
         return Err("YouTube returned no caption text after verification.".into());
     }
-    let segments = crate::parse_captions(&source)?;
+    let (segments, caption_metadata) = crate::parse_captions(&source)?;
     let mut data = Transcript {
         video_id: id.into(),
         title: text(&player.data["videoDetails"]["title"]),
@@ -663,6 +666,8 @@ fn transcript(job: &Job, root: &str, id: &str, track: &str, fresh: bool) -> Resu
         track_id: selected.id.clone(),
         tracks,
         segments,
+        caption_metadata: Some(caption_metadata),
+        track_metadata: Some(track_metadata),
     };
     crate::normalize(&mut data)?;
     job.check()?;
@@ -751,6 +756,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             let id = string(command, "videoId")?;
             let kind = string(command, "kind")?;
             let track = command["trackId"].as_str().unwrap_or("default");
+            let audio_key = command["audioKey"].as_str().unwrap_or("");
             let user_agent = command["userAgent"]
                 .as_str()
                 .filter(|agent| !agent.is_empty())
@@ -758,7 +764,11 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             if user_agent.len() > 1000 || user_agent.chars().any(char::is_control) {
                 return Err("Invalid extraction browser identity.".into());
             }
-            if !video_id(id) || !matches!(kind, "media" | "transcript") || track.len() > 512 {
+            if !video_id(id)
+                || !matches!(kind, "media" | "transcript")
+                || track.len() > 512
+                || audio_key.len() > 512
+            {
                 return Err("Invalid extraction request.".into());
             }
             if jobs.contains_key(&key) || jobs.len() >= 8 {
@@ -786,11 +796,12 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 wake: Condvar::new(),
             });
             jobs.insert(key.clone(), job.clone());
-            let (root, id, kind, track, fresh) = (
+            let (root, id, kind, track, audio_key, fresh) = (
                 root.to_owned(),
                 id.to_owned(),
                 kind.to_owned(),
                 track.to_owned(),
+                audio_key.to_owned(),
                 command["fresh"] == true,
             );
             let worker = job.clone();
@@ -807,7 +818,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     let result = if kind == "media" {
                         catalog(&worker, &root, &id, fresh)
                     } else {
-                        transcript(&worker, &root, &id, &track, fresh)
+                        transcript(&worker, &root, &id, &track, &audio_key, fresh)
                     };
                     if let Ok(mut output) = worker.result.lock() {
                         *output = Some(result);
@@ -938,7 +949,9 @@ mod tests {
                         format!(
                             "ytcfg.set({});var ytInitialPlayerResponse = {};",
                             json!({"INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"fixture","visitorData":"never-persist-visitor"}}}),
-                            json!({"videoDetails":{"videoId":ID},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"vssId":".en","languageCode":"en","name":{"simpleText":"English"},"baseUrl":SOURCE}]}}})
+                            json!({"videoDetails":{"videoId":ID},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"vssId":".en","languageCode":"en","name":{"simpleText":"English"},"baseUrl":SOURCE,"isTranslatable":true}],
+                                "audioTracks":[{"audioTrackId":"en.4","captionTrackIndices":[0],"defaultCaptionTrackIndex":0}],
+                                "translationLanguages":[{"languageCode":"es","languageName":{"simpleText":"Spanish"}}]}}})
                         )
                     }
                     "/youtubei/v1/player" => {
@@ -971,6 +984,11 @@ mod tests {
                         assert_eq!(query["pot"], "proof");
                         assert_eq!(query["potc"], "1");
                         assert_eq!(query["c"], "WEB");
+                        assert_eq!(query["signature"], "never-persist");
+                        if let Some(language) = query.get("tlang") {
+                            assert_eq!(language, "es");
+                            return ExtractionReply { status:200, headers, body:json!({"events":[{"tStartMs":0,"dDurationMs":2000,"segs":[{"utf8":"Hola","tOffsetMs":0,"acAsrConf":0}]}]}).to_string().into_bytes() };
+                        }
                         json!({"events":[{"tStartMs":3000,"dDurationMs":1000,"segs":[{"utf8":" Ｗorld "}]},{"tStartMs":0,"dDurationMs":2000,"segs":[{"utf8":"Hello\n there"}]}]}).to_string()
                     }
                     path => panic!("Unexpected request / page fallback: {path}"),
@@ -1046,7 +1064,7 @@ mod tests {
         assert_eq!(catalog["subtitles"][0]["id"], ".en");
         start("transcript", "captions:1", false);
         let transcript = wait("captions:1", true);
-        assert_eq!(transcript["segments"][0]["text"], "Hello there");
+        assert_eq!(transcript["segments"][0]["text"], "Hello\nthere");
         assert_eq!(transcript["segments"][1]["text"], "World");
         let requests = count.load(Ordering::Relaxed);
         start("transcript", "cached:1", false);
@@ -1069,6 +1087,21 @@ mod tests {
         ] {
             assert!(!stored.contains(secret), "Persisted {secret}");
         }
+        assert_eq!(
+            call(
+                json!({"op":"extract_start","kind":"transcript","requestId":"translated:1","videoId":ID,"trackId":"translate:es:.en","audioKey":"en.4"})
+            )["ok"],
+            true
+        );
+        let translated = wait("translated:1", true);
+        assert_eq!(translated["segments"][0]["text"], "Hola");
+        assert_eq!(translated["trackId"], "translate:es:.en");
+        assert_eq!(translated["trackMetadata"]["defaultAudioTrackId"], "en.4");
+        assert_eq!(translated["segments"][0]["words"][0]["start"], 0.0);
+        assert_eq!(
+            call(json!({"op":"restore","videoId":ID,"trackId":"translate:es:.en"}))["value"],
+            translated
+        );
         start("transcript", "cancelled:1", true);
         assert_eq!(wait("cancelled:1", false)["stage"], "snapshot");
         assert_eq!(call(json!({"op":"info"}))["ok"], true);
@@ -1081,7 +1114,7 @@ mod tests {
                 ["ok"],
             false
         );
-        for request in ["media:1", "captions:1", "cached:1"] {
+        for request in ["media:1", "captions:1", "cached:1", "translated:1"] {
             call(json!({"op":"extract_release","requestId":request}));
         }
         fs::remove_dir_all(root).unwrap();

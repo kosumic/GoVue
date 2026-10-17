@@ -4,6 +4,7 @@ import {
 } from '../../modules/lingoplay-core';
 import { Platform } from 'react-native';
 import { extract } from './extraction';
+import type { CaptionTrack } from '../youtube/transcript';
 
 export type GestureKey =
   `gesture${'Tap' | 'DoubleTap' | 'LongPress' | 'Brightness' | 'Volume' | 'Seek' | 'Fullscreen'}${'Windowed' | 'Fullscreen'}`;
@@ -134,12 +135,7 @@ export type MediaCatalog = {
   streams: MediaStream[];
   hlsUrl: string | null;
   hlsUserAgent?: string;
-  subtitles?: {
-    id: string;
-    label: string;
-    language: string;
-    automatic: boolean;
-  }[];
+  subtitles?: CaptionTrack[];
   chapters?: MediaChapter[];
   audioTracks?: { key: string; label: string }[];
 };

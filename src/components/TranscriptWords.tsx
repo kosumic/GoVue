@@ -1,34 +1,50 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Alert, Text, type StyleProp, type TextStyle } from 'react-native';
-import { tokenizeCaption, type WordToken } from '../core/vocabulary';
+import { captionWords, type WordToken } from '../core/vocabulary';
+import type { Transcript } from '../youtube/transcript';
 
-export function TranscriptWords({ text, style, selected, onSeek, onSave }: {
-  text: string;
+export function TranscriptWords({ source, segmentIndex, position, style, activeWordStyle, separatorStyle, selected, onSeek, onSeekWord, onSave }: {
+  source: Transcript;
+  segmentIndex: number;
+  position: number | null;
   style: StyleProp<TextStyle>;
+  activeWordStyle: StyleProp<TextStyle>;
+  separatorStyle?: StyleProp<TextStyle>;
   selected: boolean;
   onSeek?: () => void;
+  onSeekWord?: (seconds: number) => void;
   onSave: (tokenIndex: number, word: string) => void;
 }) {
-  const [parsed, setParsed] = useState<{ text: string; tokens: WordToken[] } | null>(null);
+  const text = source.segments[segmentIndex].text;
+  const [parsed, setParsed] = useState<{ source: Transcript; segmentIndex: number; tokens: WordToken[] } | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     let active = true;
     setError('');
-    tokenizeCaption(text).then(tokens => {
-      if (active) setParsed({ text, tokens });
+    captionWords(source, segmentIndex).then(({ text: currentText, tokens }) => {
+      if (currentText !== text) throw Error('This caption changed. Refresh the transcript to prepare its words.');
+      if (active) setParsed({ source, segmentIndex, tokens });
     }).catch(e => {
       if (active) setError(e instanceof Error ? e.message : 'Could not prepare words for saving.');
     });
     return () => { active = false; };
-  }, [text, retry]);
-  const tokens = parsed?.text === text ? parsed.tokens : null;
-  return <Text style={style} accessible accessibilityLabel={text} accessibilityRole={onSeek ? 'button' : undefined} accessibilityState={{ selected }}
-    accessibilityHint={onSeek ? 'Tap to play this line. Use the save word actions or hold a word to save it.' : 'Use the save word actions or hold a word to save it.'}
-    accessibilityActions={tokens?.flatMap((token, index) => token.word ? [{ name: `save-word-${index}`, label: `Save ${token.text}` }] : [])}
+  }, [source, segmentIndex, retry]);
+  const tokens = parsed?.source === source && parsed.segmentIndex === segmentIndex ? parsed.tokens : null;
+  const timed = !!onSeekWord && !!tokens?.some(token => token.start !== undefined);
+  const spokenText = tokens?.map(token => (token.speakerChange ? ' Possible speaker change. ' : '') + token.text + (token.reading ? ` (${token.reading})` : '')).join('') ?? text;
+  return <Text style={style} accessible accessibilityLabel={spokenText} accessibilityRole={onSeek ? 'button' : undefined} accessibilityState={{ selected }}
+    accessibilityHint={onSeek ? `Tap ${timed ? 'a word' : 'the line'} to play. Use the save word actions or hold a word to save it.` : 'Use the save word actions or hold a word to save it.'}
+    accessibilityActions={tokens?.flatMap((token, index) => token.word ? [
+      ...(onSeekWord && token.start !== undefined ? [{ name: `play-word-${index}`, label: `Play from ${token.text}` }] : []),
+      { name: `save-word-${index}`, label: `Save ${token.text}` },
+    ] : [])}
     onAccessibilityAction={event => {
-      const index = tokens?.findIndex((token, index) => token.word && event.nativeEvent.actionName === `save-word-${index}`) ?? -1;
-      if (tokens && index >= 0) onSave(index, tokens[index].text);
+      tokens?.forEach((token, index) => {
+        if (!token.word) return;
+        if (event.nativeEvent.actionName === `save-word-${index}`) onSave(index, token.text);
+        if (event.nativeEvent.actionName === `play-word-${index}` && token.start !== undefined) onSeekWord?.(token.start);
+      });
     }}
     onPress={onSeek ? event => { event.stopPropagation(); onSeek(); } : undefined}
     onLongPress={!tokens ? event => {
@@ -37,8 +53,21 @@ export function TranscriptWords({ text, style, selected, onSeek, onSave }: {
         { text: 'Cancel', style: 'cancel' }, { text: 'Retry', onPress: () => setRetry(value => value + 1) },
       ]);
     } : undefined}>
-    {tokens ? tokens.map((token, index) => token.word ? <Text key={index} accessible={false}
-      onPress={onSeek ? event => { event.stopPropagation(); onSeek(); } : undefined}
-      onLongPress={event => { event.stopPropagation(); onSave(index, token.text); }}>{token.text}</Text> : token.text) : text}
+    {tokens ? tokens.map((token, index) => token.word ? <Fragment key={index}>
+      {token.speakerChange && <Text accessible={false} style={[{ fontSize: 12, fontWeight: '400' }, separatorStyle]}>{`${index && !tokens[index - 1].text.endsWith('\n') ? '\n' : ''}───\n`}</Text>}
+      <Text accessible={false}
+      style={[
+        token.bold !== undefined && { fontWeight: token.bold ? '700' : '400' },
+        token.italic !== undefined && { fontStyle: token.italic ? 'italic' : 'normal' },
+        token.underline !== undefined && { textDecorationLine: token.underline ? 'underline' : 'none' },
+        selected && position !== null && token.start !== undefined && position >= token.start && (token.end === undefined || position < token.end) && activeWordStyle,
+      ]}
+      onPress={onSeek ? event => {
+        event.stopPropagation();
+        if (onSeekWord && token.start !== undefined) onSeekWord(token.start);
+        else onSeek();
+      } : undefined}
+      onLongPress={event => { event.stopPropagation(); onSave(index, token.text); }}>{token.text}{token.reading && <Text style={{ fontSize: 11, fontWeight: '400' }}>（{token.reading}）</Text>}</Text>
+    </Fragment> : token.text) : text}
   </Text>;
 }

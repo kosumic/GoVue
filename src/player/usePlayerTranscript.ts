@@ -6,7 +6,7 @@ type Request = { videoId: string; trackIds: string[]; fresh: boolean };
 type Document = { data: Transcript; cached: boolean };
 type Result = { request: Request; documents: Document[]; loading: boolean; error: string | null };
 
-export function usePlayerTranscript(videoId: string | null, initial?: Transcript) {
+export function usePlayerTranscript(videoId: string | null, initial?: Transcript, audioKey = '') {
   const [request, setRequest] = useState<Request | null>(() => initial ? { videoId: initial.videoId, trackIds: [initial.trackId], fresh: false } : null);
   const [result, setResult] = useState<Result | null>(null);
   const documents = useRef<Document[]>([]);
@@ -36,10 +36,10 @@ export function usePlayerTranscript(videoId: string | null, initial?: Transcript
       for (const trackId of request.trackIds) {
         const existing = retained.find(d => d.data.trackId === trackId);
         const seed = !request.fresh && initial?.videoId === videoId && initial.trackId === trackId ? initial : null;
-        const saved = existing?.data ?? seed ?? (request.fresh ? null : await restoreTranscript(request.videoId, trackId === 'default' ? undefined : trackId).catch(() => null));
+        const saved = existing?.data ?? seed ?? (request.fresh ? null : await restoreTranscript(request.videoId, trackId === 'default' ? undefined : trackId, audioKey).catch(() => null));
         if (controller.signal.aborted) return;
         const cached = existing?.cached ?? !!saved;
-        const data = saved ?? await extractTranscript(request.videoId, trackId, controller.signal, request.fresh);
+        const data = saved ?? await extractTranscript(request.videoId, trackId, controller.signal, request.fresh, audioKey);
         if (controller.signal.aborted) return;
         loaded.push({ data, cached });
         documents.current = [...loaded];
@@ -50,7 +50,7 @@ export function usePlayerTranscript(videoId: string | null, initial?: Transcript
         error: error instanceof Error ? error.message : 'The transcript could not load.' });
     });
     return () => controller.abort();
-  }, [request, videoId, initial, close]);
+  }, [request, videoId, initial, audioKey, close]);
   return {
     open, data, comparison,
     trackIds: selected[0] === 'default' && data ? [data.trackId] : selected,

@@ -30,7 +30,8 @@ export function useTranscriptPosition(webView: React.RefObject<WebView | null>, 
     pending.current = request;
     async function update(sample: Sample) {
       if (pending.current !== request) return;
-      setSample({ request, seconds: sample.position });
+      setSample(previous => previous?.request === request && previous.seconds === sample.position
+        ? previous : { request, seconds: sample.position });
       if (!pauseAfterLine || transcript?.videoId !== videoId) return;
       queued = sample;
       if (processing) return;
@@ -57,7 +58,7 @@ export function useTranscriptPosition(webView: React.RefObject<WebView | null>, 
     }
     if (nativeVideoId) {
       const interval = player.timeUpdateEventInterval;
-      if (pauseAfterLine) player.timeUpdateEventInterval = 0.1;
+      player.timeUpdateEventInterval = 0.1;
       const sample = () => update({ position: player.currentTime, playing: player.playing, seeking: false, rate: player.playbackRate, at: Date.now() });
       void sample();
       const listener = player.addListener('timeUpdate', sample);
@@ -66,7 +67,7 @@ export function useTranscriptPosition(webView: React.RefObject<WebView | null>, 
     }
     const poll = () => webView.current?.injectJavaScript(playbackPositionScript(request.id, videoId, pauseAfterLine));
     poll();
-    const timer = setInterval(poll, pauseAfterLine ? 100 : 250);
+    const timer = setInterval(poll, 100);
     return () => { pending.current = null; clearInterval(timer); webView.current?.injectJavaScript(cancelPositionScript(request.id)); };
   }, [webView, player, videoId, enabled, nativeVideoId, transcript, pauseAfterLine]);
 

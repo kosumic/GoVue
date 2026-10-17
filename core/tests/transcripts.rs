@@ -240,7 +240,7 @@ fn parses_raw_json3_and_keeps_lines_across_the_whole_video() {
         data["transcript"]["segments"],
         json!([
             {"start":7.0,"duration":2.0,"text":"a new HomePod mini 2,"},
-            {"start":45.0,"duration":2.0,"text":"Inside the gap"},
+            {"start":45.0,"duration":2.0,"text":"Inside\nthe gap"},
             {"start":490.0,"duration":3.0,"text":"Later line"}
         ])
     );

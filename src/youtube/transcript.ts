@@ -1,5 +1,10 @@
-export type CaptionTrack = { id: string; label: string; language: string; automatic: boolean };
-export type Segment = { start: number; duration: number; text: string };
+export type CaptionTrack = {
+  id: string; label: string; language: string; automatic: boolean;
+  translatable?: boolean; audioTrackIds?: string[]; translatedFrom?: string;
+};
+export type TimedWord = { text: string; start: number };
+export type CaptionRun = { text: string; start?: number; penId?: number; reading?: string; confidence?: number; speakerChange?: boolean };
+export type Segment = { start: number; duration: number; text: string; words?: TimedWord[]; runs?: CaptionRun[]; windowId?: number };
 export type Transcript = {
   videoId: string;
   title: string;
@@ -7,6 +12,18 @@ export type Transcript = {
   trackId: string;
   tracks: CaptionTrack[];
   segments: Segment[];
+  trackMetadata?: {
+    translationLanguages: { code: string; label: string }[];
+    audioTracks: { id: string; label: string; captionTrackIds: string[]; defaultCaptionTrackId: string | null; captionsInitialState: string | null; hasDefaultTrack: boolean | null; visibility: string | null }[];
+    defaultAudioTrackId: string | null;
+  };
+  captionMetadata?: {
+    pens: Record<string, number>[];
+    windowStyles: Record<string, number>[];
+    windowPositions: Record<string, number>[];
+    events: { start: number; duration: number; id?: number; windowId?: number; append: boolean; penId?: number; windowStyleId?: number; windowPositionId?: number;
+      parts: { text: string; offset?: number; penId?: number; confidence?: number; speakerChange?: boolean }[] }[];
+  };
 };
 export type TranscriptReply = {
   type: 'transcript';
