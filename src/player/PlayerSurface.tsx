@@ -52,7 +52,7 @@ import {
   Segments,
 } from './icons';
 import type { LucideIcon } from 'lucide-react-native';
-import { FileText, Sparkles } from 'lucide-react-native';
+import { FileText, Gauge, Sparkles } from 'lucide-react-native';
 import {
   coreRequest,
   getSystemVolume,
@@ -361,7 +361,7 @@ export function PlayerSurface({
     ? '88:88:88'
     : time(duration).replace(/\d/g, '8').padStart(5, '8');
   const bottomChrome = usePlayerChromeMeasure(
-    { time: `${timeSample} / ${durationLabel}`, speed: speedLabel, quality },
+    { time: `${timeSample} / ${durationLabel}`, quality },
     chrome.text,
     fontScale,
     size.width,
@@ -380,7 +380,7 @@ export function PlayerSurface({
     const ref =
       value === 'subtitles'
         ? subtitleAnchor
-        : value === 'speed' && !bottomChrome.compact
+        : value === 'speed'
           ? speedAnchor
           : value === 'quality' && !bottomChrome.compact
             ? qualityAnchor
@@ -1025,19 +1025,14 @@ export function PlayerSurface({
                 disabled={!media.playback}
                 onPress={onAi}
               />
-              {!bottomChrome.compact && (
-                <Pressable
-                  ref={speedAnchor}
-                  accessibilityRole="button"
-                  accessibilityLabel="Playback speed"
-                  style={s.textButton}
+              <View collapsable={false} ref={speedAnchor}>
+                <Control
+                  icon={Gauge}
+                  iconSize={chrome.icon}
+                  label={`Playback speed, ${speedLabel}`}
                   onPress={() => open('speed')}
-                >
-                  <Text style={[s.value, { fontSize: chrome.text }]}>
-                    {speedLabel}
-                  </Text>
-                </Pressable>
-              )}
+                />
+              </View>
               {!bottomChrome.compact && (
                 <Pressable
                   ref={qualityAnchor}
@@ -1232,13 +1227,6 @@ export function PlayerSurface({
                 title="Quality"
                 disabled={media.playback?.offline === true}
                 onPress={() => open('quality')}
-                icon={<Settings color="white" size={24} />}
-              />
-            )}
-            {bottomChrome.compact && (
-              <SheetRow
-                title="Playback speed"
-                onPress={() => open('speed')}
                 icon={<Settings color="white" size={24} />}
               />
             )}
