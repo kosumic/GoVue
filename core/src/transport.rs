@@ -2,7 +2,7 @@
 //! adapts those responses to the ordinary HTTP ranges used by AVPlayer/Media3.
 use crate::{
     Result,
-    media::{media_url, playback},
+    media::{container, dash, media_url, playback},
     string,
 };
 use serde_json::{Value, json};
@@ -20,12 +20,21 @@ use std::{
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 const CHUNK: u64 = 1_048_576;
-struct Source {
+pub(crate) struct Source {
     url: String,
     length: u64,
     user_agent: String,
     origin: String,
+    mime: String,
     post: AtomicBool,
+}
+impl Source {
+    pub(crate) fn length(&self) -> u64 {
+        self.length
+    }
+    pub(crate) fn mime(&self) -> &str {
+        &self.mime
+    }
 }
 struct Proxy {
     port: u16,
@@ -34,6 +43,7 @@ struct Proxy {
 }
 enum Playlist {
     Master(String),
+    Dash(String),
     Indexed {
         source: Arc<Source>,
         stream: Value,
@@ -44,7 +54,7 @@ enum Playlist {
 impl Playlist {
     fn text(&self) -> Result<String> {
         match self {
-            Self::Master(text) => Ok(text.clone()),
+            Self::Master(text) | Self::Dash(text) => Ok(text.clone()),
             Self::Indexed {
                 source,
                 stream,
@@ -89,7 +99,7 @@ pub(super) fn status() -> Value {
 fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name, value).unwrap()
 }
-fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<Vec<u8>> {
+pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<Vec<u8>> {
     let agent = AGENT.get_or_init(|| {
         ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(8))
@@ -179,6 +189,53 @@ fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<Vec<u8>> {
     Err(io::Error::other(last))
 }
 
+/// A download owns one source across its parallel bounded requests. Addresses
+/// remain inside Rust; the adapter receives only sandbox file paths.
+pub(crate) struct DownloadSource(Source);
+impl DownloadSource {
+    pub(crate) fn new(stream: &Value, user_agent: &str, origin: &str) -> Result<Self> {
+        let url = stream["url"]
+            .as_str()
+            .and_then(media_url)
+            .ok_or("Invalid download source.")?;
+        let length = stream["bytes"]
+            .as_u64()
+            .filter(|n| *n > 0 && *n <= 100_000_000_000)
+            .ok_or("Missing media length.")?;
+        if !matches!(
+            origin,
+            "https://youtube.com"
+                | "https://www.youtube.com"
+                | "https://m.youtube.com"
+                | "https://music.youtube.com"
+        ) || user_agent.len() > 1000
+            || user_agent.contains(['\r', '\n'])
+        {
+            return Err("Invalid media context.".into());
+        }
+        Ok(Self(Source {
+            url,
+            length,
+            user_agent: stream["userAgent"]
+                .as_str()
+                .filter(|s| s.len() <= 1000 && !s.contains(['\r', '\n']))
+                .unwrap_or(user_agent)
+                .into(),
+            origin: origin.into(),
+            mime: container(stream)
+                .unwrap_or("application/octet-stream")
+                .into(),
+            post: AtomicBool::new(false),
+        }))
+    }
+    pub(crate) fn bytes(&self, start: u64, end: u64) -> io::Result<Vec<u8>> {
+        if start > end || end >= self.0.length || end - start >= CHUNK {
+            return Err(io::Error::other("Invalid download range."));
+        }
+        range_bytes(&self.0, start, end)
+    }
+}
+
 struct Body {
     source: Arc<Source>,
     next: u64,
@@ -217,7 +274,11 @@ fn serve(
         let _ = request.respond(Response::empty(StatusCode(405)));
         return;
     }
-    if let Some(key) = request.url().trim_start_matches('/').strip_suffix(".m3u8") {
+    let path = request.url().trim_start_matches('/');
+    if let Some(key) = path
+        .strip_suffix(".m3u8")
+        .or_else(|| path.strip_suffix(".mpd"))
+    {
         let playlist = playlists
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -229,7 +290,14 @@ fn serve(
         };
         let response = match playlist.text() {
             Ok(text) => Response::from_string(text)
-                .with_header(header("Content-Type", "application/vnd.apple.mpegurl"))
+                .with_header(header(
+                    "Content-Type",
+                    if matches!(&*playlist, Playlist::Dash(_)) {
+                        "application/dash+xml"
+                    } else {
+                        "application/vnd.apple.mpegurl"
+                    },
+                ))
                 .with_header(header("Cache-Control", "no-store")),
             Err(_) => Response::from_string("Media playlist unavailable.")
                 .with_status_code(StatusCode(502)),
@@ -241,6 +309,7 @@ fn serve(
         .url()
         .trim_start_matches('/')
         .strip_suffix(".mp4")
+        .or_else(|| path.strip_suffix(".webm"))
         .unwrap_or("");
     let source = sources
         .lock()
@@ -298,7 +367,7 @@ fn serve(
     }
     let (start, end) = bounds.unwrap_or((0, source.length - 1));
     let mut headers = vec![
-        header("Content-Type", "video/mp4"),
+        header("Content-Type", &source.mime),
         header("Accept-Ranges", "bytes"),
         header("Cache-Control", "no-store"),
         header("Connection", "close"),
@@ -345,7 +414,7 @@ fn serve(
     let _ = writer.flush();
 }
 
-fn source(command: &Value) -> Result<Arc<Source>> {
+pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
     let url = media_url(string(command, "url")?).ok_or("Untrusted media source.")?;
     let length = command["length"]
         .as_u64()
@@ -370,6 +439,7 @@ fn source(command: &Value) -> Result<Arc<Source>> {
         length,
         user_agent: user_agent.into(),
         origin: origin.into(),
+        mime: container(command).unwrap_or("video/mp4").into(),
         post: AtomicBool::new(false),
     }))
 }
@@ -429,14 +499,36 @@ pub(super) fn proxy(command: &Value) -> Result<Value> {
     }
     sources.insert(token.clone(), source);
     Ok(json!(format!(
-        "http://127.0.0.1:{}/{}.mp4",
-        server.port, token
+        "http://127.0.0.1:{}/{}.{}",
+        server.port,
+        token,
+        if container(command).is_some_and(|mime| mime.ends_with("/webm")) {
+            "webm"
+        } else {
+            "mp4"
+        }
     )))
 }
 
 pub(super) fn playback(command: &Value) -> Result<Value> {
     let catalog = &command["catalog"];
+    if catalog["live"] == true {
+        let url = catalog["hlsUrl"]
+            .as_str()
+            .and_then(media_url)
+            .ok_or("No playable live manifest is available. Refresh the video.")?;
+        let agent = catalog["hlsUserAgent"]
+            .as_str()
+            .filter(|agent| !agent.is_empty())
+            .or_else(|| command["userAgent"].as_str())
+            .filter(|s| s.len() <= 1000 && !s.contains(['\r', '\n']))
+            .unwrap_or("");
+        return Ok(
+            json!({"uri":url,"contentType":"hls","qualityHeight":0,"remote":true,"headers":{"User-Agent":agent,"Referer":format!("{}/",catalog["origin"].as_str().unwrap_or("https://m.youtube.com")),"Origin":catalog["origin"]}}),
+        );
+    }
     let videos = playback::videos(catalog)?;
+    let fps = command["fps"].as_u64().unwrap_or(0);
     let mut requested = command["height"]
         .as_u64()
         .filter(|n| *n <= 8640)
@@ -453,26 +545,75 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
         videos
             .iter()
             .copied()
-            .find(|s| s["height"] == requested)
+            .find(|s| s["height"] == requested && (fps == 0 || s["fps"] == fps))
+            .or_else(|| {
+                (command["allowFallback"] == true)
+                    .then(|| videos.iter().copied().find(|s| s["height"] == requested))
+                    .flatten()
+            })
             .ok_or("Selected resolution is unavailable. Refresh the video.")?
     };
     let file_source = |stream: &Value| {
         source(&json!({"url":stream["url"],"length":stream["bytes"],
+        "mimeType":stream["mimeType"],
         "origin":catalog["origin"],"userAgent":stream["userAgent"].as_str().filter(|s| !s.is_empty())
             .unwrap_or(command["userAgent"].as_str().unwrap_or(""))}))
     };
     if selected["kind"] == "combined" {
         let stream = file_source(selected)?;
         let uri = proxy(
-            &json!({"url":stream.url,"length":stream.length,"origin":stream.origin,"userAgent":stream.user_agent}),
+            &json!({"url":stream.url,"length":stream.length,"origin":stream.origin,"userAgent":stream.user_agent,"mimeType":stream.mime}),
         )?;
-        return Ok(json!({"uri":uri,"contentType":"progressive","qualityHeight":requested}));
+        return Ok(
+            json!({"uri":uri,"contentType":"progressive","qualityHeight":requested,"qualityFps":selected["fps"].as_u64().unwrap_or(0)}),
+        );
     }
-    let audio = playback::audio(catalog).ok_or("No compatible audio track is available.")?;
+    let audio = playback::audio_for(catalog, command["audioKey"].as_str().unwrap_or(""))
+        .or_else(|| {
+            (command["allowFallback"] == true)
+                .then(|| playback::audio(catalog))
+                .flatten()
+        })
+        .ok_or("No compatible audio track is available.")?;
     let server = server()?;
     let root = token(selected["url"].as_str().unwrap_or(""));
     let mut files = Vec::new();
     let mut lists = Vec::new();
+    if command["manifest"] == "dash" {
+        let variants: Vec<_> = if requested == 0 {
+            videos
+                .into_iter()
+                .filter(|s| s["kind"] == "video")
+                .collect()
+        } else {
+            vec![selected]
+        };
+        let mut tracks = Vec::new();
+        for (index, stream) in std::iter::once(audio).chain(variants).enumerate() {
+            let key = format!("{root}-{index}");
+            let extension = if container(stream).is_some_and(|mime| mime.ends_with("/webm")) {
+                "webm"
+            } else {
+                "mp4"
+            };
+            tracks.push((stream, format!("{key}.{extension}")));
+            files.push((key, file_source(stream)?));
+        }
+        let text = dash::manifest(catalog["duration"].as_f64().unwrap_or(0.0), &tracks)?;
+        let mut sources = server.sources.lock().unwrap_or_else(|e| e.into_inner());
+        let mut playlists = server.playlists.lock().unwrap_or_else(|e| e.into_inner());
+        if sources.len() + files.len() > 96 || playlists.len() >= 100 {
+            return Err("Too many active media streams. Close the player and try again.".into());
+        }
+        sources.extend(files);
+        playlists.insert(root.clone(), Arc::new(Playlist::Dash(text)));
+        return Ok(
+            json!({"uri":format!("http://127.0.0.1:{}/{root}.mpd",server.port),"contentType":"dash","qualityHeight":requested,"qualityFps":selected["fps"].as_u64().unwrap_or(0)}),
+        );
+    }
+    if container(audio) != Some("audio/mp4") || container(selected) != Some("video/mp4") {
+        return Err("This playback format requires DASH support.".into());
+    }
     let mut add_track = |stream: &Value, name: &str| -> Result<String> {
         let key = format!("{root}-{name}");
         let file = file_source(stream)?;
@@ -495,13 +636,20 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
     let variants: Vec<_> = if requested == 0 {
         videos
             .into_iter()
-            .filter(|s| s["kind"] == "video")
+            .filter(|s| s["kind"] == "video" && container(s) == Some("video/mp4"))
             .collect()
     } else {
         vec![selected]
     };
     for stream in variants {
-        let uri = add_track(stream, &format!("video-{}", stream["height"]))?;
+        let uri = add_track(
+            stream,
+            &format!(
+                "video-{}-{}",
+                stream["height"],
+                stream["fps"].as_u64().unwrap_or(0)
+            ),
+        )?;
         let bandwidth = stream["bitrate"]
             .as_u64()
             .unwrap_or(0)
@@ -522,7 +670,7 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
     sources.extend(files);
     playlists.extend(lists);
     Ok(
-        json!({"uri":format!("http://127.0.0.1:{}/{root}.m3u8",server.port),"contentType":"hls","qualityHeight":requested}),
+        json!({"uri":format!("http://127.0.0.1:{}/{root}.m3u8",server.port),"contentType":"hls","qualityHeight":requested,"qualityFps":selected["fps"].as_u64().unwrap_or(0)}),
     )
 }
 
@@ -540,6 +688,8 @@ pub(super) fn release(command: &Value) -> Result<Value> {
             .path()
             .trim_start_matches('/')
             .strip_suffix(".mp4")
+            .or_else(|| uri.path().trim_start_matches('/').strip_suffix(".webm"))
+            .or_else(|| uri.path().trim_start_matches('/').strip_suffix(".mpd"))
             .or_else(|| uri.path().trim_start_matches('/').strip_suffix(".m3u8"))
         {
             let prefix = format!("{key}-");

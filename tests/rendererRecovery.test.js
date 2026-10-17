@@ -128,48 +128,45 @@ test('iOS runtime reloads its existing view and waits for a fresh bootstrap', as
   dom.window.close();
 });
 
-for (const os of ['android', 'ios']) test(`${os} browser recovers the current page while retaining its transcript and native player`, async t => {
-  const { default: App, media } = await harness('App.tsx', os);
+for (const os of ['android', 'ios']) test(`${os} watch tab recovers its current document and rejects dead-renderer events`, async t => {
+  const { BrowserTab } = await harness('src/browser/BrowserTab.tsx', os);
+  const ref = createRef();
+  const messages = [], pages = [], deaths = [];
+  const props = { tab: { id: 2, kind: 'watch', url: 'https://m.youtube.com/' }, active: true,
+    width: 400, height: 800, settings: {},
+    onMessage: (...args) => messages.push(args), onUrl: (...args) => pages.push(args), onDead: id => deaths.push(id) };
   let root;
-  await act(() => { root = create(createElement(App)); });
+  await act(() => { root = create(createElement(BrowserTab, { ...props, ref })); });
   t.after(async () => { await act(() => root.unmount()); });
-  await act(() => root.root.findByType('StartPage').props.onNavigate('https://example.com/'));
-  const initial = root.root.findAllByType('WebView').find(node => node.props.source.uri).props;
-  await act(() => {
-    initial.onNavigationStateChange({ url, canGoBack: true, canGoForward: false });
-    initial.onMessage({ nativeEvent: { url, data: JSON.stringify({ type: 'page', url, videoId, userAgent: 'test browser' }) } });
-  });
-  const extract = root.root.findAllByType('Pressable').find(node => node.props.accessibilityLabel === 'Extract YouTube transcript');
-  await act(() => extract.props.onPress());
-  const reader = root.root.findByType('TranscriptPanel');
-  assert.equal(reader.props.data, transcript);
-  const player = root.root.findByType('VideoView');
-  await act(() => reader.props.onExtract()); // Start an extraction that must be cancelled.
-  const old = root.root.findAllByType('WebView').find(node => node.props.source.uri).props;
+  const initial = root.root.findByType('WebView').props;
+  await act(() => initial.onNavigationStateChange({ url, canGoBack: true }));
+  assert.equal(root.root.findByType('WebView').props.source, initial.source, 'SPA navigation keeps the initial source stable');
+  await act(() => root.update(createElement(BrowserTab, { ...props, ref, active: false })));
+  assert.equal(root.root.findByType('WebView').props.handle, initial.handle, 'parking the tab preserves its native WebView');
+  await act(() => root.update(createElement(BrowserTab, { ...props, ref })));
+  const old = root.root.findByType('WebView').props;
   await act(() => os === 'android' ? old.onRenderProcessGone() : old.onContentProcessDidTerminate());
-  assert.equal(media.terminated, 1);
-  assert.equal(root.root.findByType('TranscriptPanel').props.data, transcript);
-  assert.equal(root.root.findByType('TranscriptPanel').props.loading, false);
-  assert.equal(root.root.findByType('VideoView'), player);
-  if (os === 'android') assert.equal(root.root.findAllByType('WebView').filter(node => node.props.source.uri).length, 0);
-
-  const reload = root.root.findAllByType('IconButton').find(node => node.props.label === 'Reload page');
-  await act(() => reload.props.onPress());
-  const fresh = root.root.findAllByType('WebView').find(node => node.props.source.uri).props;
+  assert.deepEqual(deaths, [2]);
+  if (os === 'android') assert.equal(root.root.findAllByType('WebView').length, 0);
+  const before = { pages: pages.length, messages: messages.length };
+  await act(() => {
+    old.onMessage({ nativeEvent: { url, data: '{}' } });
+    old.onNavigationStateChange({ url: 'https://m.youtube.com/watch?v=stalevideo1', canGoBack: false });
+    old.onLoadEnd();
+  });
+  assert.equal(pages.length, before.pages);
+  assert.equal(messages.length, before.messages);
+  await act(() => root.root.findAllByType('Pressable').find(node => node.props.accessibilityLabel === 'Reload page').props.onPress());
+  const fresh = root.root.findByType('WebView').props;
   if (os === 'android') {
     assert.notEqual(fresh.handle, old.handle);
-    assert.equal(fresh.source.uri, url, 'recovery uses the current URL, including the video ID, rather than initial source');
-    await act(() => {
-      old.onNavigationStateChange({ url: 'https://example.org/', canGoBack: false, canGoForward: false });
-      old.onLoadEnd();
-      old.onRenderProcessGone();
-    });
-    assert.equal(media.configureCalls, 0);
-    assert.equal(media.terminated, 1);
+    assert.equal(fresh.source.uri, url, 'recovery opens the last validated document');
+    await act(() => old.onMessage({ nativeEvent: { url, data: '{}' } }));
+    assert.equal(messages.length, before.messages);
   } else {
     assert.equal(fresh.handle, old.handle);
     assert.equal(fresh.handle.reloads, 1);
   }
-  assert.equal(root.root.findByType('TranscriptPanel').props.data, transcript);
-  assert.equal(root.root.findByType('VideoView'), player);
+  await act(() => fresh.onMessage({ nativeEvent: { url, data: '{}' } }));
+  assert.equal(messages.length, before.messages + 1, 'the recovered document delivers messages');
 });

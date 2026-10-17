@@ -1,11 +1,11 @@
 Pod::Spec.new do |s|
   s.name = 'LingoPlayCore'
   s.version = '0.1.0'
-  s.summary = 'Shared Rust transcript core for LingoPlay'
+  s.summary = 'Shared Rust player, browser and media core for LingoPlay'
   s.description = s.summary
   s.author = 'LingoPlay'
   s.homepage = 'https://github.com/kaminarios/lingoplay'
-  s.license = { :type => 'UNLICENSED' }
+  s.license = { :type => 'GPL-3.0-only' }
   s.platforms = { :ios => '16.4' }
   s.source = { :git => '' }
   s.static_framework = true
