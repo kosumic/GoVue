@@ -22,6 +22,8 @@ struct Message {
     content: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     games: Vec<games::Game>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    blocks: Vec<activity::Block>,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -109,6 +111,7 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
                 || m.content.len() > MAX_OUTPUT
                 || m.games.len() > 3
                 || m.games.iter().any(|game| !game.validate())
+                || !activity::valid(&m.blocks)
                 || m.reasoning.len() > MAX_OUTPUT
                 || m.model.len() > 200
                 || m.provider_label.len() > 100
@@ -155,17 +158,26 @@ fn recover(root: &Path, chat: &mut Conversation) -> Result<()> {
                 .unwrap_or_else(|e| e.into_inner())
                 .get(id)
                 .map(|j| {
-                    j.state.lock().unwrap_or_else(|e| e.into_inner())["text"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned()
+                    let state = j.state.lock().unwrap_or_else(|e| e.into_inner());
+                    (
+                        state["text"].as_str().unwrap_or_default().to_owned(),
+                        state["reasoning"].as_str().unwrap_or_default().to_owned(),
+                        j.activity
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .blocks
+                            .clone(),
+                    )
                 })
         });
         chat.active_task = None;
         if let Some(m) = chat.messages.last_mut().filter(|m| m.status == "streaming") {
-            if let Some(text) = partial {
+            if let Some((text, reasoning, blocks)) = partial {
                 m.content = text;
+                m.reasoning = reasoning;
+                m.blocks = blocks;
             }
+            activity::settle(&mut m.blocks, activity::Status::Stopped);
             m.status = "stopped".into();
             m.error = Some("Response interrupted. You can try again.".into());
         }
@@ -383,6 +395,18 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
         None
     };
     message.completed_at = now();
+    {
+        let mut tape = job.activity.lock().unwrap_or_else(|e| e.into_inner());
+        activity::settle(
+            &mut tape.blocks,
+            match message.status.as_str() {
+                "stopped" => activity::Status::Stopped,
+                "failed" => activity::Status::Failed,
+                _ => activity::Status::Completed,
+            },
+        );
+        message.blocks = tape.blocks.clone();
+    }
     chat.active_task = None;
     chat.updated_at = now();
     save(root, &chat)?;
@@ -438,6 +462,12 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     let game = games::Game::create(definition, call_id, transcript.as_ref())?;
     let result = json!({"gameId":game.id,"title":game.definition.title,"status":"created","message":"The playable card is in chat. Briefly invite the user to play; do not repeat its HTML or answers."});
     reply.games.push(game);
+    reply.blocks = job
+        .activity
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .blocks
+        .clone();
     let snapshot = json!(reply.games);
     job.pending()?;
     save(root, &chat)?;
@@ -693,6 +723,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         role: "user".into(),
         content: prompt,
         games: Vec::new(),
+        blocks: Vec::new(),
         status: "completed".into(),
         error: None,
         reasoning: String::new(),
@@ -711,6 +742,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         role: "assistant".into(),
         content: String::new(),
         games: Vec::new(),
+        blocks: Vec::new(),
         status: "streaming".into(),
         error: None,
         reasoning: String::new(),

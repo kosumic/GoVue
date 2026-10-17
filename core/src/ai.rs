@@ -18,6 +18,7 @@ use std::{
 };
 use url::Url;
 mod accounts;
+mod activity;
 mod catalog;
 mod connections;
 mod conversations;
@@ -308,10 +309,20 @@ struct Job {
     owner: String,
     cancelled: AtomicBool,
     state: Mutex<Value>,
+    activity: Mutex<activity::Tape>,
     conversation: OnceLock<(PathBuf, String)>,
     last_status: AtomicI32,
 }
 impl Job {
+    fn publish_activity(&self) {
+        let blocks = json!(
+            self.activity
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .blocks
+        );
+        self.state.lock().unwrap_or_else(|e| e.into_inner())["blocks"] = blocks;
+    }
     fn pending(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Relaxed) {
             Err("Request cancelled.".into())
@@ -320,6 +331,21 @@ impl Job {
         }
     }
     fn finish(&self, result: Result<Value>) {
+        activity::settle(
+            &mut self
+                .activity
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .blocks,
+            if self.cancelled.load(Ordering::Relaxed) {
+                activity::Status::Stopped
+            } else if result.is_ok() {
+                activity::Status::Completed
+            } else {
+                activity::Status::Failed
+            },
+        );
+        self.publish_activity();
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if self.cancelled.load(Ordering::Relaxed) {
             s["status"] = json!("cancelled");
@@ -359,6 +385,7 @@ fn new_job(owner: &str) -> Result<Arc<Job>> {
         owner: owner.into(),
         cancelled: AtomicBool::new(false),
         state: Mutex::new(json!({"status":"running","text":""})),
+        activity: Mutex::new(activity::Tape::default()),
         conversation: OnceLock::new(),
         last_status: AtomicI32::new(0),
     });
@@ -422,6 +449,12 @@ impl AiResponse {
                         parser.reasoning
                     ));
                     state["usage"] = tools::merge_usage(&state["usagePrefix"], &parser.usage);
+                    state["blocks"] = json!(
+                        job.activity
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .blocks
+                    );
                 }
             })
         } else if s.bytes.len() + bytes.len() <= MAX_OUTPUT {
@@ -467,7 +500,7 @@ fn http_impl(
         state: Mutex::new(ResponseState {
             status: 0,
             bytes: Vec::new(),
-            stream: stream.map(Sse::new),
+            stream: stream.map(|kind| Sse::new(kind, job.cloned())),
             error: None,
             total: 0,
         }),
@@ -554,6 +587,7 @@ fn json_http(
 /// Incremental, byte-oriented SSE framing preserves UTF-8 across HTTP chunks.
 struct Sse {
     tools: tools::Stream,
+    job: Option<Arc<Job>>,
     kind: String,
     pending: Vec<u8>,
     data: String,
@@ -567,9 +601,10 @@ struct Sse {
     stopped: bool,
 }
 impl Sse {
-    fn new(kind: &str) -> Self {
+    fn new(kind: &str, job: Option<Arc<Job>>) -> Self {
         Self {
             tools: tools::Stream::default(),
+            job,
             kind: kind.into(),
             pending: Vec::new(),
             data: String::new(),
@@ -620,6 +655,7 @@ impl Sse {
         }
         let v: Value =
             serde_json::from_str(data).map_err(|_| "Provider sent an unreadable stream event.")?;
+        let gemini_offset = self.tools.gemini_len();
         self.tools.event(&self.kind, &v)?;
         let previous_output = self.text.len() + self.reasoning.len();
         let usage = if self.kind == "gemini" {
@@ -638,28 +674,28 @@ impl Sse {
             v["type"].as_str(),
             Some("response.reasoning_summary_text.delta" | "response.reasoning_text.delta")
         ) {
-            self.reasoning
-                .push_str(v["delta"].as_str().unwrap_or_default());
+            self.output(true, v["delta"].as_str().unwrap_or_default())?;
         }
         if v["delta"]["type"] == "thinking_delta" {
-            self.reasoning
-                .push_str(v["delta"]["thinking"].as_str().unwrap_or_default());
+            self.output(true, v["delta"]["thinking"].as_str().unwrap_or_default())?;
         }
         if self.kind == "chat" {
-            self.reasoning.push_str(
+            self.output(
+                true,
                 v["choices"][0]["delta"]["reasoning_content"]
                     .as_str()
                     .or_else(|| v["choices"][0]["delta"]["reasoning"].as_str())
                     .unwrap_or_default(),
-            );
+            )?;
             if let Some(details) = v["choices"][0]["delta"]["reasoning_details"].as_array() {
                 for detail in details {
-                    self.reasoning.push_str(
+                    self.output(
+                        true,
                         detail["text"]
                             .as_str()
                             .or_else(|| detail["summary"].as_str())
                             .unwrap_or_default(),
-                    );
+                    )?;
                 }
             }
         }
@@ -709,11 +745,19 @@ impl Sse {
                     self.done = true;
                 }
                 if let Some(parts) = v["candidates"][0]["content"]["parts"].as_array() {
-                    for part in parts {
-                        if part["thought"] != true {
-                            self.text.push_str(part["text"].as_str().unwrap_or(""));
-                        } else {
-                            self.reasoning.push_str(part["text"].as_str().unwrap_or(""));
+                    for (index, part) in parts.iter().enumerate() {
+                        self.output(part["thought"] == true, part["text"].as_str().unwrap_or(""))?;
+                        if let Some(call) = part.get("functionCall")
+                            && let Some(job) = &self.job
+                        {
+                            let id = call["id"]
+                                .as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| format!("call-{}", gemini_offset + index));
+                            job.activity
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .prepare(&id, call["name"].as_str().unwrap_or_default())?;
                         }
                     }
                 }
@@ -729,7 +773,16 @@ impl Sse {
                 v["choices"][0]["delta"]["content"].as_str().unwrap_or("")
             }
         };
-        self.text.push_str(delta);
+        self.output(false, delta)?;
+        if let Some(job) = &self.job {
+            let mut tape = job.activity.lock().unwrap_or_else(|e| e.into_inner());
+            for (id, name) in self.tools.call_headers(&self.kind) {
+                tape.prepare(&id, &name)?;
+            }
+            if self.done || self.stopped {
+                tape.close_output();
+            }
+        }
         if self.text.len() + self.reasoning.len() > previous_output {
             let tick = Instant::now();
             self.first_output.get_or_insert(tick);
@@ -741,6 +794,20 @@ impl Sse {
             if ms > 0 && self.usage["outputTokens"].as_u64().is_some_and(|n| n > 0) {
                 self.usage["streamMs"] = json!(ms.min(usage::MAX_COUNT));
             }
+        }
+        Ok(())
+    }
+    fn output(&mut self, reasoning: bool, delta: &str) -> Result<()> {
+        if let Some(job) = &self.job {
+            job.activity
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .output(reasoning, delta)?;
+        }
+        if reasoning {
+            self.reasoning.push_str(delta);
+        } else {
+            self.text.push_str(delta);
         }
         Ok(())
     }
@@ -1119,6 +1186,12 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
                 }
                 state["message"] = json!("Trying the next model in the group…");
                 state["reasoning"] = json!("");
+                state["blocks"] = json!([]);
+                job.activity
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .blocks
+                    .clear();
                 state["usage"] = Value::Null;
                 error = e;
             }
@@ -1421,11 +1494,27 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         let mut results = Vec::new();
         for call in calls {
             job.pending()?;
+            let call_id = string(call, "id")?;
+            let name = string(call, "name")?;
+            job.activity
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .running(call_id, name)?;
+            job.publish_activity();
             let result = if call["name"] != "create_interactive_game" {
                 Err("Unknown tool. Use create_interactive_game.".into())
             } else {
                 conversations::create_game(job, call)
             };
+            {
+                let mut tape = job.activity.lock().unwrap_or_else(|e| e.into_inner());
+                if job.cancelled.load(Ordering::Relaxed) {
+                    activity::settle(&mut tape.blocks, activity::Status::Stopped);
+                } else {
+                    tape.result(call_id, &result);
+                }
+            }
+            job.publish_activity();
             results.push(json!({"id":call["id"],"providerId":call["providerId"],"name":call["name"],"output":result.unwrap_or_else(|error| json!({"error":error}))}));
         }
         tools::continue_with(&mut body, protocol, &response, results)?;
@@ -1886,7 +1975,16 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 return Ok(job.state.lock().unwrap_or_else(|e| e.into_inner()).clone());
             }
             job.cancelled.store(true, Ordering::Relaxed);
+            activity::settle(
+                &mut job
+                    .activity
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .blocks,
+                activity::Status::Stopped,
+            );
             conversations::interrupt(&job)?;
+            job.publish_activity();
             if c["op"] == "ai_cancel" {
                 job.state.lock().unwrap_or_else(|e| e.into_inner())["status"] = json!("cancelled");
             } else {

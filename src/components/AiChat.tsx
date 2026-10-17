@@ -6,6 +6,7 @@ import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats';
 import { AiMarkdown } from './AiMarkdown';
 import { AiReasoning } from './AiReasoning';
+import { ReasoningActivity, ToolActivity } from './AiActivity';
 import { useVoiceInput } from '../ai/useVoiceInput';
 import { LearningGameCard } from './LearningGameCard';
 import type { GameAction } from '../ai/games';
@@ -19,13 +20,23 @@ const Message = memo(function Message({ message, last, busy, onRetry, reduceMoti
     animation.start(); return () => animation.stop();
   }, [entrance, reduceMotion]);
   const user = message.role === 'user';
-  const [showReasoning, setShowReasoning] = useState(false);
+  const streaming = message.status === 'streaming' && busy;
+  const blocks = message.blocks ?? [];
+  const linkedGames = new Set(blocks.flatMap(block => block.kind === 'tool' && block.gameId ? [block.gameId] : []));
+  const gameCard = (game: NonNullable<ChatMessage['games']>[number]) => <LearningGameCard key={game.id} game={game} chatId={chatId} messageId={message.id} active={game.id === activeGameId}
+    enabled={gamesEnabled && message.status !== 'streaming'} onActivate={() => onActiveGame(game.id)} onDeactivate={() => onActiveGame(null)} onAction={onGameAction} onBeforeAudio={onBeforeGameAudio} />;
   return <Animated.View style={[styles.message, user && styles.userMessage, { opacity: entrance, transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }] }]}>
     {user ? <View style={styles.userBubble}><Text selectable style={styles.userText}>{message.content}</Text></View> : <>
-      {!!message.reasoning && <View><Pressable accessibilityRole="button" accessibilityState={{ expanded: showReasoning }} onPress={() => setShowReasoning(!showReasoning)} style={styles.messageAction}><Text style={styles.actionText}>{showReasoning ? 'Hide reasoning' : 'Show reasoning'}</Text></Pressable>{showReasoning && <AiMarkdown content={message.reasoning} streaming={message.status === 'streaming' && busy} />}</View>}
-      {message.content ? <AiMarkdown content={message.content} streaming={message.status === 'streaming' && busy} /> : message.status === 'streaming' && busy ? <View accessibilityLiveRegion="polite" style={styles.thinking}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Thinking…</Text></View> : null}
-      {message.games?.map(game => <LearningGameCard key={game.id} game={game} chatId={chatId} messageId={message.id} active={game.id === activeGameId}
-        enabled={gamesEnabled && message.status !== 'streaming'} onActivate={() => onActiveGame(game.id)} onDeactivate={() => onActiveGame(null)} onAction={onGameAction} onBeforeAudio={onBeforeGameAudio} />)}
+      {blocks.length ? blocks.map(block => <View key={block.id}>
+        {block.kind === 'text' ? <AiMarkdown content={block.content} streaming={streaming && block.status === 'running'} />
+          : block.kind === 'reasoning' ? <ReasoningActivity content={block.content} active={streaming && block.status === 'running'} />
+          : <><ToolActivity block={block} messageStatus={message.status} busy={busy} />{message.games?.filter(game => game.id === block.gameId).map(gameCard)}</>}
+      </View>) : <>
+        {!!message.reasoning && <ReasoningActivity content={message.reasoning} active={streaming && !message.content} />}
+        {!!message.content && <AiMarkdown content={message.content} streaming={streaming} />}
+      </>}
+      {streaming && (blocks.length ? blocks.at(-1)?.kind === 'tool' && !blocks.some(block => block.status === 'preparing' || block.status === 'running') : !message.content && !message.reasoning) && <View accessibilityLiveRegion="polite" style={styles.thinking}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Thinking…</Text></View>}
+      {message.games?.filter(game => !linkedGames.has(game.id)).map(gameCard)}
       {message.error && <Text accessibilityRole="alert" style={styles.error}>{message.error}</Text>}
       {message.status === 'stopped' && !message.error && <Text style={styles.muted}>Response stopped</Text>}
       {message.status !== 'streaming' && <View style={styles.messageActions}>
