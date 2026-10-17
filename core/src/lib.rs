@@ -13,6 +13,9 @@ use url::Url;
 uniffi::setup_scaffolding!();
 mod ai;
 mod browser;
+mod caption_tracks;
+mod caption_words;
+mod captions;
 mod cast;
 mod downloads;
 mod extraction;
@@ -87,6 +90,12 @@ struct Track {
     label: String,
     language: String,
     automatic: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    translatable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    audio_track_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    translated_from: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -94,6 +103,13 @@ struct Segment {
     start: f64,
     duration: f64,
     text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    words: Vec<caption_words::Word>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    runs: Vec<captions::Run>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "windowId")]
+    window_id: Option<u32>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -105,6 +121,10 @@ struct Transcript {
     track_id: String,
     tracks: Vec<Track>,
     segments: Vec<Segment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    caption_metadata: Option<captions::Metadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    track_metadata: Option<caption_tracks::Metadata>,
 }
 
 // At most three documents remain in memory. Disk storage is bounded separately.
@@ -159,78 +179,8 @@ fn number(value: &Value) -> Option<f64> {
     value.as_f64().or_else(|| value.as_str()?.parse().ok())
 }
 
-fn parse_captions(source: &str) -> Result<Vec<Segment>> {
-    if source.len() > MAX_BYTES {
-        return Err("Caption response is too large.".into());
-    }
-    let mut segments = Vec::new();
-    if source.trim_start().starts_with('{') {
-        let data: Value = serde_json::from_str(source).map_err(|_| "Unreadable JSON captions.")?;
-        let events = data["events"].as_array().ok_or("Missing caption events.")?;
-        if events.len() > MAX_SEGMENTS * 4 {
-            return Err("Too many caption events.".into());
-        }
-        for event in events {
-            let Some(parts) = event["segs"].as_array() else {
-                continue;
-            };
-            let text = clean(
-                &parts
-                    .iter()
-                    .filter_map(|s| s["utf8"].as_str())
-                    .collect::<String>(),
-            );
-            let Some(start) = number(&event["tStartMs"]) else {
-                continue;
-            };
-            let duration = number(&event["dDurationMs"]).unwrap_or(0.0).max(0.0);
-            if !text.is_empty() {
-                segments.push(Segment {
-                    start: start / 1000.0,
-                    duration: duration / 1000.0,
-                    text,
-                });
-            }
-        }
-    } else {
-        let xml = roxmltree::Document::parse(source).map_err(|_| "Unreadable XML captions.")?;
-        for node in xml
-            .descendants()
-            .filter(|n| n.has_tag_name("text") || n.has_tag_name("p"))
-        {
-            let legacy = node.has_tag_name("text");
-            let unit = if legacy { 1.0 } else { 1000.0 };
-            let Some(start) = node
-                .attribute(if legacy { "start" } else { "t" })
-                .and_then(|s| s.parse::<f64>().ok())
-            else {
-                continue;
-            };
-            let duration = node
-                .attribute(if legacy { "dur" } else { "d" })
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(0.0)
-                .max(0.0);
-            let content = node
-                .descendants()
-                .filter(|n| n.is_text())
-                .filter_map(|n| n.text())
-                .collect::<String>();
-            let text = clean(&html_escape::decode_html_entities(&content));
-            if !text.is_empty() {
-                segments.push(Segment {
-                    start: start / unit,
-                    duration: duration / unit,
-                    text,
-                });
-            }
-            if segments.len() > MAX_SEGMENTS {
-                return Err("Too many caption lines.".into());
-            }
-        }
-    }
-    segments.retain(|s| s.start.is_finite() && s.start >= 0.0 && s.duration.is_finite());
-    Ok(segments)
+fn parse_captions(source: &str) -> Result<(Vec<Segment>, captions::Metadata)> {
+    captions::parse(source)
 }
 
 fn normalize(data: &mut Transcript) -> Result<()> {
@@ -245,6 +195,7 @@ fn normalize(data: &mut Transcript) -> Result<()> {
     {
         return Err("Invalid transcript metadata or line count.".into());
     }
+    caption_tracks::validate(data)?;
     if data
         .tracks
         .iter()
@@ -263,7 +214,35 @@ fn normalize(data: &mut Transcript) -> Result<()> {
         return Err("Invalid caption line.".into());
     }
     for segment in &mut data.segments {
-        segment.text = clean(&segment.text);
+        segment.text = captions::clean_text(&segment.text);
+        if !segment.runs.is_empty() {
+            let text = segment.text.clone();
+            if segment.runs.len() > 50_000
+                || segment.runs.iter().any(|run| {
+                    run.text.len() > 50_000
+                        || run
+                            .start
+                            .is_some_and(|n| !n.is_finite() || n < segment.start)
+                        || run.reading.as_ref().is_some_and(|s| s.len() > 50_000)
+                })
+            {
+                return Err("Invalid caption formatting.".into());
+            }
+            captions::refresh(segment);
+            if segment.text != text {
+                return Err("Caption formatting does not match its text.".into());
+            }
+        }
+        if !segment.words.is_empty() && !caption_words::valid(segment) {
+            segment.words.clear();
+        }
+    }
+    if data
+        .caption_metadata
+        .as_ref()
+        .is_some_and(|metadata| !captions::validate(metadata))
+    {
+        return Err("Invalid caption structure.".into());
     }
     data.segments.retain(|s| !s.text.is_empty());
     data.segments.sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -482,7 +461,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         }
         if let Some(source) = reply["transcript"]["captionSource"].as_str() {
             let _span = trace::Section::begin(c"LingoPlay transcript: rust.caption_parse");
-            data.segments = parse_captions(source)?;
+            let (segments, metadata) = parse_captions(source)?;
+            data.segments = segments;
+            data.caption_metadata = Some(metadata);
         }
         {
             let _span = trace::Section::begin(c"LingoPlay transcript: rust.normalize");
@@ -525,7 +506,10 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
             else {
                 continue;
             };
-            if data.video_id == id && normalize(&mut data).is_ok() {
+            if data.video_id == id
+                && normalize(&mut data).is_ok()
+                && caption_tracks::matches_audio(&data, command["audioKey"].as_str().unwrap_or(""))
+            {
                 remember(cache_path(root, id, &data.track_id)?, &data);
                 return Ok(json!(data));
             }
@@ -565,7 +549,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, s)| {
-                    (query.is_empty() || folded(&s.text).contains(&query)).then_some(i)
+                    (query.is_empty() || captions::matches(s, &query)).then_some(i)
                 })
                 .collect();
             Ok(json!(indices))
@@ -574,7 +558,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
             let lines: Vec<_> = data
                 .segments
                 .iter()
-                .map(|s| format!("{}  {}", timestamp(s.start), s.text))
+                .map(|s| format!("{}  {}", timestamp(s.start), captions::readable_text(s)))
                 .collect();
             Ok(json!(format!(
                 "{}\nhttps://www.youtube.com/watch?v={}\n\n{}",

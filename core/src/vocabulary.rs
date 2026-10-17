@@ -1,4 +1,6 @@
-use super::{Result, folded, load, string, video_id};
+use super::{
+    Result, Segment, caption_words::is_word, folded, load, string, video_id, with_transcript,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -18,15 +20,110 @@ const MAX_BYTES: u64 = 8_000_000;
 struct Token<'a> {
     text: &'a str,
     word: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    italic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    underline: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reading: Option<&'a str>,
+    #[serde(rename = "speakerChange", skip_serializing_if = "Option::is_none")]
+    speaker_change: Option<bool>,
 }
 
 fn tokens(text: &str) -> Vec<Token<'_>> {
     text.split_word_bounds()
         .map(|text| Token {
             text,
-            word: text.chars().any(char::is_alphanumeric),
+            word: is_word(text),
+            start: None,
+            end: None,
+            bold: None,
+            italic: None,
+            underline: None,
+            reading: None,
+            speaker_change: None,
         })
         .collect()
+}
+
+fn caption_tokens<'a>(
+    segment: &'a Segment,
+    metadata: Option<&crate::captions::Metadata>,
+) -> Vec<Token<'a>> {
+    let mut result = tokens(&segment.text);
+    let mut end = (segment.duration > 0.0).then_some(segment.start + segment.duration);
+    let mut next_start = None;
+    let mut words = segment.words.iter().rev();
+    for token in result.iter_mut().rev().filter(|token| token.word) {
+        let Some(word) = words.next() else { break };
+        if next_start.is_some_and(|next| next > word.start) {
+            end = next_start;
+        }
+        token.start = Some(word.start);
+        token.end = end;
+        next_start = Some(word.start);
+    }
+    let raw = segment
+        .runs
+        .iter()
+        .map(|run| run.text.as_str())
+        .collect::<String>();
+    let mut ranges = Vec::new();
+    let mut offset = 0;
+    for run in &segment.runs {
+        ranges.push((offset..offset + run.text.len(), run));
+        offset += run.text.len();
+    }
+    let mut boundaries = ranges
+        .iter()
+        .filter(|(_, run)| run.speaker_change == Some(true))
+        .map(|(range, _)| range.start)
+        .peekable();
+    let mut ranges = ranges.iter().peekable();
+    for (token, (offset, text)) in result.iter_mut().filter(|t| t.word).zip(
+        raw.split_word_bound_indices()
+            .filter(|(_, word)| is_word(word)),
+    ) {
+        if token.text != text {
+            break;
+        }
+        // A flag belongs to a boundary, not every word in its source run. Carry
+        // whitespace-only flags forward and mark a split word just once.
+        while boundaries
+            .peek()
+            .is_some_and(|start| *start < offset + text.len())
+        {
+            token.speaker_change = Some(true);
+            boundaries.next();
+        }
+        while ranges.peek().is_some_and(|(range, _)| range.end <= offset) {
+            ranges.next();
+        }
+        let Some((range, run)) = ranges.peek() else {
+            break;
+        };
+        if let Some(pen) = run.pen_id.and_then(|id| metadata?.pens.get(id)) {
+            token.bold = pen.get("bAttr").map(|n| *n == 1);
+            token.italic = pen.get("iAttr").map(|n| *n == 1);
+            token.underline = pen.get("uAttr").map(|n| *n == 1);
+        }
+        if !run
+            .text
+            .get(offset + text.len() - range.start..)
+            .unwrap_or("")
+            .chars()
+            .any(char::is_alphanumeric)
+        {
+            token.reading = run.reading.as_deref();
+        }
+    }
+    result
 }
 
 #[derive(Deserialize, Serialize)]
@@ -117,6 +214,35 @@ fn index(command: &Value, key: &str) -> Result<usize> {
 
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     match string(command, "op")? {
+        "vocabulary_details" => with_transcript(
+            root,
+            string(command, "videoId")?,
+            string(command, "trackId")?,
+            |data| {
+                json!(
+                    format!(
+                        "{}\n{}",
+                        crate::caption_tracks::description(data),
+                        crate::captions::details(data.caption_metadata.as_ref())
+                    )
+                    .trim()
+                )
+            },
+        ),
+        "vocabulary_caption" => with_transcript(
+            root,
+            string(command, "videoId")?,
+            string(command, "trackId")?,
+            |data| {
+                let segment = data
+                    .segments
+                    .get(index(command, "segmentIndex")?)
+                    .ok_or("This caption line is no longer available.")?;
+                Ok(
+                    json!({"text":segment.text,"tokens":caption_tokens(segment,data.caption_metadata.as_ref())}),
+                )
+            },
+        )?,
         "vocabulary_tokenize" => {
             let text = string(command, "text")?;
             if text.len() > 50_000 {
@@ -153,7 +279,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .segments
                 .get(index(command, "segmentIndex")?)
                 .ok_or("This caption line is no longer available.")?;
-            let tokens = tokens(&segment.text);
+            let tokens = caption_tokens(segment, data.caption_metadata.as_ref());
             let token = tokens
                 .get(index(command, "tokenIndex")?)
                 .filter(|token| token.word)
@@ -172,7 +298,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 language: data.language,
                 video_id: data.video_id,
                 title: data.title,
-                start: segment.start,
+                start: token.start.unwrap_or(segment.start),
                 context: segment.text.clone(),
                 saved_at: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
