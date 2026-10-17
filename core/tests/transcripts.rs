@@ -303,14 +303,155 @@ fn restores_normalized_disk_cache_without_raw_sources_or_session_fields() {
     let saved = fs::read_to_string(&files[0]).unwrap();
     assert!(!saved.contains("captionSource"));
     assert!(!saved.contains("private-session-token"));
-    let restored = store.value(operation("restore"));
+    let restore = json!({"op":"restore","videoId":VIDEO});
+    let restored = store.value(restore.clone());
     assert_eq!(restored["segments"][0]["text"], "Hello, world.");
     assert_eq!(
         store.value(operation("export")),
         json!("Example\nhttps://www.youtube.com/watch?v=abcdefghijk\n\n0:12  Hello, world.")
     );
     fs::write(&files[0], "corrupt cache").unwrap();
-    assert_eq!(store.value(operation("restore")), Value::Null);
+    assert_eq!(store.value(restore), Value::Null);
+}
+
+fn bilingual(store: &Store, primary: Value, comparison: Value) {
+    let mut response = reply();
+    response["transcript"]["tracks"] = json!([
+        {"id":".en","label":"English","language":"en","automatic":false},
+        {"id":".ja","label":"Japanese","language":"ja","automatic":false},
+        {"id":".fr","label":"French","language":"fr","automatic":false}
+    ]);
+    response["transcript"]["segments"] = primary;
+    store.value(accept(response.clone()));
+    response["transcript"]["trackId"] = json!(".ja");
+    response["transcript"]["language"] = json!("Japanese");
+    response["transcript"]["segments"] = comparison;
+    store.value(accept(response));
+}
+
+#[test]
+fn bilingual_reader_and_export_never_put_a_newer_caption_before_an_older_one() {
+    let store = Store::new();
+    bilingual(
+        &store,
+        json!([
+            {"start":2,"duration":1,"text":"A0"},
+            {"start":3,"duration":4,"text":"A1"},
+            {"start":10,"duration":0,"text":"A2"},
+            {"start":12,"duration":2,"text":"A3"},
+            {"start":12,"duration":0,"text":"A4"}
+        ]),
+        json!([
+            {"start":0,"duration":4,"text":"B0"},
+            {"start":2.5,"duration":3,"text":"B1"},
+            {"start":5,"duration":0.5,"text":"B2"},
+            {"start":8,"duration":0.5,"text":"B3"},
+            {"start":10,"duration":0,"text":"B4"},
+            {"start":11,"duration":0.5,"text":"B5"},
+            {"start":12,"duration":3,"text":"B6"},
+            {"start":16,"duration":0,"text":"B7"}
+        ]),
+    );
+    let mut command = operation("transcript_reader");
+    command["comparisonTrackId"] = json!(".ja");
+    let result = store.value(command.clone());
+    let order: Vec<_> = result["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|row| row["lines"].as_array().unwrap())
+        .map(|line| {
+            (
+                line["track"].as_u64().unwrap(),
+                line["index"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            (1, 0),
+            (0, 0),
+            (1, 1),
+            (0, 1),
+            (1, 2),
+            (1, 3),
+            (0, 2),
+            (1, 4),
+            (1, 5),
+            (0, 3),
+            (0, 4),
+            (1, 6),
+            (1, 7)
+        ]
+    );
+    command["op"] = json!("transcript_export");
+    let exported = store.value(command);
+    let lines: Vec<_> = exported.as_str().unwrap().lines().skip(3).collect();
+    assert_eq!(
+        lines.len(),
+        order.len(),
+        "Every caption appears exactly once"
+    );
+    for (line, (track, index)) in lines.iter().zip(order) {
+        assert!(
+            line.ends_with(&format!("{}{}", if track == 0 { "A" } else { "B" }, index)),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn bilingual_search_keeps_chronological_context_and_restores_each_language() {
+    let store = Store::new();
+    bilingual(
+        &store,
+        json!([{"start":1,"duration":2,"text":"The matching English line"},{"start":4,"duration":1,"text":"Other"}]),
+        json!([{"start":0.5,"duration":2,"text":"翻訳の行"},{"start":4,"duration":1,"text":"別の行"}]),
+    );
+    let mut command = operation("transcript_reader");
+    command["comparisonTrackId"] = json!(".ja");
+    command["query"] = json!(" 翻訳 ");
+    let matches = store.value(command.clone());
+    assert_eq!(
+        matches["rows"],
+        json!([{"start":0.5,"lines":[{"track":1,"index":0},{"track":0,"index":0}]}])
+    );
+    command["query"] = json!("MATCHING");
+    assert_eq!(store.value(command)["rows"], matches["rows"]);
+    for track in [".en", ".ja"] {
+        let restored = store.value(json!({"op":"restore","videoId":VIDEO,"trackId":track}));
+        assert_eq!(restored["trackId"], track);
+    }
+}
+
+#[test]
+fn bilingual_selection_enforces_two_distinct_tracks_and_keeps_the_last_one() {
+    let store = Store::new();
+    bilingual(
+        &store,
+        json!([{"start":0,"duration":1,"text":"Hello"}]),
+        json!([{"start":0,"duration":1,"text":"こんにちは"}]),
+    );
+    let mut command = operation("transcript_select");
+    command["trackIds"] = json!([".en"]);
+    command["toggleId"] = json!(".ja");
+    assert_eq!(store.value(command.clone()), json!([".en", ".ja"]));
+    command["trackIds"] = json!([".en", ".ja"]);
+    command["toggleId"] = json!(".fr");
+    assert_eq!(store.call(command.clone())["ok"], false);
+    command["toggleId"] = json!(".en");
+    assert_eq!(store.value(command.clone()), json!([".ja"]));
+    command["trackIds"] = json!([".en"]);
+    assert_eq!(store.value(command.clone()), json!([".en"]));
+    for ids in [
+        json!([]),
+        json!([".en", ".en"]),
+        json!([".en", ".ja", ".fr"]),
+    ] {
+        command["trackIds"] = ids;
+        assert_eq!(store.call(command.clone())["ok"], false);
+    }
 }
 
 #[test]

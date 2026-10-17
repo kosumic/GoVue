@@ -79,9 +79,12 @@ fn ok(root: &Path, command: Value) -> Value {
     result["value"].clone()
 }
 fn cache(root: &Path, video: &str) {
+    cache_track(root, video, ".en");
+}
+fn cache_track(root: &Path, video: &str, track: &str) {
     let raw = json!({"type":"transcript","requestId":"video-chat:fixture","videoId":video,"ok":true,"transcript":{
-        "videoId":video,"title":"Video fixture","trackId":".en","language":"English",
-        "tracks":[{"id":".en","label":"English","language":"en","automatic":false}],
+        "videoId":video,"title":"Video fixture","trackId":track,"language":if track == ".en" { "English" } else { "Japanese" },
+        "tracks":[{"id":".en","label":"English","language":"en","automatic":false},{"id":".ja","label":"Japanese","language":"ja","automatic":false}],
         "segments":[{"start":12.5,"duration":2,"text":"Caption context for the question."}]
     }});
     let result: Value = serde_json::from_str(&execute(json!({"op":"accept","videoId":video,"requestId":"video-chat:fixture","origin":"https://www.youtube.com","raw":raw.to_string()}).to_string(), root.to_string_lossy().into_owned())).unwrap();
@@ -182,6 +185,16 @@ fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
         json!({"op":"ai_chat_audio","chatId":id,"videoId":video,"trackId":".en","cueId":"cue-0"});
     assert_eq!(ok(root, audio)["needsMedia"], true);
     assert!(backend.requests.lock().unwrap().is_empty());
+    cache_track(root, video, ".ja");
+    let comparison_audio =
+        json!({"op":"ai_chat_audio","chatId":id,"videoId":video,"trackId":".ja","cueId":"cue-0"});
+    assert_eq!(ok(root, comparison_audio.clone())["needsMedia"], true);
+    let mut invalid = comparison_audio.clone();
+    invalid["videoId"] = json!(other);
+    assert_eq!(call(root, invalid)["ok"], false);
+    let mut invalid = comparison_audio;
+    invalid["trackId"] = json!(".fr");
+    assert_eq!(call(root, invalid)["ok"], false);
 
     // Explicitly sending null cannot remove a video chat's required context.
     let sent = ok(

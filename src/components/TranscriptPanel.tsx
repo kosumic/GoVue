@@ -1,16 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { Copy, Download, LocateFixed, RotateCw, Search, Share2, Sparkles, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
-import { currentSegmentIndex, timestamp, type Segment, type Transcript } from '../youtube/transcript';
-import { exportTranscript, searchTranscript } from '../core/transcripts';
+import { currentSegmentIndex, timestamp, type Transcript } from '../youtube/transcript';
+import { exportTranscript, readTranscripts, type TranscriptReader, type TranscriptRow } from '../core/transcripts';
 import { IconButton } from './IconButton';
 import { TranscriptWords } from './TranscriptWords';
 import { saveWord } from '../core/vocabulary';
 
-export function TranscriptPanel({ data, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, audio, onSummarize, onDownload, downloadDisabled }: {
+export function TranscriptPanel({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, audio, onSummarize, onDownload, downloadDisabled }: {
   data: Transcript | null;
+  comparison?: Transcript | null;
+  trackIds?: string[];
+  comparisonLoading?: boolean;
+  comparisonError?: string | null;
+  onSelectTrack?: (trackId: string) => void;
   loading: boolean;
   error: string | null;
   cached: boolean;
@@ -20,7 +25,7 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   onClose: () => void;
   onExtract?: (track?: string) => void;
   onSeek?: (seconds: number) => void;
-  onPlayLine?: (index: number) => void;
+  onPlayLine?: (index: number, source: Transcript) => void;
   audio?: { phase: 'idle' | 'loading' | 'playing'; error: string; stop: () => void };
   onSummarize?: () => void;
   onDownload?: () => void;
@@ -32,40 +37,57 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   const [copied, setCopied] = useState(false);
   const [wordFeedback, setWordFeedback] = useState('');
   const savingWord = useRef(false);
-  const activeData = useRef(data);
-  activeData.current = data;
+  const activeData = useRef([data, comparison]);
+  activeData.current = [data, comparison];
   useEffect(() => {
-    activeData.current = data;
+    activeData.current = [data, comparison];
     setWordFeedback('');
-    return () => { activeData.current = null; };
-  }, [data]);
-  const [matches, setMatches] = useState<{ query: string; data: Transcript; segments: Segment[] } | null>(null);
+    setCopied(false);
+    return () => { activeData.current = []; };
+  }, [data, comparison]);
+  const [matches, setMatches] = useState<{ query: string; data: Transcript; comparison: Transcript | null; reader: TranscriptReader } | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [followPlayback, setFollowPlayback] = useState(true);
-  const list = useRef<FlatList<Segment>>(null);
+  const list = useRef<FlatList<TranscriptRow>>(null);
+  const trackList = useRef<ScrollView>(null);
   const scrollTarget = useRef<{ index: number; attempts: number } | null>(null);
   const scrollRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { fontScale } = useWindowDimensions();
   useEffect(() => {
     let active = true;
     setSearchError(null);
-    if (!data || !query.trim()) return;
+    if (!data) return;
     const timer = setTimeout(() => {
-      searchTranscript(data, query).then(segments => {
-        if (active) setMatches({ query, data, segments });
-      }).catch(() => { if (active) setSearchError('Could not search this transcript. Try refreshing it.'); });
-    }, 100);
+      readTranscripts(data, comparison, query).then(reader => {
+        if (active) setMatches({ query, data, comparison, reader });
+      }).catch(() => { if (active) setSearchError(query.trim() ? 'Could not search this transcript. Try refreshing it.' : 'Could not load transcript lines. Try refreshing it.'); });
+    }, query.trim() ? 100 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [data, query]);
-  const searching = !!query.trim() && !(matches?.query === query && matches.data === data) && !searchError;
-  const segments = !query.trim() ? data?.segments ?? [] : matches?.query === query && matches.data === data ? matches.segments : [];
-  const activeIndex = currentSegmentIndex(data?.segments ?? [], position);
-  const activeSegment = data?.segments[activeIndex];
+  }, [data, comparison, query]);
+  const reader = matches?.query === query && matches.data === data && matches.comparison === comparison ? matches.reader : null;
+  const searching = !!data && !reader && !searchError;
+  const rows = reader?.rows ?? [];
+  const sources = [data, comparison];
+  const selectedTracks = trackIds ?? [data?.trackId ?? ''];
+  const selectionKey = selectedTracks.join('\0');
+  const tracks = data ? [
+    ...selectedTracks.flatMap(id => data.tracks.filter(track => track.id === id)),
+    ...data.tracks.filter(track => !selectedTracks.includes(track.id)),
+  ] : [];
+  useEffect(() => { trackList.current?.scrollTo({ x: 0, animated: true }); }, [selectionKey]);
+  const activeIndices = sources.map(source => currentSegmentIndex(source?.segments ?? [], position));
+  const rowIndices = useMemo(() => {
+    const indices: number[][] = [[], []];
+    rows.forEach((row, index) => row.lines.forEach(line => { indices[line.track][line.index] = index; }));
+    return indices;
+  }, [rows]);
+  const activeIndex = rowIndices[0][activeIndices[0]] ?? rowIndices[1][activeIndices[1]] ?? -1;
+  const activeRow = rows[activeIndex];
   const canPlay = !!(onSeek || onPlayLine);
-  function playLine(segment: Segment) {
+  function playLine(source: Transcript, index: number) {
     setFollowPlayback(true);
-    if (onPlayLine && data) onPlayLine(data.segments.indexOf(segment));
-    else onSeek?.(segment.start);
+    if (onPlayLine) onPlayLine(index, source);
+    else onSeek?.(source.segments[index].start);
   }
   const following = followPlayback && !query.trim();
   const scrollToCurrent = useCallback(() => {
@@ -81,23 +103,22 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
       scrollTarget.current = null;
       if (scrollRetry.current) clearTimeout(scrollRetry.current);
     };
-  }, [activeIndex, data, following, loading, error, scrollToCurrent]);
+  }, [activeIndex, reader, following, loading, error, scrollToCurrent]);
   const stopFollowing = () => {
     scrollTarget.current = null;
     if (scrollRetry.current) clearTimeout(scrollRetry.current);
     setFollowPlayback(false);
   };
-  async function saveCaptionWord(segment: Segment, tokenIndex: number, word: string) {
-    if (!data || savingWord.current) return;
-    const source = data;
+  async function saveCaptionWord(source: Transcript, index: number, tokenIndex: number, word: string) {
+    if (savingWord.current) return;
     stopFollowing();
     savingWord.current = true;
     setWordFeedback(`Saving “${word}”…`);
     try {
-      const result = await saveWord(source, source.segments.indexOf(segment), tokenIndex, word);
-      if (activeData.current === source) setWordFeedback(result.saved ? `Saved “${result.entry.word}”` : `“${result.entry.word}” is already saved`);
+      const result = await saveWord(source, index, tokenIndex, word);
+      if (activeData.current.includes(source)) setWordFeedback(result.saved ? `Saved “${result.entry.word}”` : `“${result.entry.word}” is already saved`);
     } catch (e) {
-      if (activeData.current === source) {
+      if (activeData.current.includes(source)) {
         setWordFeedback('');
         Alert.alert('Could not save word', e instanceof Error ? e.message : 'Please try again.');
       }
@@ -109,13 +130,13 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
         <View style={styles.headingText}><Text accessibilityRole="header" numberOfLines={1} style={styles.title}>Transcript</Text>
           <Text numberOfLines={1} style={styles.subtitle}>{cached ? 'Saved · ' : ''}{data?.title || 'YouTube captions'}</Text></View>
         {onExtract && <IconButton compact icon={RotateCw} label="Refresh transcript" disabled={loading} onPress={() => { setCopied(false); onExtract(); }} />}
-        <IconButton compact icon={Copy} label={copied ? 'Transcript copied' : 'Copy transcript'} disabled={!data || loading} onPress={async () => {
+        <IconButton compact icon={Copy} label={copied ? 'Transcript copied' : 'Copy transcript'} disabled={!data || loading || comparisonLoading} onPress={async () => {
           if (!data) return;
-          try { Clipboard.setString(await exportTranscript(data)); setCopied(true); } catch { Alert.alert('Could not copy transcript'); }
+          try { Clipboard.setString(await exportTranscript(data, comparison)); setCopied(true); } catch { Alert.alert('Could not copy transcript'); }
         }} />
-        <IconButton compact icon={Share2} label="Share transcript" disabled={!data || loading} onPress={async () => {
+        <IconButton compact icon={Share2} label="Share transcript" disabled={!data || loading || comparisonLoading} onPress={async () => {
           if (!data) return;
-          try { await Share.share({ message: await exportTranscript(data), title: data.title }); } catch { Alert.alert('Could not share transcript'); }
+          try { await Share.share({ message: await exportTranscript(data, comparison), title: data.title }); } catch { Alert.alert('Could not share transcript'); }
         }} />
         {onSummarize && <IconButton compact icon={Sparkles} label="Summarize video with AI" disabled={!data || loading || !!error} onPress={onSummarize} />}
         {onDownload && <IconButton compact icon={Download} label="Download this video" disabled={downloadDisabled} onPress={onDownload} />}
@@ -138,25 +159,35 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
           <Switch accessibilityLabel="Pause after each transcript line" accessibilityHint="Resume playback when you are ready for the next line"
             value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
         </View>}
-        {onExtract && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tracks, { height: Math.max(48, Math.ceil(20 * fontScale) + 28) }]} contentContainerStyle={styles.trackContent}>
-          {data.tracks.map(track => <Pressable key={track.id} accessibilityRole="button" accessibilityState={{ selected: track.id === data.trackId }}
-            onPress={() => { setCopied(false); onExtract(track.id); }} style={[styles.track, track.id === data.trackId && styles.selectedTrack]}>
-            <Text style={[styles.trackText, track.id === data.trackId && styles.selectedText]}>{track.label}{track.automatic ? ' · Auto' : ''}</Text>
-          </Pressable>)}
-        </ScrollView>}
+        {onSelectTrack && <>
+          <Text style={styles.trackHelp}>{selectedTracks.length}/2 languages · {selectedTracks.length === 2 ? 'Tap a selected language to remove it' : data.tracks.length > 1 ? 'Select another language to compare' : 'Only one language available'}</Text>
+          <ScrollView ref={trackList} horizontal showsHorizontalScrollIndicator={false} style={[styles.tracks, { height: Math.max(48, Math.ceil(20 * fontScale) + 28) }]} contentContainerStyle={styles.trackContent}>
+            {tracks.map(track => {
+              const selected = selectedTracks.includes(track.id);
+              const disabled = !selected && selectedTracks.length >= 2;
+              return <Pressable key={track.id} accessibilityRole="checkbox" accessibilityLabel={track.label + (track.automatic ? ' · Auto' : '')} accessibilityState={{ checked: selected, disabled }}
+                disabled={disabled} onPress={() => onSelectTrack(track.id)} style={[styles.track, selected && styles.selectedTrack, disabled && styles.disabledTrack]}>
+                <Text style={[styles.trackText, selected && styles.selectedText]}>{selected ? `${selectedTracks.indexOf(track.id) + 1} · ` : ''}{track.label}{track.automatic ? ' · Auto' : ''}</Text>
+              </Pressable>;
+            })}
+          </ScrollView>
+        </>}
+        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={styles.trackText}>Loading comparison…</Text></View>}
+        {!!comparisonError && <View style={styles.comparisonStatus}><Text accessibilityRole="alert" style={styles.comparisonError}>{comparisonError}</Text>
+          {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()}><Text style={styles.selectedText}>Retry</Text></Pressable>}</View>}
         <View style={styles.search}><Search size={16} color={colors.muted} /><TextInput accessibilityLabel="Search transcript" placeholder="Find in transcript" placeholderTextColor={colors.muted}
           value={query} onChangeText={setQuery} style={styles.searchInput} />
-          {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${segments.length} of ${data.segments.length}` : segments.length}</Text>}
+          {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>
         <View style={styles.languageRow}>
-          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : data.language}{canPlay ? ' · Tap a line to play' : ''} · Hold a word to save</Text>
+          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : [data.language, comparison?.language].filter(Boolean).join(' + ')}{canPlay ? ' · Tap a line to play' : ''} · Hold a word to save</Text>
           {canPlay && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
             onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
             <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
           </Pressable>}
         </View>
-        <FlatList ref={list} data={segments} extraData={activeSegment} keyExtractor={(item, index) => `${item.start}:${index}`} contentContainerStyle={styles.list}
+        <FlatList ref={list} data={rows} extraData={activeRow} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={styles.list}
           onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
             const target = scrollTarget.current;
@@ -166,17 +197,28 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
             scrollRetry.current = setTimeout(scrollToCurrent, 100);
           }}
           keyboardShouldPersistTaps="handled" ListEmptyComponent={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
-          renderItem={({ item }) => <Pressable accessible={false}
-            accessibilityState={{ selected: item === activeSegment }}
-            accessibilityHint={canPlay ? onPlayLine ? 'Listen to this transcript line' : 'Jump to this line and play the video' : undefined}
-            onPress={canPlay ? () => playLine(item) : undefined}
-            style={({ pressed }) => [styles.segment, item === activeSegment && styles.activeSegment, pressed && styles.pressedSegment]}>
-            <Text style={styles.time} accessibilityRole={canPlay ? 'button' : undefined} accessibilityLabel={canPlay ? `Play line at ${timestamp(item.start)}` : undefined}
-              onPress={canPlay ? event => { event.stopPropagation(); playLine(item); } : undefined}>{timestamp(item.start)}</Text>
-            <TranscriptWords text={item.text} selected={item === activeSegment} style={[styles.segmentText, item === activeSegment && styles.activeText]}
-              onSeek={canPlay ? () => playLine(item) : undefined}
-              onSave={(tokenIndex, word) => { void saveCaptionWord(item, tokenIndex, word); }} />
-          </Pressable>} />
+          renderItem={({ item }) => <View style={[styles.captionGroup, item === activeRow && styles.activeSegment]}>
+            {item.lines.map(line => {
+              const source = sources[line.track];
+              const segment = source?.segments[line.index];
+              if (!source || !segment) return null;
+              const active = activeIndices[line.track] === line.index;
+              return <Pressable key={`${line.track}:${line.index}`} accessible={false}
+                accessibilityState={{ selected: active }}
+                accessibilityHint={canPlay ? onPlayLine ? 'Listen to this transcript line' : 'Jump to this line and play the video' : undefined}
+                onPress={canPlay ? () => playLine(source, line.index) : undefined}
+                style={({ pressed }) => [styles.segment, pressed && styles.pressedSegment]}>
+                <Text style={styles.time} accessibilityRole={canPlay ? 'button' : undefined} accessibilityLabel={canPlay ? `Play ${source.language} line at ${timestamp(segment.start)}` : undefined}
+                  onPress={canPlay ? event => { event.stopPropagation(); playLine(source, line.index); } : undefined}>{timestamp(segment.start)}</Text>
+                <View style={styles.lineText}>
+                  {!!comparison && <Text style={styles.lineLanguage}>{source.language}</Text>}
+                  <TranscriptWords text={segment.text} selected={active} style={[styles.segmentText, line.track === 1 && styles.comparisonText, active && styles.activeText]}
+                    onSeek={canPlay ? () => playLine(source, line.index) : undefined}
+                    onSave={(tokenIndex, word) => { void saveCaptionWord(source, line.index, tokenIndex, word); }} />
+                </View>
+              </Pressable>;
+            })}
+          </View>} />
       </> : null}
     </View>
   );
@@ -199,6 +241,10 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   retry: { backgroundColor: colors.accent, paddingHorizontal: 22, paddingVertical: 13, borderRadius: 12, marginTop: 8 },
   retryText: { color: colors.surface, fontWeight: '600' },
   tracks: { flexGrow: 0, flexShrink: 0 },
+  trackHelp: { color: colors.muted, fontSize: 11, marginHorizontal: 20, marginBottom: 8 },
+  disabledTrack: { opacity: 0.4 },
+  comparisonStatus: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 20, marginBottom: 8 },
+  comparisonError: { flex: 1, color: colors.muted, fontSize: 12 },
   trackContent: { paddingHorizontal: 20, paddingBottom: 10, gap: 8 },
   track: { paddingVertical: 9, paddingHorizontal: 13, borderRadius: 10, backgroundColor: colors.surface },
   selectedTrack: { backgroundColor: colors.accentSoft },
@@ -213,10 +259,14 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   follow: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 44, paddingHorizontal: 8, borderRadius: 8 },
   following: { backgroundColor: colors.accentSoft },
   followText: { fontSize: 11, color: colors.muted },
-  segment: { flexDirection: 'row', gap: 12, paddingVertical: 9, paddingHorizontal: 8, minHeight: 44, borderRadius: 6, borderLeftWidth: 3, borderLeftColor: 'transparent' },
+  captionGroup: { borderRadius: 6, borderLeftWidth: 3, borderLeftColor: 'transparent', marginBottom: 3 },
+  segment: { flexDirection: 'row', gap: 12, paddingVertical: 9, paddingHorizontal: 8, minHeight: 44, borderRadius: 6 },
+  lineText: { flex: 1 },
+  lineLanguage: { color: colors.muted, fontSize: 10, marginBottom: 3 },
+  comparisonText: { color: colors.muted },
   activeSegment: { backgroundColor: colors.accentSoft, borderLeftColor: colors.accent },
   activeText: { color: colors.accent, fontWeight: '600' },
   pressedSegment: { backgroundColor: colors.accentSoft },
   time: { minWidth: 46, paddingTop: 3, fontSize: 12, color: colors.accent, fontVariant: ['tabular-nums'] },
-  segmentText: { flex: 1, fontSize: 15, lineHeight: 24, color: colors.ink },
+  segmentText: { fontSize: 15, lineHeight: 24, color: colors.ink },
 });

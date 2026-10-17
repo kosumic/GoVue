@@ -24,6 +24,7 @@ mod player;
 mod speech;
 mod trace;
 mod transcript_playback;
+mod transcript_reader;
 mod transport;
 mod vocabulary;
 pub use ai::{
@@ -499,6 +500,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         );
     }
     if op == "restore" {
+        if let Some(track) = command["trackId"].as_str() {
+            return Ok(load(root, id, track).map_or(Value::Null, |data| json!(data)));
+        }
         let _span = trace::Section::begin(c"LingoPlay transcript: rust.cache_restore");
         let Ok(entries) = fs::read_dir(root) else {
             return Ok(Value::Null);
@@ -543,6 +547,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let data = load(root, id, track)?;
     match op {
+        "transcript_select" | "transcript_reader" | "transcript_export" => {
+            transcript_reader::dispatch(op, &data, &command, root)
+        }
         "transcript_playback" => transcript_playback::step(&data, &command),
         "load" => {
             Ok(serde_json::to_value(data).map_err(|_| "Could not encode cached transcript.")?)
