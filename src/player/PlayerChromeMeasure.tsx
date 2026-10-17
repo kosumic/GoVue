@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-type Labels = { time: string; speed: string; quality: string };
+type Labels = { time: string; quality: string };
 
 /** Use the same native font metrics as the visible controls, including font scaling. */
 export function usePlayerChromeMeasure(
@@ -18,16 +18,12 @@ export function usePlayerChromeMeasure(
     widths: Partial<Record<keyof Labels, number>>;
   } | null>(null);
   const widths = measurement?.key === key ? measurement.widths : {};
-  const ready =
-    widths.time !== undefined &&
-    widths.speed !== undefined &&
-    widths.quality !== undefined;
+  const ready = widths.time !== undefined && widths.quality !== undefined;
   const compact =
     !ready ||
     widths.time! +
-      Math.max(48, widths.speed! + 12) +
       Math.max(48, widths.quality! + 12) +
-      3 * 48 + // Transcript, AI, and fullscreen controls.
+      4 * 48 + // Transcript, AI, speed, and fullscreen controls.
       16 >
       width;
   const probe = (
