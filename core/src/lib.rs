@@ -594,3 +594,13 @@ pub fn execute(request: String, storage_path: String) -> String {
         Err(error) => json!({"ok":false,"error":error}).to_string(),
     }
 }
+
+/// Dictation never touches storage or transport. Its small, synchronous JSON
+/// boundary makes final-result edits atomic with the JavaScript draft read.
+#[uniffi::export]
+pub fn dictation_execute(request: String) -> String {
+    match speech::dispatch(&request) {
+        Ok(value) => json!({"ok":true,"value":value}).to_string(),
+        Err(error) => json!({"ok":false,"error":error}).to_string(),
+    }
+}

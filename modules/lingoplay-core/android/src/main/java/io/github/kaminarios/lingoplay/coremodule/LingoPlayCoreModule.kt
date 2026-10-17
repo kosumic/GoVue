@@ -6,6 +6,7 @@ import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.Promise
 import io.github.kaminarios.lingoplay.core.execute
 import io.github.kaminarios.lingoplay.core.aiExecute
+import io.github.kaminarios.lingoplay.core.dictationExecute
 import io.github.kaminarios.lingoplay.core.installAiPlatform
 import java.io.File
 import android.media.MediaCodec
@@ -251,6 +252,7 @@ class LingoPlayCoreModule : Module() {
       installCastPlatform(NativeCastPlatform(requireNotNull(appContext.reactContext).applicationContext))
       installAiPlatform(NativeAiPlatform(requireNotNull(appContext.reactContext)))
     }
+    Function("dictation") { request: String -> dictationExecute(request) }
     AsyncFunction("ai") { request: String ->
       val context = requireNotNull(appContext.reactContext)
       aiExecute(request, File(context.filesDir, "transcripts").path)

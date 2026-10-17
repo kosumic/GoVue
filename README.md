@@ -75,11 +75,15 @@ npx expo install --check
 ```
 
 Chat supports microphone dictation through `expo-speech-recognition`. Tap the
-microphone, speak, then review the draft before sending. Recognition uses the
-device locale and up to 100 vocabulary hints built in Rust from the draft,
+microphone and speak; partial results appear separately, and only final results
+are added to the current draft. Rust owns dictation state and joins recognized
+text with spacing appropriate for English, Chinese, and Japanese. Recognition
+uses the device locale and up to 100 vocabulary hints built in Rust from the draft,
 recent chat messages, and the attached transcript. LingoPlay does not save
 audio recordings. Rebuild the native app after installing the dependency so the
-speech module and microphone permissions are included.
+speech module and microphone permissions are included. Hint loading falls back
+to draft vocabulary after 1.5 seconds. Android finishes on a pause; iOS supports
+continuous dictation until stopped.
 
 Signed media/caption URLs and raw responses stay in memory. Persisted queues,
 history and settings contain only validated, non-secret metadata. The local
