@@ -92,7 +92,13 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
       mediaPlaybackRequiresUserAction allowsInlineMediaPlayback={false}
       onShouldStartLoadWithRequest={request => request.url === 'about:blank' || request.url === 'about:srcdoc'}
       onOpenWindow={() => {}} onRenderProcessGone={fail} onContentProcessDidTerminate={fail} onError={fail}
-      onMessage={event => { if (event.nativeEvent.url === 'about:blank') void receive(event.nativeEvent.data); }}
+      onMessage={event => {
+        // Android's WebMessageListener reports the opaque document origin as
+        // "null"; iOS and the older Android bridge report its URL. receive()
+        // still requires the private host session before accepting a request.
+        const { url, data } = event.nativeEvent;
+        if (url === 'about:blank' || url === 'null') void receive(data);
+      }}
     />}
     {loading && <View pointerEvents="none" style={styles.loading}><ActivityIndicator color={colors.accent} /><Text style={styles.help}>Opening game…</Text></View>}
     {audio.phase !== 'idle' && <View style={styles.audioStatus}>
