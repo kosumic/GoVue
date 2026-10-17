@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -26,6 +26,7 @@ struct Backend {
     fail_final: AtomicBool,
     repeat: AtomicBool,
     legacy_gemini: AtomicBool,
+    response_mode: AtomicUsize,
 }
 struct Platform(Arc<Backend>);
 fn event(value: Value) -> String {
@@ -124,26 +125,45 @@ impl AiPlatform for Platform {
             let middle = raw.char_indices().nth(raw.chars().count() / 2).unwrap().0;
             match protocol {
                 "responses" => {
+                    let mode = self.0.response_mode.load(Ordering::SeqCst);
                     let reasoning = json!({"id":"reasoning-1","type":"reasoning","summary":[],"encrypted_content":"OPAQUE_CONTINUATION"});
-                    stream += &event(
-                        json!({"type":"response.output_item.done","output_index":0,"item":reasoning}),
-                    );
                     let mut item = json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"create_interactive_game","arguments":""});
-                    stream += &event(
-                        json!({"type":"response.output_item.added","output_index":1,"item":item}),
-                    );
-                    for part in [&raw[..middle], &raw[middle..]] {
-                        stream += &event(
-                            json!({"type":"response.function_call_arguments.delta","output_index":1,"delta":part}),
+                    let frame = |mut v: Value| {
+                        if mode == 3 {
+                            v.as_object_mut().unwrap().remove("output_index");
+                        }
+                        event(v)
+                    };
+                    if mode != 4 {
+                        stream += &frame(
+                            json!({"type":"response.output_item.added","output_index":0,"item":{"id":"reasoning-1","type":"reasoning","summary":[]}}),
                         );
+                        stream += &frame(
+                            json!({"type":"response.output_item.done","output_index":0,"item":reasoning}),
+                        );
+                        stream += &frame(
+                            json!({"type":"response.output_item.added","output_index":1,"item":item}),
+                        );
+                        for part in [&raw[..middle], &raw[middle..]] {
+                            stream += &frame(
+                                json!({"type":"response.function_call_arguments.delta","output_index":1,"item_id":"fc-1","delta":part}),
+                            );
+                        }
                     }
                     item["arguments"] = json!(raw);
-                    stream += &event(
-                        json!({"type":"response.output_item.done","output_index":1,"item":item}),
-                    );
-                    stream += &event(
-                        json!({"type":"response.completed","response":{"output":[reasoning,item]}}),
-                    );
+                    if mode != 4 {
+                        stream += &frame(
+                            json!({"type":"response.output_item.done","output_index":1,"item":item}),
+                        );
+                    }
+                    let output = match mode {
+                        1 | 3 => json!([]),
+                        2 => json!([reasoning]),
+                        5 => json!([item]),
+                        _ => json!([reasoning, item]),
+                    };
+                    stream +=
+                        &event(json!({"type":"response.completed","response":{"output":output}}));
                 }
                 "anthropic" => {
                     stream += &event(
@@ -299,13 +319,19 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     install_ai_platform(Box::new(Platform(backend.clone())));
     let ranges = Arc::new(Ranges::default());
     install_media_http(Box::new(Media(ranges.clone())));
-    for (protocol, legacy) in [
-        ("chat", false),
-        ("responses", false),
-        ("anthropic", false),
-        ("gemini", false),
-        ("gemini", true),
+    for (protocol, legacy, response_mode) in [
+        ("chat", false, 0),
+        ("responses", false, 0), // Full terminal snapshot, alongside item events.
+        ("responses", false, 1), // Empty terminal snapshot must retain the call.
+        ("responses", false, 2), // Only reasoning in the terminal snapshot.
+        ("responses", false, 3), // Item IDs correlate events without output indices.
+        ("responses", false, 4), // Terminal snapshot alone still supplies the call.
+        ("responses", false, 5), // Only the call: retain signed reasoning too.
+        ("anthropic", false, 0),
+        ("gemini", false, 0),
+        ("gemini", true, 0),
     ] {
+        backend.response_mode.store(response_mode, Ordering::SeqCst);
         backend.legacy_gemini.store(legacy, Ordering::SeqCst);
         let store = Temp::new();
         let root = &store.0;
@@ -318,7 +344,11 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
             root,
             json!({"op":"ai_chat_send","id":id,"prompt":"Make a game"}),
         );
-        assert_eq!(wait(root, &started)["status"], "completed");
+        assert_eq!(
+            wait(root, &started)["status"],
+            "completed",
+            "{protocol}, response mode {response_mode}"
+        );
         let chat = ok(
             root,
             json!({"op":"ai_chat_get","chatId":started["conversation"]["id"]}),
@@ -347,6 +377,31 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
             assert_eq!(details.as_array().unwrap().len(), 2);
             assert_eq!(details[0]["signature"], "signed-chunk");
             assert_eq!(details[1]["data"], "OPAQUE_CONTINUATION");
+        }
+        if protocol == "responses" {
+            let input = requests[1]["input"].as_array().unwrap();
+            let items = input
+                .iter()
+                .filter(|item| item["type"] == "reasoning" || item["type"] == "function_call")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                items.len(),
+                2,
+                "snapshot reconciliation must not duplicate items"
+            );
+            assert_eq!(items[0]["encrypted_content"], "OPAQUE_CONTINUATION");
+            assert_eq!(
+                items[1]["arguments"],
+                definition().to_string(),
+                "final arguments replace deltas instead of appending"
+            );
+            assert_eq!(
+                input
+                    .iter()
+                    .filter(|item| item["type"] == "function_call_output")
+                    .count(),
+                1
+            );
         }
         assert!(
             !fs::read_to_string(
