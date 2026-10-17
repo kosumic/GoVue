@@ -227,7 +227,9 @@ function Browser() {
     !!watch &&
       browser.activeId === watch.id &&
       !page &&
+      !aiVisible &&
       !media.playback?.offline,
+    aiVisible,
   );
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -324,6 +326,8 @@ function Browser() {
     });
   };
   const goBack = useCallback(() => {
+    // The chat handles its reader, drawer and screen before browser navigation.
+    if (aiVisible) return false;
     const state = sessionRef.current;
     if (state.locked) {
       state.setLocked(false);
@@ -383,7 +387,7 @@ function Browser() {
       return true;
     }
     return false;
-  }, [page, gallery, card]);
+  }, [page, gallery, card, aiVisible]);
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', goBack);
     return () => sub.remove();
@@ -644,15 +648,16 @@ function Browser() {
     ? { top: 48, left: 0, width: frame.width, height: (frame.width * 9) / 16 }
     : embeddedPlayerFrame(media.playerLayout, frame.width, frame.height);
   const playerHidden =
-    !session.fullscreen &&
-    !session.mini &&
-    !media.playback?.offline &&
-    (media.playerLayout?.visible !== true ||
-      browser.activeId !== watch?.id ||
-      youtubeVideoId(
-        browser.tabs.find((t) => t.id === browser.activeId)?.url || '',
-      ) !== watch?.videoId);
-  const transcriptVisible = session.transcript.open && !session.mini && !session.pip && !page && !playerHidden;
+    (aiVisible && !session.mini) ||
+    (!session.fullscreen &&
+      !session.mini &&
+      !media.playback?.offline &&
+      (media.playerLayout?.visible !== true ||
+        browser.activeId !== watch?.id ||
+        youtubeVideoId(
+          browser.tabs.find((t) => t.id === browser.activeId)?.url || '',
+        ) !== watch?.videoId));
+  const transcriptVisible = session.transcript.open && !session.mini && !session.pip && !page && !aiVisible && !playerHidden;
   const transcriptBeside = workspaceSize.width > workspaceSize.height;
   const transcriptWidth = Math.min(400, workspaceSize.width * 0.4);
   const portraitVideoHeight = Math.min(workspaceSize.height * 0.45, workspaceSize.width * 9 / 16);
@@ -705,7 +710,7 @@ function Browser() {
                     } else handles.current.delete(tab.id);
                   }}
                   active={
-                    !page && browser.activeId === tab.id && !session.fullscreen
+                    !page && !aiVisible && browser.activeId === tab.id && !session.fullscreen
                   }
                   width={frame.width}
                   height={frame.height}
@@ -738,6 +743,19 @@ function Browser() {
                   }}
                 />
               ))}
+            <AiSheet
+              onBeforeGameAudio={media.pause}
+              visible={aiVisible}
+              onClose={() => setAiVisible(false)}
+              transcript={session.transcript.data}
+              videoId={aiVideoId}
+              onOpenVideo={videoId => {
+                navigate({ videoId });
+                session.setMini(false);
+                session.setLocked(false);
+                setAiVisible(false);
+              }}
+            />
             {mini.dropTarget}
             {(media.playback || media.preparing) && (
               <Animated.View
@@ -768,6 +786,7 @@ function Browser() {
                     })
                   }
                   onRestore={() => {
+                    setAiVisible(false);
                     session.setMini(false);
                     if (media.playback?.offline) {
                       session.setFullscreen(true);
@@ -821,7 +840,7 @@ function Browser() {
                 />
               </View>
             )}
-            {!!page && (
+            {!!page && !aiVisible && (
               <View style={s.nativePage}>
                 <ExtensionSettings
                   page={page}
@@ -860,19 +879,6 @@ function Browser() {
               </View>
             )}
           </View>
-          <AiSheet
-            onBeforeGameAudio={media.pause}
-            visible={aiVisible}
-            onClose={() => setAiVisible(false)}
-            transcript={session.transcript.data}
-            videoId={aiVideoId}
-            onOpenVideo={videoId => {
-              navigate({ videoId });
-              session.setMini(false);
-              session.setLocked(false);
-              setAiVisible(false);
-            }}
-          />
           <TokenRuntime />
           <MediaResolver ref={resolver} />
           <DownloadConfirm

@@ -39,9 +39,13 @@ export function usePlayerSession(
   webView: React.RefObject<WebView | null>,
   navigate: (url: string) => void,
   watchVisible = true,
+  chatVisible = false,
 ) {
   const [queue, setQueue] = useState(initial);
-  const [mini, updateMini] = useState(false);
+  const [minimized, updateMini] = useState(false);
+  // Chat changes the presentation without replacing playback or the previous
+  // embedded/fullscreen mode, which is restored when chat closes.
+  const mini = minimized || (chatVisible && !!media.playback && media.settings.miniPlayer);
   const [locked, setLocked] = useState(false);
   const [pip, setPip] = useState(false);
   const transcript = usePlayerTranscript(media.playback?.videoId ?? null);
@@ -240,7 +244,7 @@ export function usePlayerSession(
     action,
     advance,
     go,
-    fullscreen,
+    fullscreen: fullscreen && !chatVisible,
     setFullscreen,
     pip,
     setPip,

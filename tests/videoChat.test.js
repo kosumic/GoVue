@@ -11,7 +11,8 @@ const first = 'abcdefghijk', second = '0123456789a';
 const transcript = videoId => ({ videoId, title: `Video ${videoId}`, trackId: '.en', language: 'English', tracks: [], segments: [{ start: 1, duration: 3, text: 'These captions are the chat context.' }] });
 
 async function harness(videoId, restore = async id => transcript(id)) {
-  const calls = [], opened = [], saved = new Map(), audioCalls = [];
+  const calls = [], opened = [], saved = new Map(), audioCalls = [], backHandlers = new Set();
+  let closed = 0;
   let chatProps;
   const provider = { id: 'fixture', label: 'Fixture', model: 'first', connected: true, enabled: true, models: [] };
   const ai = { providers: [provider], groups: [], activeId: provider.id, ready: true, busy: '', clear() {}, stop() {}, async select(id, model) { if (model) provider.model = model; return true; } };
@@ -32,7 +33,7 @@ async function harness(videoId, restore = async id => transcript(id)) {
       default: throw Error(`Unexpected operation ${command.op}`);
     }
   } };
-  const native = { View: 'View', Text: 'Text', Modal: 'Modal', Pressable: 'Pressable', KeyboardAvoidingView: 'KeyboardAvoidingView', Keyboard: { dismiss() {} }, Alert: { alert() {} }, Platform: { OS: 'android' }, StyleSheet: { create: value => value, hairlineWidth: 1 } };
+  const native = { View: 'View', Text: 'Text', Pressable: 'Pressable', KeyboardAvoidingView: 'KeyboardAvoidingView', BackHandler: { addEventListener(_event, handler) { backHandlers.add(handler); return { remove: () => backHandlers.delete(handler) }; } }, Keyboard: { dismiss() {} }, Alert: { alert() {} }, Platform: { OS: 'android' }, StyleSheet: { create: value => value, hairlineWidth: 1 } };
   const result = await build({ entryPoints: ['src/components/AiSheet.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic',
     plugins: [{ name: 'chat-edges', setup(builder) {
       builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'mock-core', external: true }));
@@ -58,13 +59,40 @@ async function harness(videoId, restore = async id => transcript(id)) {
     }
     return require(name);
   }, module, module.exports);
-  const props = { visible: true, videoId, transcript: null, onClose() {}, onOpenVideo: id => opened.push(id) };
+  const props = { visible: true, videoId, transcript: null, onClose() { closed++; }, onOpenVideo: id => opened.push(id) };
   let root;
   await act(async () => { root = create(createElement(module.exports.AiSheet, props)); });
   return { calls, saved, opened, audioCalls, props: () => chatProps,
+    closed: () => closed, backHandlers,
+    back: () => act(() => { for (const handler of [...backHandlers].reverse()) if (handler()) break; }),
     render: changes => act(async () => { root.update(createElement(module.exports.AiSheet, { ...props, ...changes })); }),
     unmount: () => act(() => root.unmount()), root };
 }
+
+test('chat shares the player window and Android Back closes chat panels before leaving chat', async t => {
+  const env = await harness(first);
+  t.after(env.unmount);
+  assert.equal(env.root.root.findAllByType('Modal').length, 0, 'chat must share the window with the floating VideoView');
+  await act(() => env.props().onOpenTranscript());
+  await env.back();
+  assert.equal(env.root.root.findAllByType('TranscriptPanel').length, 0);
+  assert.equal(env.closed(), 0);
+  await act(() => env.props().onModels());
+  assert.equal(env.root.root.findAllByType('AiModels').length, 1);
+  await env.back();
+  assert.equal(env.root.root.findAllByType('AiModels').length, 0);
+  assert.equal(env.closed(), 0);
+  await act(() => env.root.root.findByProps({ label: 'Open conversations' }).props.onPress());
+  assert.equal(env.root.root.findByType('AiHistoryDrawer').props.visible, true);
+  await env.back();
+  assert.equal(env.root.root.findByType('AiHistoryDrawer').props.visible, false);
+  assert.equal(env.closed(), 0);
+  await env.back();
+  assert.equal(env.closed(), 1);
+  await env.render({ visible: false });
+  assert.equal(env.root.toJSON(), null);
+  assert.equal(env.backHandlers.size, 0, 'hidden chat must release Back to the browser');
+});
 
 test('opening a video chat attaches context and changing its model preserves the empty conversation without inference', async t => {
   const env = await harness(first);
