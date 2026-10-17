@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { aiRequest } from '../../modules/lingoplay-core';
-import type { TokenUsage } from './usage';
+import type { MessageUsageDetails, TokenUsage } from './usage';
 import type { GameAction, LearningGame } from './games';
+import { applyChatUpdate, type ChatStream, type ChatUpdate } from './chatUpdates';
 
 export type ActivityStatus = 'preparing' | 'running' | 'completed' | 'failed' | 'stopped';
 export type ChatBlock =
@@ -10,11 +11,10 @@ export type ChatBlock =
   | { id: string; kind: 'tool'; callId: string; name: string; status: ActivityStatus; startedAt: number; durationMs: number; gameId?: string; title?: string; error?: string };
 
 export type ChatTranscript = { videoId: string; trackId: string; title: string; language: string };
-export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; games?: LearningGame[]; blocks?: ChatBlock[]; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; model?: string; providerLabel?: string };
+export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; games?: LearningGame[]; blocks?: ChatBlock[]; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; usageDetails?: MessageUsageDetails; model?: string; modelName?: string; providerLabel?: string; completedAt?: number };
 export type Conversation = { id: string; videoId?: string | null; title: string; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null };
 export type SavedChat = Pick<Conversation, 'id' | 'videoId' | 'title' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string };
 type Started = { taskId: string; conversation: Conversation };
-type Progress = { status: 'running' | 'completed' | 'failed' | 'cancelled'; text: string; games?: LearningGame[]; blocks?: ChatBlock[]; error?: string; reasoning?: string; reasoningEffort?: string; usage?: ChatMessage['usage']; model?: string; providerLabel?: string };
 
 export function useChats(visible: boolean, contextId: string) {
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -33,6 +33,7 @@ export function useChats(visible: boolean, contextId: string) {
   const epoch = useRef(0);
   const task = useRef<string | null>(null);
   const sending = useRef(false);
+  const cancellation = useRef<Promise<unknown> | null>(null);
   const historyEpoch = useRef(0);
   const previousContext = useRef(contextId);
   const mounted = useRef(true);
@@ -44,11 +45,13 @@ export function useChats(visible: boolean, contextId: string) {
     const previous = current.current;
     if (chat && previous?.id === chat.id) {
       chat = { ...chat, messages: chat.messages.map(message => {
+        if (!message.games) return message;
         const old = previous.messages.find(m => m.id === message.id);
-        return message.games ? { ...message, games: message.games.map(game => {
+        const games = message.games.map(game => {
           const saved = old?.games?.find(g => g.id === game.id);
           return saved && saved.revision > game.revision ? saved : game;
-        }) } : message;
+        });
+        return games.some((game, index) => game !== message.games![index]) ? { ...message, games } : message;
       }) };
     }
     current.current = chat; setConversation(chat);
@@ -66,18 +69,33 @@ export function useChats(visible: boolean, contextId: string) {
     sending.current = false; setBusy(false); setLoading(false);
     const chat = current.current;
     if (chat) update({ ...chat, activeTask: null, messages: chat.messages.map(m => m.status === 'streaming' ? { ...m, status: 'stopped' } : m) });
-    if (id) void aiRequest({ op: 'ai_cancel', taskId: id }).then(() => aiRequest({ op: 'ai_forget', taskId: id })).then(refresh).catch(e => { if (mounted.current) setError(e.message); });
+    if (id) {
+      const pending = aiRequest({ op: 'ai_cancel', taskId: id }).then(() => aiRequest({ op: 'ai_forget', taskId: id })).then(refresh).catch(e => { if (mounted.current) setError(e.message); });
+      cancellation.current = pending;
+      void pending.finally(() => { if (cancellation.current === pending) cancellation.current = null; });
+    }
   }
   function stop() { cancel(true); }
   async function watch(started: Started, version: number) {
+    let stream: ChatStream | null = null;
     try {
       while (mounted.current && version === epoch.current) {
-        const state = await aiRequest<Progress>({ op: 'ai_poll', taskId: started.taskId });
+        const event = await aiRequest<ChatUpdate>({ op: 'ai_chat_poll', taskId: started.taskId, ...(stream ? { afterRevision: stream.revision } : {}) });
         if (!mounted.current || version !== epoch.current) return;
+        let next = applyChatUpdate(stream, event);
+        if (!next) {
+          const snapshot = await aiRequest<ChatUpdate>({ op: 'ai_chat_poll', taskId: started.taskId });
+          if (!mounted.current || version !== epoch.current) return;
+          next = applyChatUpdate(null, snapshot);
+          if (!next) throw Error('Could not resync this response.');
+        }
+        const changed = next !== stream;
+        stream = next;
+        const state = stream.state;
         const chat = current.current;
-        if (chat?.id === started.conversation.id) {
+        if (changed && chat?.id === started.conversation.id) {
           const reply = started.conversation.messages.at(-1)?.id;
-          update({ ...chat, messages: chat.messages.map(m => m.id === reply ? { ...m, content: state.text, games: state.games ?? m.games, blocks: state.blocks ?? m.blocks, reasoning: state.reasoning, reasoningEffort: state.reasoningEffort, usage: state.usage, model: state.model, providerLabel: state.providerLabel } : m) });
+          update({ ...chat, messages: chat.messages.map(m => m.id === reply ? { ...m, content: state.text, games: state.games ?? m.games, blocks: state.blocks ?? m.blocks, reasoning: state.reasoning, reasoningEffort: state.reasoningEffort, usage: state.usage, usageDetails: state.usageDetails, model: state.model, providerLabel: state.providerLabel } : m) });
         }
         if (state.status !== 'running') {
           const revision = reasoningRevision.current;
@@ -95,13 +113,15 @@ export function useChats(visible: boolean, contextId: string) {
       if (mounted.current) void refresh().catch(() => {});
     }
   }
-  async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false, focusGameId?: string) {
+  async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false, focusGameId?: string, editMessageId?: string) {
     if (sending.current || settingsPending.current) return false;
-    cancel(false); const version = epoch.current;
+    cancel(!!editMessageId); const version = epoch.current;
     sending.current = true; setBusy(true); setError('');
     let pending: Promise<Started> | null = null;
     try {
-      pending = aiRequest<Started>({ op: 'ai_chat_send', id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}), ...(focusGameId ? { focusGameId } : {}) });
+      if (cancellation.current) await cancellation.current;
+      if (!mounted.current || version !== epoch.current) return false;
+      pending = aiRequest<Started>({ op: 'ai_chat_send', id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}), ...(focusGameId ? { focusGameId } : {}), ...(editMessageId ? { editMessageId } : {}) });
       starting.current = pending;
       const started = await pending;
       if (starting.current === pending) starting.current = null;
@@ -127,6 +147,7 @@ export function useChats(visible: boolean, contextId: string) {
       if (!game) throw Error('This game is no longer available.');
       const result = await aiRequest<{ game: LearningGame; notify: boolean }>({ op: 'ai_game_action', chatId: owner, messageId, gameId, action, input, eventId, revision: game.revision });
       if (!mounted.current || current.current?.id !== owner) throw Error('This game is no longer open.');
+      if (!current.current.messages.some(message => message.id === messageId && message.games?.some(game => game.id === gameId))) throw Error('This game is no longer available.');
       update({ ...current.current, messages: current.current.messages.map(m => m.id === messageId ? { ...m, games: m.games?.map(g => g.id === gameId ? result.game : g) } : m) });
       if (result.notify) {
         gameFeedback.current.push({ chatId: owner, gameId });

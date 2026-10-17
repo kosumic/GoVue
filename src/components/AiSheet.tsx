@@ -6,6 +6,7 @@ import type { Transcript } from '../youtube/transcript';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { IconButton } from './IconButton';
 import { AiChat } from './AiChat';
+import type { ChatViewportStore } from './useChatViewport';
 import { AiProviders } from './AiProviders';
 import { AiModels } from './AiModels';
 import { AiUsageSheet } from './AiUsageSheet';
@@ -48,6 +49,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   const contextAbort = useRef<AbortController | null>(null);
   const ai = useAi(visible, chatVideoId || '');
   const chats = useChats(visible, chatVideoId || '');
+  const chatViewports = useRef<ChatViewportStore>(new Map());
   const [page, setPage] = useState<'chat' | 'providers' | 'models'>('chat');
   const [historyVisible, setHistoryVisible] = useState(false);
   const [usageVisible, setUsageVisible] = useState(false);
@@ -128,12 +130,14 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
     showPage('chat');
   }
   function deleteChat(chat: SavedChat) {
-    Alert.alert('Delete chat?', chat.title, [{ text: 'Keep', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { if (chats.conversation?.id === chat.id) newChat(); void chats.remove(chat.id); } }]);
+    Alert.alert('Delete chat?', chat.title, [{ text: 'Keep', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { if (chats.conversation?.id === chat.id) newChat(); void chats.remove(chat.id).then(() => chatViewports.current.delete(chat.id)); } }]);
   }
-  async function sendMessage() {
-    if (!contextReady || !selected?.connected || !selected.enabled || selected.needsReauth || !selectedModel || !prompt.trim()) return;
+  async function sendMessage(editMessageId?: string) {
+    if (!contextReady || !selected?.connected || !selected.enabled || selected.needsReauth || !selectedModel || !prompt.trim()) return false;
     const message = prompt.trim(); setPrompt('');
-    if (!await chats.send(selected.id, message, attachment)) setPrompt(current => current || message);
+    const sent = await chats.send(selected.id, message, attachment, undefined, false, undefined, editMessageId);
+    if (!sent) setPrompt(current => current || message);
+    return sent;
   }
   function attachCurrent() {
     if (!availableTranscript) return;
@@ -168,11 +172,11 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
         {page === 'chat' ? <>
           {!!contextError && <View style={styles.banner}><Text accessibilityRole="alert" style={styles.help}>{contextError}</Text><Button title="Retry transcript" onPress={() => setContextRetry(value => value + 1)} /></View>}
           {chats.conversation?.providerId && ai.ready && !selected?.connected && <View style={styles.banner}><Text style={styles.help}>Reconnect {chats.conversation.providerLabel} to continue this chat.</Text><Button title="Providers" onPress={() => showPage('providers')} /></View>}
-          <AiChat key={newChatVersion} chat={chats} draft={prompt} onDraftChange={setPrompt} attachment={attachment} availableTranscript={availableTranscript} voiceEnabled={visible && !historyVisible && !usageVisible && !transcriptVisible}
+          <AiChat key={newChatVersion} viewports={chatViewports.current} chat={chats} draft={prompt} onDraftChange={setPrompt} attachment={attachment} availableTranscript={availableTranscript} voiceEnabled={visible && !historyVisible && !usageVisible && !transcriptVisible}
             onBeforeGameAudio={onBeforeGameAudio}
             connected={!!selected?.connected && !!selected?.enabled && !selected?.needsReauth && !!selectedModel && !ai.busy} loading={!ai.ready || !chats.ready || chats.loading || contextLoading} contextReady={contextReady}
             reasoning={reasoningName(chats.reasoningEffort ?? savedReasoning)} providerId={selected?.id} model={selectedModel}
-            onSend={() => { void sendMessage(); }} onRetry={() => { if (contextReady && selected?.connected) void chats.send(selected.id, '', attachment, undefined, true); }}
+            onSend={sendMessage} onRetry={() => { if (contextReady && selected?.connected) void chats.send(selected.id, '', attachment, undefined, true); }}
             onAttach={attachCurrent} onDetach={chatVideoId ? undefined : () => setAttachment(null)} onOpenTranscript={() => { Keyboard.dismiss(); setTranscriptVisible(true); }} onSummarize={summarize} onModels={() => showPage('models')} />
         </> : page === 'models' ? <AiModels ai={ai} selectedId={selected?.id} selectedModel={selectedModel} onSelect={(id, model) => { void choose(id, model); }} onManage={() => showPage('providers')} /> : <AiProviders ai={ai} onUsage={() => { Keyboard.dismiss(); setUsageVisible(true); }} />}
         </View>

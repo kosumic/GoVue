@@ -1,7 +1,6 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, type ReactElement } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import Clipboard from '@react-native-clipboard/clipboard';
-import { ArrowDown, ArrowUp, Brain, Captions, ChevronDown, ChevronRight, Copy, MessageCircle, Mic, Plus, RotateCw, Square, X } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Brain, Captions, Check, ChevronDown, ChevronRight, Copy, MessageCircle, Mic, Pencil, Plus, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats';
 import { AiMarkdown } from './AiMarkdown';
@@ -10,8 +9,26 @@ import { ReasoningActivity, ToolActivity } from './AiActivity';
 import { useVoiceInput } from '../ai/useVoiceInput';
 import { LearningGameCard } from './LearningGameCard';
 import type { GameAction } from '../ai/games';
+import { AiMessageDetails } from './AiMessageDetails';
+import { useCopyFeedback } from './useCopyFeedback';
+import { ChatExpansionContext, useChatViewport, type ChatViewportStore } from './useChatViewport';
 
-const Message = memo(function Message({ message, last, busy, onRetry, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void }) {
+function UserPrompt({ content, onEdit, disabled }: { content: string; onEdit: () => void; disabled: boolean }) {
+  const colors = useThemeColors();
+  const styles = useThemeStyles(makeStyles);
+  const { copied, copyText } = useCopyFeedback();
+  return <View style={styles.userMessage}>
+    <Pressable accessibilityLabel="Copy prompt" onLongPress={() => copyText(content)} style={styles.userBubble}><Text selectable style={styles.userText}>{content}</Text></Pressable>
+    <View style={styles.userActions}>
+    <Pressable accessibilityRole="button" accessibilityLabel="Edit message" disabled={disabled} onPress={onEdit} style={[styles.messageAction, disabled && styles.disabled]}><Pencil size={16} color={colors.muted} /></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={copied ? 'Prompt copied' : 'Copy prompt'} accessibilityLiveRegion="polite" onPress={() => copyText(content)} style={styles.messageAction}>
+      {copied ? <Check size={16} color={colors.action} /> : <Copy size={16} color={colors.muted} />}
+    </Pressable>
+    </View>
+  </View>;
+}
+
+const Message = memo(function Message({ message, last, busy, onRetry, onEdit, editDisabled, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; onEdit: () => void; editDisabled: boolean; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const entrance = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
@@ -26,28 +43,49 @@ const Message = memo(function Message({ message, last, busy, onRetry, reduceMoti
   const gameCard = (game: NonNullable<ChatMessage['games']>[number]) => <LearningGameCard key={game.id} game={game} chatId={chatId} messageId={message.id} active={game.id === activeGameId}
     enabled={gamesEnabled} onActivate={() => onActiveGame(game.id)} onDeactivate={() => onActiveGame(null)} onAction={onGameAction} onBeforeAudio={onBeforeGameAudio} />;
   return <Animated.View style={[styles.message, user && styles.userMessage, { opacity: entrance, transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }] }]}>
-    {user ? <View style={styles.userBubble}><Text selectable style={styles.userText}>{message.content}</Text></View> : <>
+    {user ? <UserPrompt content={message.content} onEdit={onEdit} disabled={editDisabled} /> : <>
       {blocks.length ? blocks.map(block => <View key={block.id}>
         {block.kind === 'text' ? <AiMarkdown content={block.content} streaming={streaming && block.status === 'running'} />
-          : block.kind === 'reasoning' ? <ReasoningActivity content={block.content} active={streaming && block.status === 'running'} />
+          : block.kind === 'reasoning' ? <ReasoningActivity id={`${message.id}:${block.id}`} content={block.content} active={streaming && block.status === 'running'} />
           : <><ToolActivity block={block} messageStatus={message.status} busy={busy} />{message.games?.filter(game => game.id === block.gameId).map(gameCard)}</>}
       </View>) : <>
-        {!!message.reasoning && <ReasoningActivity content={message.reasoning} active={streaming && !message.content} />}
+        {!!message.reasoning && <ReasoningActivity id={`${message.id}:reasoning`} content={message.reasoning} active={streaming && !message.content} />}
         {!!message.content && <AiMarkdown content={message.content} streaming={streaming} />}
       </>}
       {streaming && (blocks.length ? blocks.at(-1)?.kind === 'tool' && !blocks.some(block => block.status === 'preparing' || block.status === 'running') : !message.content && !message.reasoning) && <View accessibilityLiveRegion="polite" style={styles.thinking}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Thinking…</Text></View>}
       {message.games?.filter(game => !linkedGames.has(game.id)).map(gameCard)}
       {message.error && <Text accessibilityRole="alert" style={styles.error}>{message.error}</Text>}
       {message.status === 'stopped' && !message.error && <Text style={styles.muted}>Response stopped</Text>}
-      {message.status !== 'streaming' && <View style={styles.messageActions}>
-        {!!message.content && <Pressable accessibilityRole="button" accessibilityLabel="Copy response" onPress={() => Clipboard.setString(message.content)} style={styles.messageAction}><Copy size={16} color={colors.muted} /></Pressable>}
-        {last && <Pressable accessibilityRole="button" accessibilityLabel={message.status === 'completed' ? 'Regenerate response' : 'Try again'} disabled={busy} onPress={onRetry} style={[styles.messageAction, busy && styles.disabled]}><RotateCw size={16} color={colors.muted} /></Pressable>}
-      </View>}
+      <AiMessageDetails message={message} last={last} busy={busy} onRetry={onRetry} />
     </>}
   </Animated.View>;
 });
 
-export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, onBeforeGameAudio, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
+function ChatThread({ chatId, messages, viewports, jumpRequest, reduceMotion, empty, renderMessage }: {
+  chatId: string; messages: ChatMessage[]; viewports: ChatViewportStore; jumpRequest: number; reduceMotion: boolean;
+  empty: ReactElement; renderMessage: (message: ChatMessage, index: number) => ReactElement;
+}) {
+  const colors = useThemeColors();
+  const styles = useThemeStyles(makeStyles);
+  const viewport = useChatViewport(chatId, messages, viewports);
+  const previousJump = useRef(jumpRequest);
+  useEffect(() => {
+    if (previousJump.current !== jumpRequest) viewport.jumpToLatest();
+    previousJump.current = jumpRequest;
+  }, [jumpRequest, viewport.jumpToLatest]);
+  return <ChatExpansionContext.Provider value={viewport.expansion}>
+    <View collapsable={false} pointerEvents={viewport.ready ? 'auto' : 'none'} accessibilityElementsHidden={!viewport.ready} importantForAccessibility={viewport.ready ? 'auto' : 'no-hide-descendants'} style={[styles.thread, { opacity: viewport.ready ? 1 : 0 }]}>
+      <FlatList ref={viewport.list} data={messages} keyExtractor={m => m.id} {...viewport.listProps}
+        contentContainerStyle={[styles.messages, !messages.length && styles.emptyMessages]}
+        keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" removeClippedSubviews={false}
+        initialNumToRender={10} maxToRenderPerBatch={8} windowSize={7}
+        ListEmptyComponent={empty} renderItem={({ item, index }) => renderMessage(item, index)} />
+      {viewport.showJump && <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => viewport.jumpToLatest(!reduceMotion)} style={styles.jump}><ArrowDown size={20} color={colors.ink} /></Pressable>}
+    </View>
+  </ChatExpansionContext.Provider>;
+}
+
+export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, viewports, onBeforeGameAudio, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
   chat: ChatController;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -57,8 +95,9 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   loading: boolean;
   contextReady?: boolean;
   voiceEnabled?: boolean;
+  viewports?: ChatViewportStore;
   onBeforeGameAudio?: () => Promise<void> | void;
-  onSend: () => void;
+  onSend: (editMessageId?: string) => void | Promise<boolean>;
   onRetry: () => void;
   onAttach: () => void;
   onDetach?: () => void;
@@ -71,47 +110,38 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
 }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
-  const list = useRef<FlatList<ChatMessage>>(null);
   const input = useRef<TextInput>(null);
-  const nearBottom = useRef(true);
-  const frame = useRef<number | null>(null);
-  const [showJump, setShowJump] = useState(false);
+  const localViewports = useRef<ChatViewportStore>(new Map());
+  const [jumpRequest, setJumpRequest] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+  const [editing, setEditing] = useState<{ id: string; originalDraft: string } | null>(null);
   const [activeGameId, setActiveGameId] = useState<string | null>(null);
   const messages = chat.conversation?.messages ?? [];
   const latestGameId = messages.flatMap(message => message.games ?? []).at(-1)?.id ?? null;
   useEffect(() => { setActiveGameId(latestGameId); }, [chat.conversation?.id, latestGameId]);
   const voice = useVoiceInput({ enabled: voiceEnabled && !loading && contextReady, chatId: chat.conversation?.id, transcript: attachment ?? availableTranscript, draft, onDraftChange });
-  function scrollToEnd(animated = false) {
-    nearBottom.current = true; setShowJump(false);
-    list.current?.scrollToEnd({ animated });
-  }
-  function follow() {
-    if (!nearBottom.current || frame.current !== null) return;
-    frame.current = requestAnimationFrame(() => { frame.current = null; if (nearBottom.current) list.current?.scrollToEnd({ animated: false }); });
-  }
   useEffect(() => {
     void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
-    return () => { subscription.remove(); if (frame.current !== null) cancelAnimationFrame(frame.current); };
+    return () => { subscription.remove(); };
   }, []);
-  useEffect(() => { nearBottom.current = true; setShowJump(false); follow(); }, [chat.conversation?.id]);
   useEffect(() => { setShowReasoning(false); }, [chat.conversation?.id, providerId, model]);
-  function send() { nearBottom.current = true; setShowJump(false); setShowReasoning(false); onSend(); }
+  useEffect(() => { setEditing(null); }, [chat.conversation?.id]);
+  function edit(message: ChatMessage) {
+    setEditing(current => ({ id: message.id, originalDraft: current?.originalDraft ?? draft }));
+    onDraftChange(message.content); setShowReasoning(false); input.current?.focus();
+  }
+  function cancelEdit() { if (editing) onDraftChange(editing.originalDraft); setEditing(null); }
+  function send() {
+    setJumpRequest(value => value + 1); setShowReasoning(false);
+    const id = editing?.id;
+    void Promise.resolve(onSend(id)).then(sent => { if (sent !== false) setEditing(current => current?.id === id ? null : current); });
+  }
   const canSend = contextReady && connected && !!draft.trim() && !loading && !chat.settingsBusy && !voice.active;
   return <View style={styles.workspace}>
-    <View style={styles.thread}>
-      <FlatList ref={list} data={messages} keyExtractor={m => m.id} extraData={chat.busy}
-        contentContainerStyle={[styles.messages, !messages.length && styles.emptyMessages]}
-        keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" removeClippedSubviews={false}
-        initialNumToRender={10} maxToRenderPerBatch={8} windowSize={7}
-        onContentSizeChange={follow} onLayout={follow} scrollEventThrottle={32}
-        onScroll={({ nativeEvent: e }) => {
-          const atBottom = e.contentSize.height - e.layoutMeasurement.height - e.contentOffset.y < 90;
-          nearBottom.current = atBottom; setShowJump(!atBottom);
-        }}
-        ListEmptyComponent={loading ? <View style={styles.welcome}><ActivityIndicator color={colors.accent} /></View> : <View style={styles.welcome}>
+    <ChatThread key={chat.conversation?.id ?? 'new'} chatId={chat.conversation?.id ?? 'new'} messages={messages} viewports={viewports ?? localViewports.current} jumpRequest={jumpRequest} reduceMotion={reduceMotion}
+        empty={loading ? <View style={styles.welcome}><ActivityIndicator color={colors.accent} /></View> : <View style={styles.welcome}>
           <Text accessibilityRole="header" style={styles.welcomeTitle}>How can I help?</Text>
           <Text style={styles.welcomeHelp}>{connected ? 'Ask a question or explore a video.' : 'Connect a model to start a conversation.'}</Text>
           {connected ? <View style={styles.suggestions}>
@@ -119,14 +149,16 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
             <Pressable accessibilityRole="button" onPress={() => { voice.changeDraft('Explain this phrase: '); input.current?.focus(); }} style={styles.suggestion}><MessageCircle size={17} color={colors.muted} /><Text style={styles.suggestionText}>Explain a phrase</Text></Pressable>
           </View> : <Pressable accessibilityRole="button" onPress={onModels} style={styles.connect}><Text style={styles.connectText}>Choose a model</Text></Pressable>}
         </View>}
-        renderItem={({ item, index }) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={onRetry} reduceMotion={reduceMotion}
+        renderMessage={(item, index) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={onRetry} onEdit={() => edit(item)} editDisabled={chat.busy || loading || chat.settingsBusy} reduceMotion={reduceMotion}
           chatId={chat.conversation?.id ?? ''} activeGameId={activeGameId} onActiveGame={setActiveGameId} gamesEnabled={voiceEnabled && contextReady && !loading && !voice.active}
           onGameAction={chat.gameAction} onBeforeGameAudio={onBeforeGameAudio} />}
       />
-      {showJump && <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => scrollToEnd(!reduceMotion)} style={styles.jump}><ArrowDown size={20} color={colors.ink} /></Pressable>}
-    </View>
     {!!chat.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{chat.error}</Text>}
     <View style={styles.composerDock}>
+      {editing && <View style={styles.editing}>
+        <View style={styles.attachmentText}><Text style={styles.attachmentTitle}>Editing message</Text><Text style={styles.attachmentHelp}>Sending replaces later messages and replies.</Text></View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Cancel edit" disabled={chat.busy} onPress={cancelEdit} style={styles.messageAction}><X size={17} color={colors.muted} /></Pressable>
+      </View>}
       {attachment && <View style={styles.attachment}>
         <Pressable accessibilityRole="button" accessibilityLabel={`Open ${attachment.language} transcript`} accessibilityHint="Read the captions used as AI context" onPress={onOpenTranscript} style={styles.attachmentLink}>
           <Captions size={17} color={colors.accent} /><View style={styles.attachmentText}><Text numberOfLines={1} style={styles.attachmentTitle}>{attachment.title}</Text><Text style={styles.attachmentHelp}>{attachment.language} transcript · AI context</Text></View><ChevronRight size={16} color={colors.muted} />
@@ -146,7 +178,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
             disabled={voice.disabled} onPress={() => { input.current?.blur(); voice.toggle(); }} style={[styles.attachButton, voice.active && styles.voiceActive, voice.disabled && styles.disabled]}>
             {voice.phase === 'preparing' || voice.phase === 'finishing' ? <ActivityIndicator size="small" color={colors.accent} /> : voice.active ? <Square size={18} fill={colors.accent} color={colors.accent} /> : <Mic size={22} color={colors.ink} />}
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel={chat.busy ? 'Stop response' : 'Send message'} disabled={!chat.busy && !canSend}
+          <Pressable accessibilityRole="button" accessibilityLabel={chat.busy ? 'Stop response' : editing ? 'Send edited message' : 'Send message'} disabled={!chat.busy && !canSend}
             onPress={chat.busy ? chat.stop : send} style={({ pressed }) => [styles.send, (!chat.busy && !canSend || pressed) && styles.disabled]}>
             {chat.busy ? <Square size={16} fill={colors.surface} color={colors.surface} /> : <ArrowUp size={22} strokeWidth={2.3} color={colors.surface} />}
           </Pressable>
@@ -164,8 +196,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   message: { width: '100%' }, userMessage: { alignItems: 'flex-end' },
   userBubble: { maxWidth: '88%', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 24, backgroundColor: colors.raised },
   userText: { color: colors.ink, fontSize: 16, lineHeight: 25 },
+  userActions: { flexDirection: 'row', alignSelf: 'flex-end' }, editing: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.action },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 32 }, muted: { fontSize: 13, color: colors.muted, lineHeight: 20 },
-  messageActions: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, marginLeft: -10 }, messageAction: { minWidth: 44, minHeight: 44, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, actionText: { color: colors.muted, fontSize: 12 },
+  messageAction: { minWidth: 44, minHeight: 44, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, actionText: { color: colors.muted, fontSize: 12 },
   error: { color: colors.error, fontSize: 13, lineHeight: 20, marginTop: 8 }, composerError: { paddingHorizontal: 20, paddingBottom: 8 },
   welcome: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 28, gap: 16 },
   welcomeTitle: { color: colors.ink, fontSize: 28, fontWeight: '600', letterSpacing: -0.7 }, welcomeHelp: { color: colors.muted, fontSize: 14, lineHeight: 22, textAlign: 'center', maxWidth: 260 },
@@ -180,5 +213,5 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   voiceActive: { backgroundColor: colors.accentSoft, borderRadius: 22 }, voiceStatus: { color: colors.accent, fontSize: 12, paddingHorizontal: 18, paddingTop: 6, paddingBottom: 7 },
   voicePreview: { color: colors.muted, fontSize: 15, lineHeight: 22, paddingHorizontal: 18, paddingBottom: 10 },
   attachment: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, backgroundColor: colors.accentSoft }, attachmentLink: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, minHeight: 56 }, attachmentText: { flex: 1, paddingVertical: 9, gap: 2 }, attachmentTitle: { color: colors.ink, fontSize: 12, fontWeight: '500' }, attachmentHelp: { color: colors.muted, fontSize: 10 },
-  jump: { position: 'absolute', alignSelf: 'center', bottom: 8, width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' }, disabled: { opacity: 0.38 },
+  jump: { position: 'absolute', alignSelf: 'center', bottom: 12, width: 44, height: 44, borderRadius: 22, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center', elevation: 4, boxShadow: '0 2px 8px #00000026' }, disabled: { opacity: 0.38 },
 });

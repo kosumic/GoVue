@@ -1,6 +1,7 @@
 import { Alert, Linking, Platform } from 'react-native';
 import { EnrichedMarkdownText, type MarkdownStyle } from 'react-native-enriched-markdown';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
+import { useHaptic } from '../player/Haptics';
 
 const mono = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
 const makeMarkdownStyle = (colors: ThemeColors): MarkdownStyle => ({
@@ -43,8 +44,9 @@ function openLink({ url }: { url: string }) {
 export function AiMarkdown({ content, streaming = false }: { content: string; streaming?: boolean }) {
   const colors = useThemeColors();
   const markdownStyle = useThemeStyles(makeMarkdownStyle);
+  const copyFeedback = useHaptic();
   return <EnrichedMarkdownText markdown={content} markdownStyle={markdownStyle} md4cFlags={md4cFlags} flavor="github"
     selectable allowFontScaling allowTrailingMargin={false} enableLinkPreview={false} enableTaskListItemToggle={false}
-    onLinkPress={openLink} selectionColor="#2F624740" selectionHandleColor={colors.accent}
+    onLinkPress={openLink} onCopyPress={copyFeedback} selectionColor="#2F624740" selectionHandleColor={colors.accent}
     streamingAnimation={streaming} streamingConfig={streaming ? streamingConfig : undefined} />;
 }

@@ -1,16 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Brain, Check, ChevronDown, ChevronRight, CircleAlert, Gamepad2, Square } from 'lucide-react-native';
 import type { ChatBlock } from '../ai/useChats';
 import { PlayerSheet } from '../player/PlayerSheet';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { AiMarkdown } from './AiMarkdown';
+import { useChatExpansion } from './useChatViewport';
 
-export function ReasoningActivity({ content, active }: { content: string; active: boolean }) {
+export function ReasoningActivity({ content, active, id = 'reasoning' }: { content: string; active: boolean; id?: string }) {
   const colors = useThemeColors();
   const s = useThemeStyles(makeStyles);
-  const [expanded, setExpanded] = useState(false);
-  useEffect(() => { if (!active) setExpanded(false); }, [active]);
+  const [expanded, setExpanded] = useChatExpansion(id);
+  const wasActive = useRef(active);
+  useEffect(() => { if (wasActive.current && !active) setExpanded(false); wasActive.current = active; }, [active, setExpanded]);
   return <View style={s.reasoning}>
     <Pressable accessibilityRole="button" accessibilityLabel={active ? 'Thinking' : 'Reasoning'} accessibilityState={{ expanded }} onPress={() => setExpanded(!expanded)} style={s.reasoningHeader}>
       {active ? <ActivityIndicator size="small" color={colors.muted} /> : <Brain size={16} color={colors.muted} />}

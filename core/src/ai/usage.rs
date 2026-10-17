@@ -27,6 +27,65 @@ pub(super) fn valid(value: &Value) -> bool {
         })
 }
 
+/// Derived display data; kept out of the persisted provider accounting fields.
+pub(super) fn details(value: &Value) -> Value {
+    let input = count(&value["inputTokens"]);
+    let output = count(&value["outputTokens"]);
+    let read = count(&value["cacheReadTokens"]);
+    let ratio = input
+        .zip(read)
+        .filter(|(input, read)| *input > 0 && read <= input)
+        .map(|(input, read)| read as f64 / input as f64);
+    let total = input
+        .zip(output)
+        .and_then(|(input, output)| input.checked_add(output))
+        .filter(|total| *total <= MAX_COUNT);
+    let speed = output
+        .zip(count(&value["streamMs"]))
+        .filter(|(_, ms)| *ms > 0)
+        .map(|(output, ms)| output as f64 * 1000.0 / ms as f64);
+    json!({"totalTokens":total,"cacheStatus":match ratio {
+        Some(value) if value > 0.0 => "hit", Some(_) => "miss", None => "unknown",
+    },"cacheHitRate":ratio.map(|value| value * 100.0),"outputTokensPerSecond":speed})
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+
+    #[test]
+    fn derived_details_include_subsets_once_and_leave_missing_counts_unknown() {
+        let reported = details(
+            &json!({"inputTokens":100,"outputTokens":20,"cacheReadTokens":40,"cacheCreationTokens":10,"reasoningTokens":5,"streamMs":2000}),
+        );
+        assert_eq!(
+            reported,
+            json!({"totalTokens":120,"cacheStatus":"hit","cacheHitRate":40.0,"outputTokensPerSecond":10.0})
+        );
+        assert_eq!(
+            details(&json!({"inputTokens":100,"cacheReadTokens":0}))["cacheStatus"],
+            "miss"
+        );
+        for usage in [
+            Value::Null,
+            json!({}),
+            json!({"inputTokens":100}),
+            json!({"outputTokens":20,"streamMs":0}),
+            json!({"inputTokens":100,"cacheReadTokens":101}),
+            json!({"inputTokens":0,"cacheReadTokens":0}),
+        ] {
+            let derived = details(&usage);
+            assert!(derived["totalTokens"].is_null());
+            assert_eq!(derived["cacheStatus"], "unknown");
+            assert!(derived["cacheHitRate"].is_null());
+            assert!(derived["outputTokensPerSecond"].is_null());
+        }
+        assert!(
+            details(&json!({"inputTokens":MAX_COUNT,"outputTokens":1}))["totalTokens"].is_null()
+        );
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Counter {
     input: Option<u64>,

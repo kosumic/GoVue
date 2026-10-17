@@ -31,6 +31,9 @@ struct Message {
     reasoning: String,
     #[serde(default)]
     usage: Value,
+    // Projected histories can be replayed; derived counts are always recomputed.
+    #[serde(default, rename = "usageDetails", skip_serializing)]
+    _usage_details: serde::de::IgnoredAny,
     #[serde(default)]
     model: String,
     #[serde(default)]
@@ -65,6 +68,14 @@ struct Conversation {
     active_task: Option<String>,
     #[serde(default)]
     reasoning_effort: Option<String>,
+}
+
+fn presentation(chat: &Conversation) -> Result<Value> {
+    let mut value = serde_json::to_value(chat).map_err(|_| "Could not open this chat.")?;
+    for message in value["messages"].as_array_mut().unwrap() {
+        message["usageDetails"] = usage::details(&message["usage"]);
+    }
+    Ok(value)
 }
 fn path(root: &Path, id: &str) -> Result<PathBuf> {
     if !valid_id(id) {
@@ -410,7 +421,7 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
     chat.active_task = None;
     chat.updated_at = now();
     save(root, &chat)?;
-    Ok(json!({"conversation":chat}))
+    Ok(json!({"conversation":presentation(&chat)?}))
 }
 pub(super) fn interrupt(job: &Arc<Job>) -> Result<()> {
     if let Some((root, id)) = job.conversation.get() {
@@ -631,6 +642,22 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         chat.reasoning_effort = parse_reasoning(value)?;
     }
     let retry = c["retry"] == true;
+    let edit = c
+        .get("editMessageId")
+        .map(|value| {
+            let id = value
+                .as_str()
+                .filter(|id| valid_id(id))
+                .ok_or("Invalid message to edit.")?;
+            if retry || existing.is_none() {
+                return Err("Choose an existing user message to edit.");
+            }
+            chat.messages
+                .iter()
+                .position(|message| message.id == id && message.role == "user")
+                .ok_or("This message is no longer available to edit.")
+        })
+        .transpose()?;
     let prompt = if retry {
         chat.messages
             .iter()
@@ -646,7 +673,13 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
     if prompt.is_empty() || prompt.len() > 16_000 {
         return Err("Enter a message of up to 16,000 bytes.".into());
     }
-    if retry {
+    let edited_id = edit.map(|index| chat.messages[index].id.clone());
+    if let Some(index) = edit {
+        chat.messages.truncate(index);
+        if index == 0 && chat.video_id.is_none() {
+            chat.title.clear();
+        }
+    } else if retry {
         chat.messages.pop();
         chat.messages.pop();
     }
@@ -743,7 +776,10 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         };
     }
     chat.messages.push(Message {
-        id: random()?,
+        id: match edited_id {
+            Some(id) => id,
+            None => random()?,
+        },
         role: "user".into(),
         content: prompt,
         games: Vec::new(),
@@ -752,6 +788,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         error: None,
         reasoning: String::new(),
         usage: Value::Null,
+        _usage_details: Default::default(),
         model: String::new(),
         provider_label: String::new(),
         reasoning_effort: String::new(),
@@ -771,6 +808,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         error: None,
         reasoning: String::new(),
         usage: Value::Null,
+        _usage_details: Default::default(),
         model: String::new(),
         provider_label: String::new(),
         reasoning_effort: String::new(),
@@ -801,7 +839,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
             Err(e) => saved.and(Err(e)),
         });
     });
-    Ok(json!({"taskId":job.id,"conversation":chat}))
+    Ok(json!({"taskId":job.id,"conversation":presentation(&chat)?}))
 }
 fn usage_report(command: &Value, root: &Path) -> Result<Value> {
     let selected = command
@@ -971,8 +1009,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         "ai_chats" => Ok(
             json!({"chats":visible_chats(&root)?.iter().map(|chat| json!({"id":chat.id,"videoId":chat.video_id.as_ref().or_else(|| chat.transcript.as_ref().map(|t| &t.video_id)),"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title)})).collect::<Vec<_>>()}),
         ),
-        "ai_chat_video_open" => serde_json::to_value(open_video(&root, &c)?)
-            .map_err(|_| "Could not open this video's chat.".into()),
+        "ai_chat_video_open" => presentation(&open_video(&root, &c)?),
         "ai_chat_model" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;
             recover(&root, &mut chat)?;
@@ -984,12 +1021,12 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             chat.provider_label = selected.label;
             chat.model = selected.model;
             save(&root, &chat)?;
-            serde_json::to_value(chat).map_err(|_| "Could not update this chat.".into())
+            presentation(&chat)
         }
         "ai_chat_get" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;
             recover(&root, &mut chat)?;
-            Ok(serde_json::to_value(chat).map_err(|_| "Could not open this chat.")?)
+            presentation(&chat)
         }
         "ai_chat_reasoning" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;
@@ -997,7 +1034,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             // Running requests own their wire settings; this preference affects the next turn.
             chat.reasoning_effort = parse_reasoning(&c["reasoningEffort"])?;
             save(&root, &chat)?;
-            Ok(serde_json::to_value(chat).map_err(|_| "Could not update this chat.")?)
+            presentation(&chat)
         }
         "ai_chat_delete" => {
             let id = string(&c, "chatId")?;

@@ -11,7 +11,7 @@ const noop = () => {};
 const colors = new Proxy({}, { get: () => '#777777' });
 const bundled = await build({ entryPoints: ['src/components/LearningGameCard.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
   plugins: [{ name: 'game-surface', setup(builder) {
-    builder.onResolve({ filter: /^(react-native|react-native-safe-area-context|react-native-webview|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|useGameAudio|lingoplay-core)$/ }, args => ({
+    builder.onResolve({ filter: /^(react-native|react-native-safe-area-context|react-native-webview|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|useGameAudio|lingoplay-core|Haptics)$/ }, args => ({
       path: `mock:${args.path.split('/').at(-1)}`, external: true,
     }));
   } }],
@@ -19,7 +19,7 @@ const bundled = await build({ entryPoints: ['src/components/LearningGameCard.tsx
 
 async function surface(t, { active = true, exportError = '' } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const actions = [], injections = [], exports = [], clipboard = [];
+  const actions = [], injections = [], exports = [], clipboard = [], haptics = [];
   const exported = JSON.stringify({ format: 'lingoplay-game', version: 1, definition: { title: 'Greeting' }, source: null, cues: [] });
   const mocks = {
     'react-native': {
@@ -36,6 +36,7 @@ async function surface(t, { active = true, exportError = '' } = {}) {
     'lucide-react-native': new Proxy({}, { get: (_, name) => props => h(`Icon${String(name)}`, props) }),
     theme: { useThemeColors: () => colors, useThemeStyles: factory => factory(colors) },
     useGameAudio: { useGameAudio: () => ({ phase: 'idle', stop: noop, play: async () => {} }) },
+    Haptics: { useHaptic: () => () => haptics.push('copy') },
     clipboard: { setString: text => clipboard.push(text) },
     'lingoplay-core': { aiRequest: async command => {
       exports.push(command);
@@ -60,7 +61,7 @@ async function surface(t, { active = true, exportError = '' } = {}) {
   const post = (url, request, hostSession = session) => act(async () => view().props.onMessage({ nativeEvent: {
     url, data: JSON.stringify({ session: hostSession, request: { v: 1, ...request } }),
   } }));
-  return { root, session, actions, injections, post, exports, clipboard, exported,
+  return { root, session, actions, injections, post, exports, clipboard, exported, haptics,
     button: label => root.root.findByProps({ accessibilityLabel: label }),
     labels: () => root.root.findAllByType('Text').map(node => node.children.join('')) };
 }
@@ -103,6 +104,7 @@ for (const active of [false, true]) {
     await act(async () => env.button('Copy game').props.onPress());
     assert.deepEqual(env.exports, [{ op: 'ai_game_export', chatId: 'chat', messageId: 'reply', gameId: 'game' }]);
     assert.deepEqual(env.clipboard, [env.exported]);
+    assert.deepEqual(env.haptics, ['copy']);
     assert.ok(env.button('Game copied'));
     await act(async () => t.mock.timers.tick(2000));
     assert.ok(env.button('Copy game'));
@@ -113,6 +115,7 @@ test('failed game export leaves the clipboard untouched and offers retry', async
   const env = await surface(t, { active: false, exportError: 'This game is no longer available.' });
   await act(async () => env.button('Copy game').props.onPress());
   assert.deepEqual(env.clipboard, []);
+  assert.deepEqual(env.haptics, []);
   assert.ok(env.labels().includes('This game is no longer available.'));
   assert.equal(env.button('Copy game').props.disabled, false);
 });

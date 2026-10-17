@@ -10,6 +10,7 @@ globalThis.requestAnimationFrame = callback => setImmediate(callback);
 globalThis.cancelAnimationFrame = clearImmediate;
 const require = createRequire(import.meta.url);
 const noop = () => {};
+const copiedTexts = [], hapticEvents = [];
 const colors = new Proxy({}, { get: () => '#777777' });
 const native = {
   View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ScrollView: 'ScrollView', ActivityIndicator: 'ActivityIndicator',
@@ -25,17 +26,19 @@ const native = {
 const mocks = {
   'react-native': native,
   'lucide-react-native': new Proxy({}, { get: (_, name) => props => h(`Icon${String(name)}`, props) }),
-  '@react-native-clipboard/clipboard': { setString: noop },
+  '@react-native-clipboard/clipboard': { setString: value => copiedTexts.push(value) },
   theme: { useThemeColors: () => colors, useThemeStyles: factory => factory(colors) },
   AiMarkdown: { AiMarkdown: props => h('Markdown', props) },
   AiReasoning: { AiReasoning: () => null },
   LearningGameCard: { LearningGameCard: props => h('GameCard', { gameId: props.game.id, active: props.active, enabled: props.enabled, onActivate: props.onActivate, onDeactivate: props.onDeactivate }) },
-  useVoiceInput: { useVoiceInput: () => ({ active: false, disabled: true, phase: 'idle', interimText: '', changeDraft: noop, toggle: noop }) },
+  useVoiceInput: { useVoiceInput: ({ onDraftChange }) => ({ active: false, disabled: true, phase: 'idle', interimText: '', changeDraft: onDraftChange, toggle: noop }) },
   PlayerSheet: { PlayerSheet: ({ visible, children, title }) => visible ? h('Sheet', { title }, children) : null },
+  Haptics: { useHaptic: () => () => hapticEvents.push('copy') },
+  'lingoplay-core': { aiRequest: noop },
 };
 const bundled = await build({ entryPoints: ['src/components/AiChat.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
   plugins: [{ name: 'activity-ui', setup(builder) {
-    builder.onResolve({ filter: /^(react-native|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|AiMarkdown|AiReasoning|LearningGameCard|useVoiceInput|PlayerSheet)$/ }, args => {
+    builder.onResolve({ filter: /^(react-native|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|AiMarkdown|AiReasoning|LearningGameCard|useVoiceInput|PlayerSheet|Haptics|lingoplay-core)$/ }, args => {
       const key = mocks[args.path] ? args.path : args.path.split('/').at(-1);
       return { path: `mock:${key}`, external: true };
     });
@@ -131,4 +134,58 @@ test('the latest game opens automatically, stays closed on text updates, and yie
   assert.deepEqual(active(), ['new-game'], 'only one game surface is selected');
   await show([old], 'another-chat');
   assert.deepEqual(active(), ['old-game'], 'changing conversations selects that chat’s latest game');
+});
+
+test('copy confirms success with a haptic and resets its checkmark timer on repeat', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  copiedTexts.length = 0; hapticEvents.length = 0;
+  const { root } = await render(t, { ...reply(undefined), games: [] });
+  await act(async () => root.root.findByProps({ accessibilityLabel: 'Copy response' }).props.onPress());
+  assert.deepEqual(copiedTexts, ['BeforeAfter']);
+  assert.deepEqual(hapticEvents, ['copy']);
+  await act(async () => t.mock.timers.tick(1000));
+  await act(async () => root.root.findByProps({ accessibilityLabel: 'Response copied' }).props.onPress());
+  await act(async () => t.mock.timers.tick(1000));
+  assert.ok(root.root.findByProps({ accessibilityLabel: 'Response copied' }));
+  await act(async () => t.mock.timers.tick(500));
+  assert.ok(root.root.findByProps({ accessibilityLabel: 'Copy response' }));
+  assert.equal(hapticEvents.length, 2);
+});
+
+test('editing loads the original prompt, cancel restores the draft, and failed sends keep the edit', async t => {
+  const message = { id: 'original', role: 'user', content: 'Original prompt', status: 'completed' };
+  const sends = [];
+  let accepted = false, root;
+  function Editor() {
+    const [draft, onDraftChange] = React.useState('Unsent draft');
+    return h(AiChat, { ...props(message), draft, onDraftChange, onSend: async id => { sends.push({ id, draft }); return accepted; } });
+  }
+  await act(async () => { root = create(h(Editor)); });
+  t.after(() => act(async () => root.unmount()));
+  const press = label => act(async () => root.root.findByProps({ accessibilityLabel: label }).props.onPress());
+  const input = () => root.root.findByType('TextInput');
+  await press('Edit message');
+  assert.equal(input().props.value, 'Original prompt');
+  assert.ok(labels(root).includes('Sending replaces later messages and replies.'));
+  await press('Cancel edit');
+  assert.equal(input().props.value, 'Unsent draft');
+  await press('Edit message');
+  await act(async () => input().props.onChangeText('Revised prompt'));
+  await press('Send edited message');
+  assert.deepEqual(sends, [{ id: 'original', draft: 'Revised prompt' }]);
+  assert.ok(root.root.findByProps({ accessibilityLabel: 'Cancel edit' }));
+  accepted = true;
+  await press('Send edited message');
+  assert.equal(root.root.findAllByProps({ accessibilityLabel: 'Cancel edit' }).length, 0);
+});
+
+test('response details show reported counts and preserve unknown usage', async t => {
+  const { root, update } = await render(t, { ...reply(undefined), games: [], model: 'saved-model', providerLabel: 'saved-provider', usage: { inputTokens: 100, outputTokens: 20, reasoningTokens: 5, cacheReadTokens: 40 }, usageDetails: { totalTokens: 120, cacheStatus: 'hit', cacheHitRate: 40, outputTokensPerSecond: 10 } });
+  assert.ok(labels(root).some(label => label.includes('120 tokens')));
+  await act(async () => root.root.findByProps({ accessibilityLabel: 'Response details' }).props.onPress());
+  for (const label of ['saved-model', 'saved-provider', 'Input (including cache)', 'Reasoning (included in output)', '120', 'Cache hit · 40%', '10.0 tok/s']) assert.ok(labels(root).includes(label), label);
+  await update({ ...reply(undefined), games: [] }, false);
+  assert.ok(labels(root).some(label => label.includes('Usage not reported')));
+  assert.ok(labels(root).includes('Cache unknown'));
+  assert.equal(labels(root).includes('Total tokens'), false, 'unreported usage is not zero');
 });
