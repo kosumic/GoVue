@@ -448,6 +448,27 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
             false,
             "a retried submit must not trigger another model turn"
         );
+        let export = json!({"op":"ai_game_export","chatId":chat["id"],"messageId":reply["id"],"gameId":game["id"]});
+        let copied = ok(root, export.clone());
+        let copied: Value = serde_json::from_str(copied["text"].as_str().unwrap()).unwrap();
+        assert_eq!(copied["format"], "lingoplay-game");
+        assert_eq!(copied["version"], 1);
+        assert_eq!(copied["definition"], definition());
+        assert_eq!(copied["cues"], json!([]));
+        assert!(copied["source"].is_null());
+        assert_eq!(copied.as_object().unwrap().len(), 5);
+        let fresh_rules: Value =
+            serde_json::from_str(copied["definition"]["rules"].as_str().unwrap()).unwrap();
+        assert_eq!(fresh_rules["initialState"]["round"], 0);
+        assert_eq!(checked["game"]["state"]["round"], 1);
+        for private in [&chat["id"], &game["id"], &json!(id)] {
+            assert!(!copied.to_string().contains(private.as_str().unwrap()));
+        }
+        for field in ["messageId", "gameId"] {
+            let mut missing = export.clone();
+            missing[field] = json!("missing");
+            assert_eq!(call(root, missing)["ok"], false);
+        }
         backend.answer_only.store(true, Ordering::SeqCst);
         let next = ok(
             root,
@@ -465,6 +486,10 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
         assert_eq!(
             restored["messages"][1]["games"][0]["state"]["correct"],
             true
+        );
+        assert_eq!(
+            restored["messages"][1]["games"][0], checked["game"],
+            "copying must not change progress or activity"
         );
         assert!(
             ranges.0.lock().unwrap().is_empty(),
@@ -606,4 +631,17 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
                 .contains("PRIVATE_SIGNED_AUDIO")
         );
     }
+    // Reuse needs the original captions and video, not an expiring media URL.
+    let exported = ok(
+        root,
+        json!({"op":"ai_game_export","chatId":chat["id"],"messageId":reply["id"],"gameId":reply["games"][0]["id"]}),
+    );
+    let text = exported["text"].as_str().unwrap();
+    let copied: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(copied["source"]["videoId"], video);
+    assert_eq!(copied["source"]["trackId"], ".en");
+    assert_eq!(copied["cues"], reply["games"][0]["cues"]);
+    assert_eq!(copied["cues"][0]["text"], "Spoken words from the video");
+    assert_eq!(copied["cues"][0]["start"], 12.5);
+    assert!(!text.contains("PRIVATE_SIGNED_AUDIO"));
 }

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Expand, Minimize2, Play, RotateCw, Square, X } from 'lucide-react-native';
+import { Check, Copy, Expand, Minimize2, Play, RotateCw, Square, X } from 'lucide-react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import WebView from 'react-native-webview';
+import { aiRequest } from '../../modules/lingoplay-core';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { gameDocument, scriptJSON } from '../ai/gameRuntime';
 import { useGameAudio } from '../ai/useGameAudio';
@@ -116,14 +118,40 @@ export function LearningGameCard(props: Props) {
   const [expanded, setExpanded] = useState(false);
   const [reload, setReload] = useState(0);
   const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied'>('idle');
+  const [copyError, setCopyError] = useState('');
+  const mounted = useRef(true);
   useEffect(() => {
+    mounted.current = true;
     const subscription = AppState.addEventListener('change', state => setForeground(state === 'active'));
-    return () => subscription.remove();
+    return () => { mounted.current = false; subscription.remove(); };
   }, []);
+  useEffect(() => {
+    if (copyState !== 'copied') return;
+    const timer = setTimeout(() => setCopyState('idle'), 2000);
+    return () => clearTimeout(timer);
+  }, [copyState]);
+  async function copyGame() {
+    setCopyState('copying'); setCopyError('');
+    try {
+      const { text } = await aiRequest<{ text: string }>({ op: 'ai_game_export', chatId: props.chatId, messageId: props.messageId, gameId: props.game.id });
+      if (!mounted.current) return;
+      Clipboard.setString(text);
+      setCopyState('copied');
+    } catch (error) {
+      if (mounted.current) {
+        setCopyState('idle');
+        setCopyError(error instanceof Error ? error.message : 'Could not copy this game.');
+      }
+    }
+  }
   const active = props.active && props.enabled && foreground;
   useEffect(() => { if (!active) setExpanded(false); }, [active]);
   const controls = <View style={styles.controls}>
     <Text accessibilityRole="header" style={styles.title}>{props.game.definition.title}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={copyState === 'copied' ? 'Game copied' : 'Copy game'} disabled={copyState === 'copying'} onPress={() => void copyGame()} style={styles.control}>
+      {copyState === 'copying' ? <ActivityIndicator size="small" color={colors.muted} /> : copyState === 'copied' ? <Check size={17} color={colors.accent} /> : <Copy size={17} color={colors.muted} />}
+    </Pressable>
     {active && <>
       <Pressable accessibilityRole="button" accessibilityLabel="Reload game" onPress={() => setReload(value => value + 1)} style={styles.control}><RotateCw size={17} color={colors.muted} /></Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel={expanded ? 'Collapse game' : 'Expand game'} onPress={() => setExpanded(!expanded)} style={styles.control}>{expanded ? <Minimize2 size={17} color={colors.muted} /> : <Expand size={17} color={colors.muted} />}</Pressable>
@@ -132,11 +160,12 @@ export function LearningGameCard(props: Props) {
   </View>;
   return <View style={styles.card}>
     {controls}
+    {!!copyError && <Text accessibilityRole="alert" style={styles.error}>{copyError}</Text>}
     {active && !expanded ? <GameSurface key={`${props.game.id}-${reload}`} {...props} expanded={false} /> : <Pressable accessibilityRole="button" disabled={!props.enabled} onPress={props.onActivate} style={styles.open}>
       <Play size={18} color={colors.accent} /><Text style={styles.openText}>{props.game.revision ? 'Continue game' : 'Play game'}</Text>
     </Pressable>}
     <Modal visible={active && expanded} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setExpanded(false)}>
-      <SafeAreaView style={styles.fullscreen}>{controls}{active && expanded && <GameSurface key={`${props.game.id}-${reload}-expanded`} {...props} expanded />}</SafeAreaView>
+      <SafeAreaView style={styles.fullscreen}>{controls}{!!copyError && <Text accessibilityRole="alert" style={styles.error}>{copyError}</Text>}{active && expanded && <GameSurface key={`${props.game.id}-${reload}-expanded`} {...props} expanded />}</SafeAreaView>
     </Modal>
   </View>;
 }

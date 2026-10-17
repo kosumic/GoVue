@@ -477,6 +477,30 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     Ok(result)
 }
 
+fn game_export(c: &Value, root: &Path) -> Result<Value> {
+    let chat = read(root, string(c, "chatId")?)?;
+    let game = chat
+        .messages
+        .iter()
+        .filter(|m| m.id == c["messageId"])
+        .flat_map(|m| &m.games)
+        .find(|g| g.id == c["gameId"])
+        .ok_or("This game is no longer available.")?;
+    let source = chat
+        .transcript
+        .as_ref()
+        .map(|reference| json!(reference))
+        .or_else(|| chat.video_id.as_ref().map(|id| json!({"videoId":id})));
+    // Export the original recipe and frozen captions, never play history or
+    // conversation/provider identities. A reused game starts from its rules.
+    let text = serde_json::to_string_pretty(&json!({
+        "format":"lingoplay-game", "version":1,
+        "definition":game.definition, "source":source, "cues":game.cues,
+    }))
+    .map_err(|_| "Could not copy this game.")?;
+    Ok(json!({"text":text}))
+}
+
 fn game_action(c: &Value, root: &Path) -> Result<Value> {
     let mut chat = read(root, string(c, "chatId")?)?;
     let message = chat
@@ -941,6 +965,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
     match string(&c, "op")? {
         "ai_game_action" => game_action(&c, &root),
+        "ai_game_export" => game_export(&c, &root),
         "ai_chat_speech_hints" => speech_hints(&c, &root),
         "ai_usage" => usage_report(&c, &root),
         "ai_chats" => Ok(
