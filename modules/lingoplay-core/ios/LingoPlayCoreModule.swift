@@ -134,6 +134,7 @@ public final class LingoPlayCoreModule: Module {
       installExtractionHttp(backend: NativeExtractionHttp())
       installAiPlatform(platform: NativeAiPlatform())
     }
+    Function("dictation") { (request: String) -> String in dictationExecute(request: request) }
     AsyncFunction("ai") { (request: String) -> String in
       let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("LingoPlay/transcripts", isDirectory: true)

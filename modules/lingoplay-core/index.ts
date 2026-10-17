@@ -3,6 +3,7 @@ import { requireNativeModule } from 'expo';
 const native = requireNativeModule<{
   execute(request: string): Promise<string>;
   ai(request: string): Promise<string>;
+  dictation?(request: string): string;
   mux(video: string, audio: string, output: string): Promise<string>;
   supportedMediaFormats?(formats: string): Promise<string>;
   getSystemVolume?(): Promise<number>;
@@ -36,6 +37,13 @@ const native = requireNativeModule<{
     begin: boolean,
   ): boolean;
 }>('LingoPlayCore');
+
+export function dictationRequest<T>(command: Record<string, unknown>): T {
+  if (!native.dictation) throw Error('Install an updated LingoPlay build to use voice input.');
+  const reply = JSON.parse(native.dictation(JSON.stringify(command)));
+  if (reply?.ok !== true) throw Error(reply?.error || 'Could not update voice input.');
+  return reply.value as T;
+}
 
 // Android async atrace slices are collected by Perfetto. Other platforms and
 // older development clients can keep using the same transcript loading code.
