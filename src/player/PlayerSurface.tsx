@@ -761,7 +761,11 @@ export function PlayerSurface({
         allowsPictureInPicture={session.pipControls.available}
         startsPictureInPictureAutomatically={session.pipControls.autoEnter}
         onPictureInPictureStart={() => session.setPip(true)}
-        onPictureInPictureStop={() => session.setPip(false)}
+        onPictureInPictureStop={() => {
+          session.setPip(false);
+          // Re-read the page slot after the window has returned to the app.
+          requestAnimationFrame(media.refreshPlayerLayout);
+        }}
       />
       {bottomChrome.probe}
       <Pressable

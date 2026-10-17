@@ -444,6 +444,11 @@ export function useMediaBrowser(
     if (identity.current && (playbackRef.current || preparation.current))
       inject(mediaNativeScript(identity.current, true));
   }
+  function refreshPlayerLayout() {
+    const owner = playbackRef.current;
+    if (owner && !owner.offline && owner.videoId === identity.current)
+      inject(mediaNativeScript(owner.videoId, true));
+  }
   function updateSettings(changes: Partial<MediaSettings>) {
     const next = { ...settingsRef.current, ...changes };
     settingsRef.current = next;
@@ -975,6 +980,7 @@ export function useMediaBrowser(
     playback,
     preparing,
     playerLayout,
+    refreshPlayerLayout,
     player,
     cast,
     getPosition,
