@@ -1,8 +1,9 @@
 import { coreRequest } from '../../modules/lingoplay-core';
-import type { Segment, Transcript, TranscriptReply } from '../youtube/transcript';
+import type { Segment, Transcript } from '../youtube/transcript';
+import { extract } from './extraction';
 
-export function acceptTranscript(raw: string, origin: string, requestId: string, videoId: string) {
-  return coreRequest<TranscriptReply>({ op: 'accept', raw, origin, requestId, videoId });
+export function extractTranscript(videoId: string, trackId = 'default', signal?: AbortSignal, fresh = false) {
+  return extract<Transcript>('transcript', videoId, { trackId, signal, fresh });
 }
 
 export function restoreTranscript(videoId: string) {

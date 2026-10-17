@@ -7,6 +7,7 @@ final class BoundedHttp: NSObject, URLSessionDataDelegate, @unchecked Sendable {
   private let limit: Int
   private let destination: URL?
   private let completion: (Int, Data, String?) -> Void
+  private let responseHeaders: ((HTTPURLResponse) -> Void)?
   private var file: FileHandle?
   private var body = Data()
   private var received = 0
@@ -16,10 +17,12 @@ final class BoundedHttp: NSObject, URLSessionDataDelegate, @unchecked Sendable {
   private var rejectedResponse = false
 
   init(request: URLRequest, limit: Int, destination: URL? = nil, timeout: TimeInterval = 15,
+       responseHeaders: ((HTTPURLResponse) -> Void)? = nil,
        completion: @escaping (Int, Data, String?) -> Void) {
     self.limit = limit
     self.destination = destination
     self.completion = completion
+    self.responseHeaders = responseHeaders
     super.init()
     let configuration = URLSessionConfiguration.ephemeral
     configuration.httpCookieStorage = nil
@@ -57,6 +60,7 @@ final class BoundedHttp: NSObject, URLSessionDataDelegate, @unchecked Sendable {
       completionHandler(.cancel)
       return
     }
+    responseHeaders?(response)
     do {
       guard response.expectedContentLength <= Int64(limit) else {
         failed = true; completionHandler(.cancel); return
