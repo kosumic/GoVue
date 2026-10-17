@@ -39,6 +39,7 @@ import { YouTubeSwitch as Switch } from './YouTubeSwitch';
 import { haptic } from '../player/Haptics';
 import { useReducedMotion } from '../player/useReducedMotion';
 import { AiSettings } from './AiSettings';
+import { LanguageSettings } from './LanguageSettings';
 
 type Node = {
   id?: string;
@@ -317,8 +318,15 @@ export function ExtensionSettings({
           </Pressable>
         )}
       </View>
-      {page === 'ai' ? <AiSettings /> : <ScrollView contentContainerStyle={s.body}>
-        {page === 'settings' && nodes.map((node) => render(node))}
+      {page === 'ai' ? <AiSettings /> : <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
+        {page === 'settings' && (
+          <>
+            <View style={s.languages}>
+              <LanguageSettings />
+            </View>
+            {nodes.map((node) => render(node))}
+          </>
+        )}
         {page === 'data' && (
           <>
             <SheetRow
@@ -507,6 +515,7 @@ const makeStyles = (colors: ThemeColors) =>
       maxWidth: 720,
       alignSelf: 'center',
     },
+    languages: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
     label: { color: colors.ink, fontSize: 14, lineHeight: 20 },
     detail: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
     slider: { paddingHorizontal: 16, paddingTop: 8 },
