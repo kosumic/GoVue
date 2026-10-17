@@ -3,12 +3,18 @@ import { aiRequest } from '../../modules/lingoplay-core';
 import type { TokenUsage } from './usage';
 import type { GameAction, LearningGame } from './games';
 
+export type ActivityStatus = 'preparing' | 'running' | 'completed' | 'failed' | 'stopped';
+export type ChatBlock =
+  | { id: string; kind: 'text'; content: string; status: ActivityStatus }
+  | { id: string; kind: 'reasoning'; content: string; status: ActivityStatus }
+  | { id: string; kind: 'tool'; callId: string; name: string; status: ActivityStatus; startedAt: number; durationMs: number; gameId?: string; title?: string; error?: string };
+
 export type ChatTranscript = { videoId: string; trackId: string; title: string; language: string };
-export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; games?: LearningGame[]; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; model?: string; providerLabel?: string };
+export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; games?: LearningGame[]; blocks?: ChatBlock[]; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; model?: string; providerLabel?: string };
 export type Conversation = { id: string; videoId?: string | null; title: string; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null };
 export type SavedChat = Pick<Conversation, 'id' | 'videoId' | 'title' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string };
 type Started = { taskId: string; conversation: Conversation };
-type Progress = { status: 'running' | 'completed' | 'failed' | 'cancelled'; text: string; games?: LearningGame[]; error?: string; reasoning?: string; reasoningEffort?: string; usage?: ChatMessage['usage']; model?: string; providerLabel?: string };
+type Progress = { status: 'running' | 'completed' | 'failed' | 'cancelled'; text: string; games?: LearningGame[]; blocks?: ChatBlock[]; error?: string; reasoning?: string; reasoningEffort?: string; usage?: ChatMessage['usage']; model?: string; providerLabel?: string };
 
 export function useChats(visible: boolean, contextId: string) {
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -71,7 +77,7 @@ export function useChats(visible: boolean, contextId: string) {
         const chat = current.current;
         if (chat?.id === started.conversation.id) {
           const reply = started.conversation.messages.at(-1)?.id;
-          update({ ...chat, messages: chat.messages.map(m => m.id === reply ? { ...m, content: state.text, games: state.games ?? m.games, reasoning: state.reasoning, reasoningEffort: state.reasoningEffort, usage: state.usage, model: state.model, providerLabel: state.providerLabel } : m) });
+          update({ ...chat, messages: chat.messages.map(m => m.id === reply ? { ...m, content: state.text, games: state.games ?? m.games, blocks: state.blocks ?? m.blocks, reasoning: state.reasoning, reasoningEffort: state.reasoningEffort, usage: state.usage, model: state.model, providerLabel: state.providerLabel } : m) });
         }
         if (state.status !== 'running') {
           const revision = reasoningRevision.current;

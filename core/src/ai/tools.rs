@@ -34,6 +34,47 @@ pub(super) struct Stream {
     gemini: Vec<Value>,
 }
 impl Stream {
+    pub fn gemini_len(&self) -> usize {
+        self.gemini.len()
+    }
+    // Identity and name only: arguments and signed reasoning never enter UI activity.
+    pub fn call_headers(&self, protocol: &str) -> Vec<(String, String)> {
+        match protocol {
+            "responses" => self
+                .items
+                .values()
+                .filter(|v| v["type"] == "function_call")
+                .map(|v| {
+                    (
+                        v["call_id"].as_str().unwrap_or_default().into(),
+                        v["name"].as_str().unwrap_or_default().into(),
+                    )
+                })
+                .collect(),
+            "anthropic" => self
+                .items
+                .values()
+                .filter(|v| v["type"] == "tool_use")
+                .map(|v| {
+                    (
+                        v["id"].as_str().unwrap_or_default().into(),
+                        v["name"].as_str().unwrap_or_default().into(),
+                    )
+                })
+                .collect(),
+            "gemini" => Vec::new(),
+            _ => self
+                .chat
+                .values()
+                .map(|v| {
+                    (
+                        v["id"].as_str().unwrap_or_default().into(),
+                        v["function"]["name"].as_str().unwrap_or_default().into(),
+                    )
+                })
+                .collect(),
+        }
+    }
     pub fn event(&mut self, protocol: &str, v: &Value) -> Result<()> {
         match protocol {
             "responses" => {
