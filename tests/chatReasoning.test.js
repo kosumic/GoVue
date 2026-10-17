@@ -1,0 +1,83 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import React, { createElement } from 'react';
+import { act, create } from 'react-test-renderer';
+import { build } from 'esbuild';
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const require = createRequire(import.meta.url);
+const conversation = (reasoningEffort = 'low', content = '', status = 'streaming', replyEffort = 'low') => ({
+  id: 'chat', title: 'Fixture', providerId: 'fixture', model: 'fixture', reasoningEffort,
+  activeTask: status === 'streaming' ? 'task' : null,
+  messages: [{ id: 'user', role: 'user', content: 'Hello', status: 'completed' }, { id: 'reply', role: 'assistant', content, status, reasoningEffort: replyEffort }],
+});
+
+async function harness() {
+  const calls = [];
+  let controller;
+  const result = await build({ entryPoints: ['src/ai/useChats.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
+    plugins: [{ name: 'chat-core', setup(builder) {
+      builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'test-core', external: true }));
+    } }],
+  });
+  const core = { aiRequest(command) {
+    if (command.op === 'ai_chats') return Promise.resolve({ chats: [] });
+    const entry = { command, answered: false };
+    calls.push(entry);
+    if (['ai_cancel', 'ai_forget'].includes(command.op)) return Promise.resolve({});
+    return new Promise(resolve => { entry.resolve = value => { entry.answered = true; resolve(value); }; });
+  } };
+  const module = { exports: {} };
+  Function('require', 'module', 'exports', result.outputFiles[0].text)(name => name === 'test-core' ? core : require(name), module, module.exports);
+  function Chat() { controller = module.exports.useChats(true, ''); return null; }
+  let root;
+  await act(async () => { root = create(createElement(Chat)); });
+  return { calls, chat: () => controller, pending: op => calls.find(entry => entry.command.op === op && !entry.answered),
+    reply: (op, value) => act(async () => { const entry = calls.find(entry => entry.command.op === op && !entry.answered); assert.ok(entry, op); entry.resolve(value); }),
+    unmount: () => act(async () => root.unmount()) };
+}
+
+test('reasoning changes during request startup apply to the next turn and preserve newer streaming and completion data', async t => {
+  const env = await harness();
+  t.after(env.unmount);
+  await act(async () => { assert.equal(await env.chat().setReasoning('low'), true); });
+  let sending, saving;
+  await act(() => { sending = env.chat().send('fixture', 'Hello', null); });
+  assert.equal(env.pending('ai_chat_send').command.reasoningEffort, 'low');
+  await act(() => { saving = env.chat().setReasoning('high'); });
+  assert.equal(env.chat().settingsBusy, true);
+  assert.equal(env.pending('ai_chat_reasoning'), undefined, 'the active request starts with its original effort');
+
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: conversation() });
+  assert.equal(await sending, true);
+  assert.equal(env.pending('ai_chat_reasoning').command.reasoningEffort, 'high');
+  await env.reply('ai_poll', { status: 'completed', text: 'The latest streamed answer', reasoningEffort: 'low' });
+  assert.ok(env.pending('ai_chat_get'));
+  await env.reply('ai_chat_reasoning', conversation('high'));
+  assert.equal(await saving, true);
+  assert.equal(env.chat().conversation.messages.at(-1).content, 'The latest streamed answer', 'a settings snapshot cannot erase streamed text');
+  assert.equal(env.chat().busy, true);
+  assert.equal(env.chat().reasoningEffort, 'high');
+  await env.reply('ai_chat_get', conversation('low', 'The completed answer', 'completed'));
+  assert.equal(env.chat().reasoningEffort, 'high', 'a late completion snapshot cannot restore the previous effort');
+  assert.equal(env.chat().conversation.messages.at(-1).reasoningEffort, 'low');
+  assert.equal(env.chat().conversation.messages.at(-1).content, 'The completed answer');
+  assert.equal(env.chat().conversation.messages.at(-1).status, 'completed');
+  assert.equal(env.chat().busy, false);
+  assert.equal(env.calls.some(entry => entry.command.op === 'ai_cancel'), false);
+
+  await act(() => { sending = env.chat().send('fixture', 'Next turn', null); });
+  assert.equal(env.pending('ai_chat_send').command.reasoningEffort, 'high');
+  await env.reply('ai_chat_send', { taskId: 'next-task', conversation: conversation('high') });
+  assert.equal(await sending, true);
+  await act(() => { saving = env.chat().setReasoning('medium'); });
+  await act(() => env.chat().stop());
+  await env.reply('ai_chat_reasoning', conversation('medium'));
+  assert.equal(await saving, true);
+  assert.equal(env.chat().reasoningEffort, 'medium', 'stopping a response does not discard a pending preference change');
+  assert.equal(env.chat().conversation.messages.at(-1).status, 'stopped');
+  await env.reply('ai_poll', { status: 'completed', text: 'Late text', reasoningEffort: 'high' });
+  assert.equal(env.chat().busy, false);
+  assert.equal(env.chat().conversation.messages.at(-1).status, 'stopped');
+});

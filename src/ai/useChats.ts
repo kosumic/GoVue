@@ -4,8 +4,8 @@ import type { TokenUsage } from './usage';
 
 export type ChatTranscript = { videoId: string; trackId: string; title: string; language: string };
 export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; model?: string; providerLabel?: string };
-export type Conversation = { id: string; title: string; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null };
-export type SavedChat = Pick<Conversation, 'id' | 'title' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string };
+export type Conversation = { id: string; videoId?: string | null; title: string; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null };
+export type SavedChat = Pick<Conversation, 'id' | 'videoId' | 'title' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string };
 type Started = { taskId: string; conversation: Conversation };
 type Progress = { status: 'running' | 'completed' | 'failed' | 'cancelled'; text: string; error?: string; reasoning?: string; reasoningEffort?: string; usage?: ChatMessage['usage']; model?: string; providerLabel?: string };
 
@@ -19,6 +19,9 @@ export function useChats(visible: boolean, contextId: string) {
   const [draftReasoning, setDraftReasoning] = useState<string | null>(null);
   const reasoningDraft = useRef<string | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const settingsPending = useRef(false);
+  const reasoningRevision = useRef(0);
+  const starting = useRef<Promise<Started> | null>(null);
   const current = useRef<Conversation | null>(null);
   const epoch = useRef(0);
   const task = useRef<string | null>(null);
@@ -36,6 +39,7 @@ export function useChats(visible: boolean, contextId: string) {
   function stop() {
     ++epoch.current;
     const id = task.current; task.current = null;
+    starting.current = null;
     sending.current = false; setBusy(false); setLoading(false);
     const chat = current.current;
     if (chat) update({ ...chat, activeTask: null, messages: chat.messages.map(m => m.status === 'streaming' ? { ...m, status: 'stopped' } : m) });
@@ -52,8 +56,9 @@ export function useChats(visible: boolean, contextId: string) {
           update({ ...chat, messages: chat.messages.map(m => m.id === reply ? { ...m, content: state.text, reasoning: state.reasoning, reasoningEffort: state.reasoningEffort, usage: state.usage, model: state.model, providerLabel: state.providerLabel } : m) });
         }
         if (state.status !== 'running') {
+          const revision = reasoningRevision.current;
           const saved = await aiRequest<Conversation>({ op: 'ai_chat_get', chatId: started.conversation.id });
-          if (mounted.current && version === epoch.current) update(saved);
+          if (mounted.current && version === epoch.current) update({ ...saved, reasoningEffort: revision === reasoningRevision.current ? saved.reasoningEffort : current.current?.reasoningEffort });
           return;
         }
         await new Promise(resolve => setTimeout(resolve, 150));
@@ -67,11 +72,15 @@ export function useChats(visible: boolean, contextId: string) {
     }
   }
   async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false) {
-    if (sending.current || settingsBusy) return false;
+    if (sending.current || settingsPending.current) return false;
     stop(); const version = epoch.current;
     sending.current = true; setBusy(true); setError('');
+    let pending: Promise<Started> | null = null;
     try {
-      const started = await aiRequest<Started>({ op: 'ai_chat_send', id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}) });
+      pending = aiRequest<Started>({ op: 'ai_chat_send', id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}) });
+      starting.current = pending;
+      const started = await pending;
+      if (starting.current === pending) starting.current = null;
       if (!mounted.current || version !== epoch.current) {
         await aiRequest({ op: 'ai_cancel', taskId: started.taskId }).catch(() => {});
         await aiRequest({ op: 'ai_forget', taskId: started.taskId }).catch(() => {});
@@ -83,7 +92,7 @@ export function useChats(visible: boolean, contextId: string) {
     } catch (e) {
       if (mounted.current && version === epoch.current) { sending.current = false; setBusy(false); setError(e instanceof Error ? e.message : 'Could not send this message.'); }
       return false;
-    }
+    } finally { if (starting.current === pending) starting.current = null; }
   }
   async function open(id: string) {
     stop(); const version = epoch.current;
@@ -98,17 +107,47 @@ export function useChats(visible: boolean, contextId: string) {
     finally { if (mounted.current && version === epoch.current) setLoading(false); }
   }
   async function setReasoning(effort: string) {
-    if (sending.current || settingsBusy) return false;
-    const chat = current.current;
-    if (!chat) { reasoningDraft.current = effort || null; setDraftReasoning(reasoningDraft.current); return true; }
+    if (settingsPending.current) return false;
     const version = epoch.current;
+    settingsPending.current = true;
     setSettingsBusy(true); setError('');
     try {
+      // Start the current request with its original effort before saving the next turn's setting.
+      if (starting.current) await starting.current;
+      if (!mounted.current || version !== epoch.current) return false;
+      const chat = current.current;
+      if (!chat) { reasoningDraft.current = effort || null; setDraftReasoning(reasoningDraft.current); return true; }
       const saved = await aiRequest<Conversation>({ op: 'ai_chat_reasoning', chatId: chat.id, reasoningEffort: effort || null });
+      if (!mounted.current || current.current?.id !== chat.id) return false;
+      ++reasoningRevision.current;
+      // The settings response may contain older streamed text. Merge only the setting.
+      update({ ...current.current, reasoningEffort: saved.reasoningEffort }); return true;
+    } catch (e) { if (mounted.current && version === epoch.current) setError(e instanceof Error ? e.message : 'Could not save reasoning.'); return false; }
+    finally { settingsPending.current = false; if (mounted.current) setSettingsBusy(false); }
+  }
+  async function openVideo(videoId: string, title?: string, transcript?: ChatTranscript) {
+    stop(); const version = epoch.current;
+    setError(''); setLoading(true);
+    try {
+      const chat = await aiRequest<Conversation>({ op: 'ai_chat_video_open', videoId, ...(title ? { title } : {}), ...(transcript ? { transcript: { videoId: transcript.videoId, trackId: transcript.trackId } } : {}) });
+      if (!mounted.current || version !== epoch.current) return;
+      update(chat);
+      void refresh().catch(() => {});
+      return chat;
+    } catch (e) {
+      if (mounted.current && version === epoch.current) setError(e instanceof Error ? e.message : 'Could not open this video’s chat.');
+      throw e;
+    } finally { if (mounted.current && version === epoch.current) setLoading(false); }
+  }
+  async function selectModel(id: string) {
+    const chat = current.current;
+    if (!chat || sending.current) return false;
+    const version = epoch.current;
+    try {
+      const saved = await aiRequest<Conversation>({ op: 'ai_chat_model', chatId: chat.id, id });
       if (!mounted.current || version !== epoch.current || current.current?.id !== chat.id) return false;
       update(saved); return true;
-    } catch (e) { if (mounted.current && version === epoch.current) setError(e instanceof Error ? e.message : 'Could not save reasoning.'); return false; }
-    finally { if (mounted.current) setSettingsBusy(false); }
+    } catch (e) { if (mounted.current && version === epoch.current) setError(e instanceof Error ? e.message : 'Could not change this chat’s model.'); return false; }
   }
   function newChat() { stop(); update(null); reasoningDraft.current = null; setDraftReasoning(null); setError(''); }
   async function remove(id: string) {
@@ -129,8 +168,9 @@ export function useChats(visible: boolean, contextId: string) {
       void refresh().then(async () => {
         if (!active) return;
         if (current.current && version === epoch.current) {
+          const revision = reasoningRevision.current;
           const chat = await aiRequest<Conversation>({ op: 'ai_chat_get', chatId: current.current.id });
-          if (active && version === epoch.current) update(chat);
+          if (active && version === epoch.current) update({ ...chat, reasoningEffort: revision === reasoningRevision.current ? chat.reasoningEffort : current.current?.reasoningEffort });
         }
         if (active) setReady(true);
       }).catch(e => { if (active) { setError(e.message); setReady(true); } });
@@ -141,6 +181,6 @@ export function useChats(visible: boolean, contextId: string) {
     if (previousContext.current === contextId) return;
     previousContext.current = contextId; stop();
   }, [contextId]);
-  return { conversation, history, busy, loading, ready, error, settingsBusy, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, remove, newChat, refresh };
+  return { conversation, history, busy, loading, ready, error, settingsBusy, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, openVideo, selectModel, remove, newChat, refresh };
 }
 export type ChatController = ReturnType<typeof useChats>;

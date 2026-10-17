@@ -20,6 +20,7 @@ struct Backend {
     secrets: Mutex<HashMap<String, String>>,
     requests: Mutex<Vec<Value>>,
     paused: AtomicBool,
+    reasoning_gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
 }
 struct Platform(Arc<Backend>);
 impl AiPlatform for Platform {
@@ -52,6 +53,10 @@ impl AiPlatform for Platform {
         if r.url.ends_with("/models") {
             sink.push(json!({"data":[{"id":"one","name":"One","context_length":32768,"supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"future-invalid-tier"}]},{"id":"two","name":"Two"},{"id":"bad\nmodel"},{"id":"unknown-limits","name":"模".repeat(200),"context_length":0,"max_output_tokens":u64::MAX}]}).to_string().into_bytes());
             return;
+        }
+        let gate = self.0.reasoning_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.recv_timeout(Duration::from_secs(10)).unwrap();
         }
         let model = body["model"].as_str().unwrap_or("");
         if model == "paused" {
@@ -332,28 +337,40 @@ fn saved_models_groups_configuration_and_wire_controls_work_together() {
     );
     assert_eq!(options["levels"], json!(["low", "medium"]));
     assert_eq!(options["defaultEffort"], "high");
+    let (release, gate) = std::sync::mpsc::channel();
+    *backend.reasoning_gate.lock().unwrap() = Some(gate);
+    let request_count = backend.requests.lock().unwrap().len();
     let reasoned = ok(
         root,
         json!({"op":"ai_chat_send","id":id,"prompt":"low effort","reasoningEffort":"low"}),
     );
     let reasoned_id = reasoned["conversation"]["id"].as_str().unwrap();
-    assert_eq!(
-        wait(root, reasoned["taskId"].as_str().unwrap())["status"],
-        "completed"
-    );
+    for _ in 0..1000 {
+        if backend.requests.lock().unwrap().len() > request_count {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(backend.requests.lock().unwrap().len() > request_count);
     assert_eq!(
         backend.requests.lock().unwrap().last().unwrap()["body"]["reasoning_effort"],
         "low"
     );
-    let saved = ok(root, json!({"op":"ai_chat_get","chatId":reasoned_id}));
-    assert_eq!(saved["reasoningEffort"], "low");
-    assert_eq!(saved["messages"][1]["reasoningEffort"], "low");
     let changed = ok(
         root,
         json!({"op":"ai_chat_reasoning","chatId":reasoned_id,"reasoningEffort":"medium"}),
     );
     assert_eq!(changed["reasoningEffort"], "medium");
-    assert_eq!(changed["messages"][1]["reasoningEffort"], "low");
+    assert_eq!(changed["activeTask"], reasoned["taskId"]);
+    assert_eq!(changed["messages"][1]["status"], "streaming");
+    release.send(()).unwrap();
+    assert_eq!(
+        wait(root, reasoned["taskId"].as_str().unwrap())["status"],
+        "completed"
+    );
+    let saved = ok(root, json!({"op":"ai_chat_get","chatId":reasoned_id}));
+    assert_eq!(saved["reasoningEffort"], "medium");
+    assert_eq!(saved["messages"][1]["reasoningEffort"], "low");
     let continued = ok(
         root,
         json!({"op":"ai_chat_send","chatId":reasoned_id,"prompt":"remember effort"}),

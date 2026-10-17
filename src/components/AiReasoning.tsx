@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { aiRequest } from '../../modules/lingoplay-core';
-import { colors } from '../theme';
+import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 
 export const reasoningName = (value?: string | null) => !value ? 'Default' : value === 'none' ? 'Off' : value === 'xhigh' ? 'Extra high' : value[0].toUpperCase() + value.slice(1);
 type Options = { levels: string[]; defaultEffort: string; group: boolean; discovered: boolean };
 
-export function AiReasoning({ id, model, value, busy, onSelect }: { id: string; model: string; value: string | null; busy: boolean; onSelect: (value: string) => void }) {
+export function AiReasoning({ id, model, value, busy, deferred = false, onSelect }: { id: string; model: string; value: string | null; busy: boolean; deferred?: boolean; onSelect: (value: string) => void }) {
+  const colors = useThemeColors();
+  const s = useThemeStyles(makeStyles);
   const [options, setOptions] = useState<Options | null>(null);
   const [loadError, setLoadError] = useState('');
   useEffect(() => {
@@ -16,6 +18,7 @@ export function AiReasoning({ id, model, value, busy, onSelect }: { id: string; 
     return () => { active = false; };
   }, [id, model]);
   return <View style={s.panel}>
+    {deferred && <Text style={s.help}>Applies to your next message. This response keeps its current setting.</Text>}
     {!options && !loadError && <ActivityIndicator size="small" color={colors.accent} style={s.loading} />}
     {options && <ScrollView horizontal keyboardShouldPersistTaps="always" showsHorizontalScrollIndicator={false} contentContainerStyle={s.levels}>
       {['', ...options.levels].map(level => {
@@ -31,7 +34,7 @@ export function AiReasoning({ id, model, value, busy, onSelect }: { id: string; 
   </View>;
 }
 
-const s = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   panel: { paddingVertical: 5, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.line, gap: 4 },
   levels: { paddingHorizontal: 10, gap: 4 }, choice: { minHeight: 44, minWidth: 44, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   selected: { backgroundColor: colors.accentSoft }, label: { color: colors.muted, fontSize: 12, fontWeight: '500' }, selectedLabel: { color: colors.accent, fontWeight: '600' },

@@ -1,13 +1,15 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { ArrowDown, ArrowUp, Brain, Captions, ChevronDown, Copy, MessageCircle, RotateCw, Sparkles, Square, X } from 'lucide-react-native';
-import { colors } from '../theme';
+import { ArrowDown, ArrowUp, Brain, Captions, ChevronDown, ChevronRight, Copy, MessageCircle, Plus, RotateCw, Square, X } from 'lucide-react-native';
+import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats';
 import { AiMarkdown } from './AiMarkdown';
-import { AiReasoning, reasoningName } from './AiReasoning';
+import { AiReasoning } from './AiReasoning';
 
 const Message = memo(function Message({ message, last, busy, onRetry, reduceMotion }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; reduceMotion: boolean }) {
+  const colors = useThemeColors();
+  const styles = useThemeStyles(makeStyles);
   const entrance = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
   useEffect(() => {
     const animation = Animated.timing(entrance, { toValue: 1, duration: reduceMotion ? 0 : 180, useNativeDriver: true });
@@ -17,22 +19,19 @@ const Message = memo(function Message({ message, last, busy, onRetry, reduceMoti
   const [showReasoning, setShowReasoning] = useState(false);
   return <Animated.View style={[styles.message, user && styles.userMessage, { opacity: entrance, transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }] }]}>
     {user ? <View style={styles.userBubble}><Text selectable style={styles.userText}>{message.content}</Text></View> : <>
-      <View style={styles.assistantLabel}><Sparkles size={13} color={colors.accent} /><Text style={styles.assistantName}>LingoPlay</Text></View>
       {!!message.reasoning && <View><Pressable accessibilityRole="button" accessibilityState={{ expanded: showReasoning }} onPress={() => setShowReasoning(!showReasoning)} style={styles.messageAction}><Text style={styles.actionText}>{showReasoning ? 'Hide reasoning' : 'Show reasoning'}</Text></Pressable>{showReasoning && <AiMarkdown content={message.reasoning} streaming={message.status === 'streaming' && busy} />}</View>}
       {message.content ? <AiMarkdown content={message.content} streaming={message.status === 'streaming' && busy} /> : message.status === 'streaming' && busy ? <View accessibilityLiveRegion="polite" style={styles.thinking}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Thinking…</Text></View> : null}
       {message.error && <Text accessibilityRole="alert" style={styles.error}>{message.error}</Text>}
       {message.status === 'stopped' && !message.error && <Text style={styles.muted}>Response stopped</Text>}
-      {!!message.model && message.status !== 'streaming' && <Text style={styles.actionText}>{message.providerLabel} · {message.model}{message.reasoningEffort ? ` · Reasoning: ${reasoningName(message.reasoningEffort)}` : ''}{message.usage?.inputTokens != null ? ` · ${message.usage.inputTokens.toLocaleString()} in` : ''}{message.usage?.outputTokens != null ? ` / ${message.usage.outputTokens.toLocaleString()} out` : ''}</Text>}
-      {message.status !== 'streaming' && !!(message.usage?.latestContextTokens || message.usage?.cacheReadTokens || message.usage?.cacheCreationTokens) && <Text style={styles.actionText}>{[message.usage.latestContextTokens ? `Context: ${message.usage.latestContextTokens.toLocaleString()}` : '', message.usage.cacheReadTokens ? `Cache read: ${message.usage.cacheReadTokens.toLocaleString()}` : '', message.usage.cacheCreationTokens ? `Cache write: ${message.usage.cacheCreationTokens.toLocaleString()}` : ''].filter(Boolean).join(' · ')}</Text>}
       {message.status !== 'streaming' && <View style={styles.messageActions}>
         {!!message.content && <Pressable accessibilityRole="button" accessibilityLabel="Copy response" onPress={() => Clipboard.setString(message.content)} style={styles.messageAction}><Copy size={16} color={colors.muted} /></Pressable>}
-        {last && <Pressable accessibilityRole="button" accessibilityLabel="Regenerate response" disabled={busy} onPress={onRetry} style={[styles.messageAction, busy && styles.disabled]}><RotateCw size={16} color={colors.muted} /><Text style={styles.actionText}>{message.status === 'completed' ? 'Regenerate' : 'Try again'}</Text></Pressable>}
+        {last && <Pressable accessibilityRole="button" accessibilityLabel={message.status === 'completed' ? 'Regenerate response' : 'Try again'} disabled={busy} onPress={onRetry} style={[styles.messageAction, busy && styles.disabled]}><RotateCw size={16} color={colors.muted} /></Pressable>}
       </View>}
     </>}
   </Animated.View>;
 });
 
-export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, onSend, onRetry, onAttach, onDetach, onSummarize, onModels, reasoning, providerId, model }: {
+export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
   chat: ChatController;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -40,16 +39,20 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   availableTranscript: ChatTranscript | null;
   connected: boolean;
   loading: boolean;
+  contextReady?: boolean;
   onSend: () => void;
   onRetry: () => void;
   onAttach: () => void;
-  onDetach: () => void;
+  onDetach?: () => void;
+  onOpenTranscript: () => void;
   onSummarize: () => void;
   onModels: () => void;
   reasoning: string;
   providerId?: string;
   model?: string;
 }) {
+  const colors = useThemeColors();
+  const styles = useThemeStyles(makeStyles);
   const list = useRef<FlatList<ChatMessage>>(null);
   const input = useRef<TextInput>(null);
   const nearBottom = useRef(true);
@@ -74,7 +77,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   useEffect(() => { nearBottom.current = true; setShowJump(false); follow(); }, [chat.conversation?.id]);
   useEffect(() => { setShowReasoning(false); }, [chat.conversation?.id, providerId, model]);
   function send() { nearBottom.current = true; setShowJump(false); setShowReasoning(false); onSend(); }
-  const canSend = connected && !!draft.trim() && !loading && !chat.settingsBusy;
+  const canSend = contextReady && connected && !!draft.trim() && !loading && !chat.settingsBusy;
   return <View style={styles.workspace}>
     <View style={styles.thread}>
       <FlatList ref={list} data={messages} keyExtractor={m => m.id} extraData={chat.busy}
@@ -87,11 +90,10 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
           nearBottom.current = atBottom; setShowJump(!atBottom);
         }}
         ListEmptyComponent={loading ? <View style={styles.welcome}><ActivityIndicator color={colors.accent} /></View> : <View style={styles.welcome}>
-          <Sparkles size={32} strokeWidth={1.5} color={colors.accent} />
-          <Text accessibilityRole="header" style={styles.welcomeTitle}>Let’s talk.</Text>
+          <Text accessibilityRole="header" style={styles.welcomeTitle}>How can I help?</Text>
           <Text style={styles.welcomeHelp}>{connected ? 'Ask a question or explore a video.' : 'Connect a model to start a conversation.'}</Text>
           {connected ? <View style={styles.suggestions}>
-            {availableTranscript && <Pressable accessibilityRole="button" onPress={onSummarize} style={styles.suggestion}><Captions size={17} color={colors.accent} /><Text style={styles.suggestionText}>Summarize this video</Text></Pressable>}
+            {availableTranscript && <Pressable accessibilityRole="button" disabled={!contextReady || chat.busy} onPress={onSummarize} style={[styles.suggestion, (!contextReady || chat.busy) && styles.disabled]}><Captions size={17} color={colors.accent} /><Text style={styles.suggestionText}>Summarize this video</Text></Pressable>}
             <Pressable accessibilityRole="button" onPress={() => { onDraftChange('Explain this phrase: '); input.current?.focus(); }} style={styles.suggestion}><MessageCircle size={17} color={colors.muted} /><Text style={styles.suggestionText}>Explain a phrase</Text></Pressable>
           </View> : <Pressable accessibilityRole="button" onPress={onModels} style={styles.connect}><Text style={styles.connectText}>Choose a model</Text></Pressable>}
         </View>}
@@ -102,16 +104,19 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
     {!!chat.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{chat.error}</Text>}
     <View style={styles.composerDock}>
       {attachment && <View style={styles.attachment}>
-        <Captions size={17} color={colors.accent} /><View style={styles.attachmentText}><Text numberOfLines={1} style={styles.attachmentTitle}>{attachment.title}</Text><Text style={styles.attachmentHelp}>{attachment.language} transcript</Text></View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Remove transcript attachment" disabled={chat.busy} onPress={onDetach} style={styles.messageAction}><X size={17} color={colors.muted} /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Open ${attachment.language} transcript`} accessibilityHint="Read the captions used as AI context" onPress={onOpenTranscript} style={styles.attachmentLink}>
+          <Captions size={17} color={colors.accent} /><View style={styles.attachmentText}><Text numberOfLines={1} style={styles.attachmentTitle}>{attachment.title}</Text><Text style={styles.attachmentHelp}>{attachment.language} transcript · AI context</Text></View><ChevronRight size={16} color={colors.muted} />
+        </Pressable>
+        {onDetach && <Pressable accessibilityRole="button" accessibilityLabel="Remove transcript attachment" disabled={chat.busy} onPress={onDetach} style={styles.messageAction}><X size={17} color={colors.muted} /></Pressable>}
       </View>}
       <View style={styles.composer}>
-        <TextInput ref={input} accessibilityLabel="Message LingoPlay" placeholder={attachment ? 'Ask about this video…' : 'Message LingoPlay…'} placeholderTextColor={colors.muted}
+        <TextInput ref={input} accessibilityLabel="Message LingoPlay" placeholder={attachment ? 'Ask about this video…' : 'Ask anything…'} placeholderTextColor={colors.muted}
           value={draft} onChangeText={onDraftChange} multiline maxLength={8000} style={styles.input} selectionColor={colors.accent} editable={!loading} />
-        {showReasoning && providerId && model && <AiReasoning id={providerId} model={model} value={chat.reasoningEffort} busy={chat.settingsBusy} onSelect={level => { void chat.setReasoning(level).then(saved => { if (saved) setShowReasoning(false); }); }} />}
+        {showReasoning && providerId && model && <AiReasoning id={providerId} model={model} value={chat.reasoningEffort} busy={chat.settingsBusy} deferred={chat.busy} onSelect={level => { void chat.setReasoning(level).then(saved => { if (saved) setShowReasoning(false); }); }} />}
         <View style={styles.composerTools}>
-          <Pressable accessibilityRole="button" accessibilityLabel={`Reasoning effort: ${reasoning}`} accessibilityState={{ expanded: showReasoning, disabled: !connected || chat.busy || loading || chat.settingsBusy }} disabled={!connected || chat.busy || loading || chat.settingsBusy} onPress={() => setShowReasoning(!showReasoning)} style={[styles.reasoningButton, (!connected || chat.busy || loading || chat.settingsBusy) && styles.disabled]}><Brain size={16} color={colors.accent} /><Text numberOfLines={1} style={styles.reasoningText}>Reasoning · {reasoning}</Text><ChevronDown size={12} color={colors.muted} style={showReasoning ? styles.expanded : undefined} /></Pressable>
-          {availableTranscript && !attachment ? <Pressable accessibilityRole="button" accessibilityLabel="Attach current transcript" disabled={chat.busy || loading} onPress={onAttach} style={[styles.attachButton, chat.busy && styles.disabled]}><Captions size={18} color={colors.muted} /><Text style={styles.actionText}>Transcript</Text></Pressable> : <View style={styles.spacer} />}
+          {availableTranscript && !attachment && <Pressable accessibilityRole="button" accessibilityLabel="Attach current transcript" disabled={chat.busy || loading} onPress={onAttach} style={[styles.attachButton, chat.busy && styles.disabled]}><Plus size={22} color={colors.ink} /></Pressable>}
+          <Pressable accessibilityRole="button" accessibilityLabel={`Reasoning effort: ${reasoning}`} accessibilityHint="Changes apply to your next message" accessibilityState={{ expanded: showReasoning, disabled: !connected || loading || chat.settingsBusy }} disabled={!connected || loading || chat.settingsBusy} onPress={() => setShowReasoning(!showReasoning)} style={[styles.reasoningButton, (!connected || loading || chat.settingsBusy) && styles.disabled]}><Brain size={16} color={colors.accent} /><Text numberOfLines={1} style={styles.reasoningText}>{reasoning}</Text><ChevronDown size={12} color={colors.muted} style={showReasoning ? styles.expanded : undefined} /></Pressable>
+          <View style={styles.spacer} />
           <Pressable accessibilityRole="button" accessibilityLabel={chat.busy ? 'Stop response' : 'Send message'} disabled={!chat.busy && !canSend}
             onPress={chat.busy ? chat.stop : send} style={({ pressed }) => [styles.send, (!chat.busy && !canSend || pressed) && styles.disabled]}>
             {chat.busy ? <Square size={16} fill={colors.surface} color={colors.surface} /> : <ArrowUp size={22} strokeWidth={2.3} color={colors.surface} />}
@@ -122,24 +127,24 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   </View>;
 }
 
-const styles = StyleSheet.create({
-  workspace: { flex: 1 }, thread: { flex: 1 }, messages: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 20, gap: 24 }, emptyMessages: { flexGrow: 1 },
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  workspace: { flex: 1 }, thread: { flex: 1 }, messages: { width: '100%', maxWidth: 800, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 24, paddingBottom: 24, gap: 28 }, emptyMessages: { flexGrow: 1 },
   message: { width: '100%' }, userMessage: { alignItems: 'flex-end' },
-  userBubble: { maxWidth: '88%', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 20, borderTopRightRadius: 6, backgroundColor: colors.accentSoft },
-  userText: { color: colors.ink, fontSize: 15, lineHeight: 23 }, assistantLabel: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }, assistantName: { fontSize: 11, color: colors.muted, fontWeight: '500' },
+  userBubble: { maxWidth: '88%', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 24, backgroundColor: colors.raised },
+  userText: { color: colors.ink, fontSize: 16, lineHeight: 25 },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 32 }, muted: { fontSize: 13, color: colors.muted, lineHeight: 20 },
   messageActions: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, marginLeft: -10 }, messageAction: { minWidth: 44, minHeight: 44, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, actionText: { color: colors.muted, fontSize: 12 },
   error: { color: colors.error, fontSize: 13, lineHeight: 20, marginTop: 8 }, composerError: { paddingHorizontal: 20, paddingBottom: 8 },
   welcome: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 28, gap: 16 },
-  welcomeTitle: { color: colors.ink, fontSize: 30, fontWeight: '600', letterSpacing: -0.8 }, welcomeHelp: { color: colors.muted, fontSize: 14, lineHeight: 22, textAlign: 'center', maxWidth: 260 },
+  welcomeTitle: { color: colors.ink, fontSize: 28, fontWeight: '600', letterSpacing: -0.7 }, welcomeHelp: { color: colors.muted, fontSize: 14, lineHeight: 22, textAlign: 'center', maxWidth: 260 },
   suggestions: { marginTop: 16, gap: 4 }, suggestion: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, paddingHorizontal: 14 }, suggestionText: { color: colors.ink, fontSize: 14 },
   connect: { marginTop: 8, minHeight: 46, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.accent }, connectText: { color: colors.surface, fontSize: 14, fontWeight: '600' },
-  composerDock: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 8, gap: 8 }, composer: { backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, borderRadius: 25, paddingBottom: 7 },
-  input: { color: colors.ink, fontSize: 15, lineHeight: 23, minHeight: 50, maxHeight: 140, textAlignVertical: 'top', paddingTop: 15, paddingBottom: 8, paddingHorizontal: 16 },
+  composerDock: { width: '100%', maxWidth: 800, alignSelf: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10, gap: 8 }, composer: { backgroundColor: colors.raised, borderRadius: 28, paddingBottom: 7 },
+  input: { color: colors.ink, fontSize: 16, lineHeight: 24, minHeight: 56, maxHeight: 160, textAlignVertical: 'top', paddingTop: 18, paddingBottom: 10, paddingHorizontal: 18 },
   composerTools: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 7, paddingRight: 7, gap: 10 }, spacer: { flex: 1 },
   reasoningButton: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 44, paddingHorizontal: 9, flexShrink: 1 }, reasoningText: { color: colors.accent, fontSize: 12, flexShrink: 1 },
   expanded: { transform: [{ rotate: '180deg' }] },
-  attachButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 9 }, send: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
-  attachment: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 12, borderRadius: 14, backgroundColor: colors.accentSoft }, attachmentText: { flex: 1, paddingVertical: 9, gap: 2 }, attachmentTitle: { color: colors.ink, fontSize: 12, fontWeight: '500' }, attachmentHelp: { color: colors.muted, fontSize: 10 },
+  attachButton: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }, send: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  attachment: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, backgroundColor: colors.accentSoft }, attachmentLink: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, minHeight: 56 }, attachmentText: { flex: 1, paddingVertical: 9, gap: 2 }, attachmentTitle: { color: colors.ink, fontSize: 12, fontWeight: '500' }, attachmentHelp: { color: colors.muted, fontSize: 10 },
   jump: { position: 'absolute', alignSelf: 'center', bottom: 8, width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' }, disabled: { opacity: 0.38 },
 });

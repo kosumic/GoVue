@@ -3,6 +3,43 @@
   if (window.__nav) return;
   window.__nav = true;
 
+  // YouTube can replace its bottom bar during SPA navigation.
+  function ensureChat() {
+    const bar = document.querySelector('ytm-pivot-bar-renderer');
+    if (!bar || bar.querySelector('[data-lingoplay-chat]')) return;
+    const item = document.createElement('ytm-pivot-bar-item-renderer');
+    item.setAttribute('data-lingoplay-chat', '');
+    item.style.cssText = 'flex:1;min-width:0;display:flex;align-items:center;justify-content:center';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('aria-label', 'Chat');
+    button.style.cssText = 'color:inherit;background:none;border:0;font:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:48px;width:100%;padding:4px';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    for (const [name, value] of Object.entries({ width: '24', height: '24', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(name, value);
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z');
+    svg.appendChild(path);
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size:10px;line-height:14px';
+    label.textContent = 'Chat';
+    button.append(svg, label);
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      window.Bridge?.chat?.();
+    }, true);
+    item.appendChild(button);
+    const last = bar.querySelector('ytm-pivot-bar-item-renderer:last-child');
+    if (last?.parentNode === bar) bar.insertBefore(item, last);
+    else bar.appendChild(item);
+  }
+  let chatFrame = 0;
+  new MutationObserver(() => {
+    if (chatFrame) return;
+    chatFrame = requestAnimationFrame(() => { chatFrame = 0; ensureChat(); });
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  ensureChat();
+
   function isYoutubeHost(hostname) {
     // Strict suffix match mirroring Kotlin UrlPolicy: a substring test
     // would route lookalike hosts cross-tab while native rejects them.

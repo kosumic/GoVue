@@ -3,8 +3,8 @@
 Reference: HydeYYHH/Litube, `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f`
 (2026-10-16). React Native owns presentation; Rust owns validation, selection,
 settings, queues, navigation state, and persistence. Expo Video owns playback.
-Android is the first verification target. Transcript and AI work is deferred;
-their stored data is retained.
+Android is the first verification target. Transcript reading, AI provider
+settings, and chat are available through shared React Native screens.
 
 The owner deferred further Cast implementation on 2026-10-17. Existing Cast
 code and its recorded evidence remain; receiver verification and remaining
@@ -21,7 +21,7 @@ the same video; fullscreen and mini-player keep one mounted video surface.
 
 ## Acceptance inventory
 
-- [ ] YouTube-first browser and page navigation; no transcript/AI chrome.
+- [ ] YouTube-first browser and page navigation, including Chat in the bottom bar.
 - [ ] Native custom player: title/author, previous/play/next, buffering/error,
   seek/buffer progress, live state, speed, quality, fullscreen, CC, More.
 - [ ] Auto and explicit quality, frame-rate labels, active quality, memory.
@@ -41,6 +41,36 @@ the same video; fullscreen and mini-player keep one mounted video surface.
 - [x] `npm run check` and `npx expo install --check`.
 
 ## Evidence
+
+### Transcript and video chats (2026-10-17)
+
+Live Pixel 9 Pro checks confirmed Chat in the YouTube bottom bar, the full-screen
+chat workspace and conversation drawer, and Transcript → AI → Speed → Quality
+in the player. Opening “Me at the zoo” created an empty video conversation with
+its English transcript attached. Closing and reopening chat retained that video
+context without generating a reply or summary.
+Each video chat also exposes **Open video**. A retained video tab is selected
+without reloading its page; otherwise the watch page opens for that video.
+The transcript context card opens the shared reader inside chat, with search,
+copy, share, and vocabulary saving. The active response continues while it is open.
+Live checks confirmed reasoning can change from Default to Low while a reply
+streams; the reply completes and the selected level remains saved for the next turn.
+
+Rust owns video-chat lookup, creation, persistence, context validation, and model
+changes. Existing video conversations are reused; older duplicate files are
+retained while navigation shows one conversation per video. Transcript loading
+is correlated with the selected video and cancelled on replacement or dismissal.
+
+Separate regression checks cover concurrent opens, empty chats without a
+configured provider, transcript context in explicit questions, model changes
+preserving history, legacy conversations, and stale transcript results. The
+reasoning checks hold an active request, save a different effort for the next turn,
+and verify completion preserves that preference and the original reply's effort.
+React checks also cover startup changes, stale settings/completion snapshots,
+and opening the context reader without reloading or cancelling the conversation. The
+browser tests also cover YouTube's Trusted Types policy, bottom-bar replacement,
+and returning to retained video documents without losing playlist/time parameters.
+`npm run check` and `npx expo install --check` passed.
 
 Initial audit: the existing default Media3 gear has only speed/audio menus;
 quality helpers were not connected to any UI. The old catalog discarded audio

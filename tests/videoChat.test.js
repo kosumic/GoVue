@@ -1,0 +1,114 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import React, { createElement } from 'react';
+import { act, create } from 'react-test-renderer';
+import { build } from 'esbuild';
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const require = createRequire(import.meta.url);
+const first = 'abcdefghijk', second = '0123456789a';
+const transcript = videoId => ({ videoId, title: `Video ${videoId}`, trackId: '.en', language: 'English', tracks: [], segments: [{ start: 1, duration: 3, text: 'These captions are the chat context.' }] });
+
+async function harness(videoId, restore = async id => transcript(id)) {
+  const calls = [], opened = [], saved = new Map();
+  let chatProps;
+  const provider = { id: 'fixture', label: 'Fixture', model: 'first', connected: true, enabled: true, models: [] };
+  const ai = { providers: [provider], groups: [], activeId: provider.id, ready: true, busy: '', clear() {}, stop() {}, async select(id, model) { if (model) provider.model = model; return true; } };
+  const core = { async aiRequest(command) {
+    calls.push(command);
+    switch (command.op) {
+      case 'ai_chats': return { chats: [...saved.values()] };
+      case 'ai_chat_video_open': {
+        const id = `video_${command.videoId}`;
+        const chat = saved.get(id) ?? { id, videoId: command.videoId, title: command.title || 'Video chat', providerId: provider.id, providerLabel: provider.label, model: provider.model, messages: [], transcript: null, activeTask: null };
+        if (command.transcript) chat.transcript = transcript(command.videoId);
+        saved.set(id, chat); return structuredClone(chat);
+      }
+      case 'ai_chat_get': return structuredClone(saved.get(command.chatId));
+      case 'ai_chat_model': {
+        const chat = saved.get(command.chatId); chat.model = provider.model; return structuredClone(chat);
+      }
+      default: throw Error(`Unexpected operation ${command.op}`);
+    }
+  } };
+  const native = { View: 'View', Text: 'Text', Modal: 'Modal', Pressable: 'Pressable', KeyboardAvoidingView: 'KeyboardAvoidingView', Keyboard: { dismiss() {} }, Alert: { alert() {} }, Platform: { OS: 'android' }, StyleSheet: { create: value => value, hairlineWidth: 1 } };
+  const result = await build({ entryPoints: ['src/components/AiSheet.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic',
+    plugins: [{ name: 'chat-edges', setup(builder) {
+      builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'mock-core', external: true }));
+      builder.onResolve({ filter: /\/core\/transcripts$/ }, () => ({ path: 'mock-transcripts', external: true }));
+      builder.onResolve({ filter: /\/ai\/useAi$/ }, () => ({ path: 'mock-ai', external: true }));
+      builder.onResolve({ filter: /\/(AiChat|AiProviders|AiModels|AiUsageSheet|AiReasoning|AiHistoryDrawer|IconButton|TranscriptPanel)$/ }, args => ({ path: `mock-component/${args.path.split('/').at(-1)}`, external: true }));
+    } }],
+  });
+  const module = { exports: {} };
+  Function('require', 'module', 'exports', result.outputFiles[0].text)(name => {
+    if (name === 'mock-core') return core;
+    if (name === 'react-native') return native;
+    if (name === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView' };
+    if (name === 'lucide-react-native') return Object.fromEntries(['ChevronDown', 'ChevronLeft', 'Menu', 'Play', 'SquarePen', 'X'].map(key => [key, key]));
+    if (name === 'mock-ai') return { useAi: () => ai };
+    if (name === 'mock-transcripts') return { restoreTranscript: restore, extractTranscript: async () => { throw Error('Unexpected extraction'); } };
+    if (name.startsWith('mock-component/')) {
+      const component = name.split('/')[1];
+      if (component === 'AiReasoning') return { reasoningName: value => value || 'Default' };
+      return { [component]: component === 'AiChat' ? props => { chatProps = props; return createElement('AiChat'); } : component };
+    }
+    return require(name);
+  }, module, module.exports);
+  const props = { visible: true, videoId, transcript: null, onClose() {}, onOpenVideo: id => opened.push(id) };
+  let root;
+  await act(async () => { root = create(createElement(module.exports.AiSheet, props)); });
+  return { calls, saved, opened, props: () => chatProps,
+    render: changes => act(async () => { root.update(createElement(module.exports.AiSheet, { ...props, ...changes })); }),
+    unmount: () => act(() => root.unmount()), root };
+}
+
+test('opening a video chat attaches context and changing its model preserves the empty conversation without inference', async t => {
+  const env = await harness(first);
+  t.after(env.unmount);
+  assert.equal(env.props().chat.conversation.videoId, first);
+  assert.equal(env.props().contextReady, true);
+  assert.equal(env.props().attachment.videoId, first);
+  assert.equal(env.props().onDetach, undefined);
+  assert.deepEqual(env.props().chat.conversation.messages, []);
+  assert.equal(env.calls.filter(c => c.op === 'ai_chat_send').length, 0);
+  assert.equal(env.saved.size, 1);
+  await act(() => env.root.root.findByProps({ accessibilityLabel: 'Open video' }).props.onPress());
+  assert.deepEqual(env.opened, [first]);
+  const beforeReader = env.calls.length;
+  await act(() => env.props().onOpenTranscript());
+  const reader = env.root.root.findByType('TranscriptPanel');
+  assert.deepEqual(reader.props.data, transcript(first));
+  assert.equal(reader.props.onSeek, undefined);
+  assert.equal(reader.props.onExtract, undefined);
+  await act(() => reader.props.onClose());
+  assert.equal(env.root.root.findAllByType('TranscriptPanel').length, 0);
+  assert.equal(env.calls.length, beforeReader, 'reading the attached captions does not reload or interrupt the chat');
+  await act(() => env.props().onModels());
+  const models = env.root.root.findByType('AiModels');
+  await act(async () => { models.props.onSelect('fixture', 'second'); });
+  assert.equal(env.props().chat.conversation.id, `video_${first}`);
+  assert.equal(env.props().chat.conversation.model, 'second');
+  assert.equal(env.props().attachment.videoId, first);
+  assert.equal(env.saved.size, 1);
+  assert.equal(env.calls.filter(c => c.op === 'ai_chat_send').length, 0);
+});
+
+test('a late transcript cannot attach to a replacement video chat', async t => {
+  let resolveFirst;
+  const pending = new Promise(resolve => { resolveFirst = resolve; });
+  const env = await harness(first, id => id === first ? pending : Promise.resolve(transcript(id)));
+  t.after(env.unmount);
+  assert.equal(env.props().contextReady, false);
+  await env.render({ videoId: second });
+  assert.equal(env.props().attachment.videoId, second);
+  await act(async () => { resolveFirst(transcript(first)); });
+  assert.equal(env.props().chat.conversation.videoId, second);
+  assert.equal(env.props().attachment.videoId, second);
+  assert.equal(env.props().contextReady, true);
+  await act(() => env.root.root.findByProps({ accessibilityLabel: 'Open video' }).props.onPress());
+  assert.deepEqual(env.opened, [second]);
+  assert.equal(env.calls.filter(c => c.op === 'ai_chat_video_open' && c.transcript?.videoId === first).length, 0);
+  assert.equal(env.calls.filter(c => c.op === 'ai_chat_send').length, 0);
+});
