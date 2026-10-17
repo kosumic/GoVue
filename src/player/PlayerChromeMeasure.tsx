@@ -28,6 +28,7 @@ export function usePlayerChromeMeasure(
       Math.max(48, widths.speed! + 12) +
       Math.max(48, widths.quality! + 12) +
       48 +
+      48 +
       16 >
       width;
   const probe = (

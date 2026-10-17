@@ -6,6 +6,7 @@ import type { Transcript } from '../youtube/transcript';
 import type { useMediaBrowser } from '../media/useMediaBrowser';
 import { useSurfaceOrientation } from './useSurfaceOrientation';
 import { usePipControls } from './usePipControls';
+import { usePlayerTranscript } from './usePlayerTranscript';
 
 export type QueueItem = {
   videoId: string;
@@ -43,6 +44,10 @@ export function usePlayerSession(
   const [mini, updateMini] = useState(false);
   const [locked, setLocked] = useState(false);
   const [pip, setPip] = useState(false);
+  const transcript = usePlayerTranscript(media.playback?.videoId ?? null);
+  useEffect(() => {
+    if (mini || pip || locked) transcript.close();
+  }, [mini, pip, locked, transcript.close]);
   const { fullscreen, setFullscreen } = useSurfaceOrientation({
     visible: watchVisible && !!media.playback,
     mini,
@@ -249,5 +254,6 @@ export function usePlayerSession(
     captionBusy,
     captionError,
     selectCaption,
+    transcript,
   };
 }
