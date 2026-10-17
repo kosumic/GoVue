@@ -30,6 +30,7 @@ import {
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import { Sparkles } from 'lucide-react-native';
 import { coreRequest, saveFileToDevice } from '../../modules/lingoplay-core';
 import type { MediaSettings } from '../core/media';
 import { Range } from '../player/Range';
@@ -37,6 +38,7 @@ import { SheetRow } from '../player/PlayerSheet';
 import { YouTubeSwitch as Switch } from './YouTubeSwitch';
 import { haptic } from '../player/Haptics';
 import { useReducedMotion } from '../player/useReducedMotion';
+import { AiSettings } from './AiSettings';
 
 type Node = {
   id?: string;
@@ -54,6 +56,7 @@ const iconMap = {
   sponsorblock: Shield,
   data: BackupRestore,
   downloads: Download,
+  ai: Sparkles,
 };
 const categoryNames: Record<string, string> = {
   sponsor: 'Skip sponsors',
@@ -74,11 +77,11 @@ export function ExtensionSettings({
   onNavigate,
   onClearCache,
 }: {
-  page: 'settings' | 'data' | 'about';
+  page: 'settings' | 'ai' | 'data' | 'about';
   settings: MediaSettings;
   onSettings: (s: Partial<MediaSettings>) => void;
   onClose: () => void;
-  onNavigate: (page: 'settings' | 'data' | 'about' | 'library') => void;
+  onNavigate: (page: 'settings' | 'ai' | 'data' | 'about' | 'library') => void;
   onClearCache: () => void;
 }) {
   const colors = useThemeColors();
@@ -135,11 +138,12 @@ export function ExtensionSettings({
         <SheetRow
           key={key}
           title={node.title}
+          detail={node.summary}
           section
           icon={<Icon color={colors.ink} size={24} />}
           trailing={<ChevronRight color={colors.muted} size={24} />}
           onPress={() =>
-            onNavigate(node.id === 'downloads' ? 'library' : 'data')
+            onNavigate(node.id === 'downloads' ? 'library' : node.id === 'ai' ? 'ai' : 'data')
           }
         />
       );
@@ -277,9 +281,11 @@ export function ExtensionSettings({
         <Text accessibilityRole="header" style={s.title}>
           {page === 'settings'
             ? 'Extensions'
-            : page === 'data'
-              ? 'Backup & restore'
-              : 'About'}
+            : page === 'ai'
+              ? 'AI'
+              : page === 'data'
+                ? 'Backup & restore'
+                : 'About'}
         </Text>
         {page === 'settings' && (
           <Pressable
@@ -311,7 +317,7 @@ export function ExtensionSettings({
           </Pressable>
         )}
       </View>
-      <ScrollView contentContainerStyle={s.body}>
+      {page === 'ai' ? <AiSettings /> : <ScrollView contentContainerStyle={s.body}>
         {page === 'settings' && nodes.map((node) => render(node))}
         {page === 'data' && (
           <>
@@ -470,7 +476,7 @@ export function ExtensionSettings({
             {notice}
           </Text>
         )}
-      </ScrollView>
+      </ScrollView>}
     </View>
   );
 }

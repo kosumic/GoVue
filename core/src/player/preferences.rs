@@ -143,6 +143,7 @@ pub(crate) fn catalog() -> Value {
         {"id":"gesture","title":"Gestures","children":[gesture("Windowed","In embedded player"),gesture("Fullscreen","In fullscreen")]},
         {"id":"background","title":"Background & mini player","children":[toggle("autoPip","Picture-in-picture"),toggle("miniPlayer","In-app mini player"),toggle("backgroundPlayback","Background playback")]},
         {"id":"sponsorblock","title":"SponsorBlock","children":[{"key":"categories","title":"Skip categories","kind":"categories"},toggle("sponsorCountdown","Sponsor skip countdown")]},
+        {"id":"ai","title":"AI","summary":"Providers and models","kind":"nav"},
         {"id":"data","title":"Backup & restore","kind":"nav"},
         {"id":"downloads","title":"Downloads","kind":"nav"}
     ])
