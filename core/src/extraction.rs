@@ -605,7 +605,11 @@ fn caption_address(raw: &str, id: &str, po_token: Option<&str>) -> Result<String
 }
 fn transcript(job: &Job, root: &str, id: &str, track: &str, fresh: bool) -> Result<Value> {
     if !fresh {
-        let saved = crate::dispatch(&json!({"op":"restore","videoId":id}).to_string(), root)?;
+        let mut command = json!({"op":"restore","videoId":id});
+        if track != "default" {
+            command["trackId"] = json!(track);
+        }
+        let saved = crate::dispatch(&command.to_string(), root)?;
         if !saved.is_null() && (track == "default" || saved["trackId"] == track) {
             return Ok(saved);
         }

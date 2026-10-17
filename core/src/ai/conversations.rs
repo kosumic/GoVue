@@ -497,16 +497,26 @@ fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
         let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
         let chat = read(root, string(c, "chatId")?)?;
         let reference = chat.transcript.ok_or("This chat has no transcript.")?;
-        if c["videoId"] != reference.video_id || c["trackId"] != reference.track_id {
+        if c["videoId"] != reference.video_id {
             return Err("This transcript is no longer attached to the chat.".into());
         }
+        let track_id = string(c, "trackId")?;
         let _guard = crate::REQUEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let cue = crate::with_transcript(
+        let allowed = crate::with_transcript(
             root.to_str().ok_or("Invalid transcript storage path.")?,
             &reference.video_id,
             &reference.track_id,
+            |data| data.tracks.iter().any(|track| track.id == track_id),
+        )?;
+        if !allowed {
+            return Err("This transcript is no longer attached to the chat.".into());
+        }
+        let cue = crate::with_transcript(
+            root.to_str().ok_or("Invalid transcript storage path.")?,
+            &reference.video_id,
+            track_id,
             |data| games::Cue::from_transcript(data, string(c, "cueId")?),
         )??;
         (reference.video_id, cue)

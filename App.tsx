@@ -796,6 +796,11 @@ function Browser() {
               <View style={[s.transcript, transcriptFrame]}>
                 <TranscriptPanel
                   data={session.transcript.data}
+                  comparison={session.transcript.comparison}
+                  trackIds={session.transcript.trackIds}
+                  comparisonLoading={session.transcript.comparisonLoading}
+                  comparisonError={session.transcript.comparisonError}
+                  onSelectTrack={session.transcript.selectTrack}
                   loading={session.transcript.loading}
                   cached={session.transcript.cached}
                   error={session.transcript.error}

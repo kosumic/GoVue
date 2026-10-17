@@ -19,7 +19,11 @@ feature parity.
 
 The player's Transcript and AI buttons appear before speed and quality. Transcript
 opens a searchable reader with language selection, playback following, and
-tap-to-seek captions. AI opens the same full-screen conversation workspace as
+tap-to-seek captions. Select up to two transcript languages to compare captions
+interleaved in timestamp order, even when the languages split lines differently.
+Search matches either language and keeps the paired lines together; copy and
+share include both selected languages. Tap a selected language to remove it.
+AI opens the same full-screen conversation workspace as
 **Chat** in the bottom navigation. Open the conversation drawer for saved chats,
 new chats, providers, and token usage. Opening AI from a video reopens its one
 saved conversation, or creates an empty chat with the transcript as context.
