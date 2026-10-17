@@ -17,8 +17,10 @@ The port follows LiTube commit `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f`
 The port is in progress; an implemented control is not evidence of verified
 feature parity.
 
-Transcript-reader and AI work is deferred. Their existing modules and stored
-data are retained, with their former documentation in
+The player's transcript button, beside speed and quality, opens a searchable
+reader with language selection, playback following, and tap-to-seek captions.
+AI work is deferred; its existing modules and stored data are retained.
+Earlier feature documentation remains in
 [docs/legacy-features.md](docs/legacy-features.md).
 
 Player subtitles, media resolution and download extraction run through the

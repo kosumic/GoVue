@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { Copy, Download, LocateFixed, RotateCw, Search, Share2, Sparkles, X } from 'lucide-react-native';
-import { colors } from '../theme';
+import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { currentSegmentIndex, timestamp, type Segment, type Transcript } from '../youtube/transcript';
 import { exportTranscript, searchTranscript } from '../core/transcripts';
 import { IconButton } from './IconButton';
@@ -16,14 +16,16 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   cached: boolean;
   position: number | null;
   pauseAfterLine: boolean;
-  onPauseAfterLine: (enabled: boolean) => void;
+  onPauseAfterLine?: (enabled: boolean) => void;
   onClose: () => void;
   onExtract: (track?: string) => void;
   onSeek: (seconds: number) => void;
-  onSummarize: () => void;
+  onSummarize?: () => void;
   onDownload: () => void;
   downloadDisabled: boolean;
 }) {
+  const colors = useThemeColors();
+  const styles = useThemeStyles(makeStyles);
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState(false);
   const [wordFeedback, setWordFeedback] = useState('');
@@ -107,7 +109,7 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
           if (!data) return;
           try { await Share.share({ message: await exportTranscript(data), title: data.title }); } catch { Alert.alert('Could not share transcript'); }
         }} />
-        <IconButton compact icon={Sparkles} label="Summarize video with AI" disabled={!data || loading || !!error} onPress={onSummarize} />
+        {onSummarize && <IconButton compact icon={Sparkles} label="Summarize video with AI" disabled={!data || loading || !!error} onPress={onSummarize} />}
         <IconButton compact icon={Download} label="Download this video" disabled={downloadDisabled} onPress={onDownload} />
         <IconButton compact icon={X} label="Close transcript" onPress={onClose} />
       </View>
@@ -117,11 +119,11 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
         <View style={styles.empty}><Text style={styles.emptyTitle}>Transcript unavailable</Text><Text accessibilityRole="alert" style={styles.help}>{error}</Text>
           <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>
       ) : data ? <>
-        <View style={styles.pauseRow}>
+        {onPauseAfterLine && <View style={styles.pauseRow}>
           <Text style={styles.pauseLabel}>Pause after each line</Text>
           <Switch accessibilityLabel="Pause after each transcript line" accessibilityHint="Resume playback when you are ready for the next line"
             value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
-        </View>
+        </View>}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tracks, { height: Math.max(48, Math.ceil(20 * fontScale) + 28) }]} contentContainerStyle={styles.trackContent}>
           {data.tracks.map(track => <Pressable key={track.id} accessibilityRole="button" accessibilityState={{ selected: track.id === data.trackId }}
             onPress={() => { setCopied(false); onExtract(track.id); }} style={[styles.track, track.id === data.trackId && styles.selectedTrack]}>
@@ -166,7 +168,7 @@ export function TranscriptPanel({ data, loading, error, cached, position, pauseA
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   pauseRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, minHeight: 48 },
   pauseLabel: { flex: 1, color: colors.ink, fontSize: 13 },
   panel: { flex: 1, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.line },

@@ -50,6 +50,8 @@ import {
   type DownloadTarget,
 } from './src/components/DownloadConfirm';
 import { DownloadLibrary } from './src/components/DownloadLibrary';
+import { TranscriptPanel } from './src/components/TranscriptPanel';
+import { useTranscriptPosition } from './src/media/useTranscriptPosition';
 import {
   MediaResolver,
   type MediaResolverHandle,
@@ -129,6 +131,7 @@ function Browser() {
     index: number;
   } | null>(null);
   const [frame, setFrame] = useState({ width: 0, height: 0 });
+  const [workspaceSize, setWorkspaceSize] = useState({ width: 0, height: 0 });
   const [downloadTarget, setDownloadTarget] = useState<DownloadTarget | null>(
     null,
   );
@@ -194,6 +197,7 @@ function Browser() {
     return next;
   }
   const navigate = useCallback((url: string) => {
+    sessionRef.current?.transcript.close();
     const sequence = ++navigationSequence.current;
     run(async () => {
       const current = mediaRef.current;
@@ -311,6 +315,10 @@ function Browser() {
       state.setLocked(false);
       return true;
     }
+    if (state.transcript.open) {
+      state.transcript.close();
+      return true;
+    }
     if (state.fullscreen) {
       state.setFullscreen(false);
       if (mediaRef.current.playback?.offline) {
@@ -368,6 +376,8 @@ function Browser() {
   }, [goBack]);
   function updateUrl(id: number, url: string, back: boolean) {
     if (!isWebUrl(url)) return;
+    if (id === watchRef.current?.id && youtubeVideoId(url) !== watchRef.current.videoId)
+      sessionRef.current.transcript.close();
     backAvailable.current.set(id, back);
     const tab = browserRef.current.tabs.find((t) => t.id === id);
     if (tab?.url !== url)
@@ -611,13 +621,9 @@ function Browser() {
     onDismiss: () => media.closePlayer(false, true),
     onError: () => setNotice('Could not update mini-player placement.'),
   });
-  const nativeFrame = session.fullscreen
-    ? StyleSheet.absoluteFill
-    : session.mini
-      ? mini.style
-      : media.playback?.offline
-        ? { top: 48, left: 0, right: 0, height: (frame.width * 9) / 16 }
-        : embeddedPlayerFrame(media.playerLayout, frame.width, frame.height);
+  const embeddedFrame = media.playback?.offline
+    ? { top: 48, left: 0, width: frame.width, height: (frame.width * 9) / 16 }
+    : embeddedPlayerFrame(media.playerLayout, frame.width, frame.height);
   const playerHidden =
     !session.fullscreen &&
     !session.mini &&
@@ -627,6 +633,28 @@ function Browser() {
       youtubeVideoId(
         browser.tabs.find((t) => t.id === browser.activeId)?.url || '',
       ) !== watch?.videoId);
+  const transcriptVisible = session.transcript.open && !session.mini && !session.pip && !page && !playerHidden;
+  const transcriptBeside = workspaceSize.width > workspaceSize.height;
+  const transcriptWidth = Math.min(400, workspaceSize.width * 0.4);
+  const portraitVideoHeight = Math.min(workspaceSize.height * 0.45, workspaceSize.width * 9 / 16);
+  const nativeFrame = session.fullscreen
+    ? transcriptVisible
+      ? transcriptBeside
+        ? { top: 0, left: 0, bottom: 0, right: transcriptWidth }
+        : { top: 0, left: 0, right: 0, height: portraitVideoHeight }
+      : StyleSheet.absoluteFill
+    : session.mini
+      ? mini.style
+      : transcriptVisible && transcriptBeside
+        ? { top: 0, left: 0, bottom: 0, right: transcriptWidth }
+        : embeddedFrame;
+  const transcriptFrame = transcriptBeside
+    ? { top: 0, right: 0, bottom: 0, width: transcriptWidth }
+    : { top: session.fullscreen ? portraitVideoHeight : Math.max(0, embeddedFrame.top + embeddedFrame.height), left: 0, right: 0, bottom: 0 };
+  const remoteTranscript = media.cast.state.active && media.cast.state.acknowledged && !media.cast.state.link;
+  const transcriptPosition = useTranscriptPosition(mediaView, media.player, media.playback?.videoId ?? null,
+    transcriptVisible && !remoteTranscript, media.playback?.videoId ?? null,
+    session.transcript.data, media.settings.pauseAfterLine);
   return (
     <ThemeContext.Provider value={palette}>
       <HapticStrength.Provider value={media.settings.hapticStrength}>
@@ -641,6 +669,7 @@ function Browser() {
           <View
             style={s.workspace}
             onLayout={(e) => {
+              setWorkspaceSize(e.nativeEvent.layout);
               if (!session.fullscreen) setFrame(e.nativeEvent.layout);
             }}
           >
@@ -740,6 +769,30 @@ function Browser() {
                   }
                 />
               </Animated.View>
+            )}
+            {transcriptVisible && (
+              <View style={[s.transcript, transcriptFrame]}>
+                <TranscriptPanel
+                  data={session.transcript.data}
+                  loading={session.transcript.loading}
+                  cached={session.transcript.cached}
+                  error={session.transcript.error}
+                  position={remoteTranscript ? media.cast.state.position ?? null : transcriptPosition.position}
+                  pauseAfterLine={media.settings.pauseAfterLine}
+                  onPauseAfterLine={remoteTranscript ? undefined : pauseAfterLine => media.updateSettings({ pauseAfterLine })}
+                  onClose={session.transcript.close}
+                  onExtract={session.transcript.extract}
+                  onSeek={seconds => run(async () => {
+                    const videoId = session.transcript.data?.videoId;
+                    if (!videoId || videoId !== mediaRef.current.playback?.videoId) return;
+                    transcriptPosition.reset();
+                    await media.seekTo(seconds);
+                    if (videoId === mediaRef.current.playback?.videoId) await media.play();
+                  })}
+                  onDownload={() => openDownload()}
+                  downloadDisabled={!media.playback}
+                />
+              </View>
             )}
             {!!page && (
               <View style={s.nativePage}>
@@ -908,6 +961,7 @@ const makeStyles = (colors: ThemeColors) =>
       zIndex: 2,
     },
     hidden: { opacity: 0 },
+    transcript: { position: 'absolute', zIndex: 3, backgroundColor: colors.background },
     nativePage: {
       ...StyleSheet.absoluteFill,
       zIndex: 3,
