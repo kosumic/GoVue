@@ -9,6 +9,7 @@ import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { gameDocument, scriptJSON } from '../ai/gameRuntime';
 import { useGameAudio } from '../ai/useGameAudio';
 import type { GameAction, LearningGame } from '../ai/games';
+import { useHaptic } from '../player/Haptics';
 
 type Props = {
   game: LearningGame;
@@ -115,6 +116,7 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
 export function LearningGameCard(props: Props) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
+  const copyFeedback = useHaptic();
   const [expanded, setExpanded] = useState(false);
   const [reload, setReload] = useState(0);
   const [foreground, setForeground] = useState(AppState.currentState === 'active');
@@ -137,6 +139,7 @@ export function LearningGameCard(props: Props) {
       const { text } = await aiRequest<{ text: string }>({ op: 'ai_game_export', chatId: props.chatId, messageId: props.messageId, gameId: props.game.id });
       if (!mounted.current) return;
       Clipboard.setString(text);
+      copyFeedback();
       setCopyState('copied');
     } catch (error) {
       if (mounted.current) {
@@ -149,7 +152,7 @@ export function LearningGameCard(props: Props) {
   useEffect(() => { if (!active) setExpanded(false); }, [active]);
   const controls = <View style={styles.controls}>
     <Text accessibilityRole="header" style={styles.title}>{props.game.definition.title}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={copyState === 'copied' ? 'Game copied' : 'Copy game'} disabled={copyState === 'copying'} onPress={() => void copyGame()} style={styles.control}>
+    <Pressable accessibilityRole="button" accessibilityLabel={copyState === 'copied' ? 'Game copied' : 'Copy game'} accessibilityLiveRegion="polite" disabled={copyState === 'copying'} onPress={() => void copyGame()} style={styles.control}>
       {copyState === 'copying' ? <ActivityIndicator size="small" color={colors.muted} /> : copyState === 'copied' ? <Check size={17} color={colors.accent} /> : <Copy size={17} color={colors.muted} />}
     </Pressable>
     {active && <>

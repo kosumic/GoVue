@@ -6,6 +6,12 @@ export type TokenUsage = {
   cacheReadTokens?: number; cacheCreationTokens?: number; reasoningTokens?: number;
   latestContextTokens?: number; streamMs?: number;
 };
+export type MessageUsageDetails = {
+  totalTokens: number | null;
+  cacheStatus: 'hit' | 'miss' | 'unknown';
+  cacheHitRate: number | null;
+  outputTokensPerSecond: number | null;
+};
 export type UsageStats = { [K in keyof TokenUsage]: number | null } & {
   replyCount: number; unreportedReplies: number; chatCount: number; activeDays: number | null;
   averagePerChat: number | null; averagePerDay: number | null;

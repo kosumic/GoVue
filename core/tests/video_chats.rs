@@ -279,5 +279,71 @@ fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
         ok(root, json!({"op":"ai_chat_video_open","videoId":video}))["id"],
         id
     );
-    assert!(!fs::read_to_string(path).unwrap().contains("FIXTURE_SECRET"));
+    assert!(
+        !fs::read_to_string(&path)
+            .unwrap()
+            .contains("FIXTURE_SECRET")
+    );
+
+    // Editing validates before persisting, then removes the abandoned branch from inference.
+    let before = ok(root, json!({"op":"ai_chat_get","chatId":id}));
+    let first_user = before["messages"][0]["id"].clone();
+    let second_user = before["messages"][2]["id"].clone();
+    let bytes = fs::read(&path).unwrap();
+    for command in [
+        json!({"editMessageId":before["messages"][1]["id"],"prompt":"Changed"}),
+        json!({"editMessageId":"missing","prompt":"Changed"}),
+        json!({"editMessageId":second_user,"prompt":"  "}),
+        json!({"editMessageId":second_user,"prompt":"Changed","retry":true}),
+    ] {
+        let mut request = json!({"op":"ai_chat_send","chatId":id,"id":provider});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(command.as_object().unwrap().clone());
+        assert_eq!(call(root, request)["ok"], false);
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            bytes,
+            "invalid edits preserve history"
+        );
+    }
+    let edited = ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":id,"id":provider,"editMessageId":second_user,"prompt":"Edited follow up"}),
+    );
+    assert_eq!(edited["conversation"]["messages"][0], before["messages"][0]);
+    assert_eq!(edited["conversation"]["messages"][1], before["messages"][1]);
+    assert_eq!(edited["conversation"]["messages"][2]["id"], second_user);
+    assert_ne!(
+        edited["conversation"]["messages"][3]["id"],
+        before["messages"][3]["id"]
+    );
+    wait(root, &edited);
+    let reset = ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":id,"id":provider,"editMessageId":first_user,"prompt":"Restart with a new question"}),
+    );
+    assert_eq!(
+        reset["conversation"]["messages"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(reset["conversation"]["messages"][0]["id"], first_user);
+    assert_eq!(reset["conversation"]["transcript"], before["transcript"]);
+    assert_eq!(reset["conversation"]["model"], before["model"]);
+    wait(root, &reset);
+    let request = backend.requests.lock().unwrap().last().unwrap().clone();
+    let wire = request.to_string();
+    assert!(wire.contains("Restart with a new question"));
+    assert!(!wire.contains("Edited follow up"));
+    assert!(!wire.contains("Follow up"));
+    assert!(wire.contains("Caption context for the question."));
+    assert_eq!(request["model"], "second");
+    assert_eq!(
+        ok(root, json!({"op":"ai_chat_get","chatId":id}))["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }

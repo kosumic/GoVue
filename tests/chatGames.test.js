@@ -65,7 +65,7 @@ test('game actions serialize revisions, survive stale chat snapshots, and queue 
   await env.reply('ai_game_action', { game: game(2), notify: true });
   await second;
   assert.equal(env.calls.filter(c => c.command.op === 'ai_chat_send').length, 1, 'a submit must not interrupt the current response');
-  await env.reply('ai_poll', { status: 'completed', text: 'Explained.' });
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'completed', text: 'Explained.' } });
   const older = saved(0, true);
   older.activeTask = null;
   older.messages.at(-1).status = 'completed';

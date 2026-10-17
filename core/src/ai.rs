@@ -24,6 +24,7 @@ mod connections;
 mod conversations;
 mod games;
 mod tools;
+mod updates;
 mod usage;
 
 const AUTH: &str = "https://auth.openai.com";
@@ -310,6 +311,7 @@ struct Job {
     cancelled: AtomicBool,
     state: Mutex<Value>,
     activity: Mutex<activity::Tape>,
+    updates: Mutex<updates::Cursor>,
     conversation: OnceLock<(PathBuf, String)>,
     last_status: AtomicI32,
 }
@@ -386,6 +388,7 @@ fn new_job(owner: &str) -> Result<Arc<Job>> {
         cancelled: AtomicBool::new(false),
         state: Mutex::new(json!({"status":"running","text":""})),
         activity: Mutex::new(activity::Tape::default()),
+        updates: Mutex::new(updates::Cursor::default()),
         conversation: OnceLock::new(),
         last_status: AtomicI32::new(0),
     });
@@ -1964,7 +1967,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             });
             Ok(json!({"taskId":job.id}))
         }
-        "ai_poll" | "ai_cancel" | "ai_forget" => {
+        "ai_chat_poll" | "ai_poll" | "ai_cancel" | "ai_forget" => {
             let id = string(&c, "taskId")?;
             let job = jobs()
                 .lock()
@@ -1972,6 +1975,11 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 .get(id)
                 .cloned()
                 .ok_or("AI request is no longer available.")?;
+            if c["op"] == "ai_chat_poll" {
+                let mut cursor = job.updates.lock().unwrap_or_else(|e| e.into_inner());
+                let state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                return Ok(cursor.poll(&state, usage::count(&c["afterRevision"])));
+            }
             if c["op"] == "ai_poll" {
                 return Ok(job.state.lock().unwrap_or_else(|e| e.into_inner()).clone());
             }
