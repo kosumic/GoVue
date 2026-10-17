@@ -5,10 +5,29 @@
     "version": "0.1.0",
     "scheme": "lingoplay",
     "orientation": "default",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "android": {
       "package": "io.github.kaminarios.lingoplay",
       "allowBackup": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": [
+            { "scheme": "https", "host": "youtube.com" },
+            { "scheme": "https", "host": "www.youtube.com" },
+            { "scheme": "https", "host": "m.youtube.com" },
+            { "scheme": "https", "host": "music.youtube.com" },
+            { "scheme": "https", "host": "youtu.be" }
+          ]
+        },
+        {
+          "action": "SEND",
+          "category": ["DEFAULT"],
+          "data": [{ "mimeType": "text/plain" }]
+        }
+      ],
       "permissions": [
         "INTERNET"
       ],

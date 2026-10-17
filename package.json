@@ -34,10 +34,18 @@
     "@react-native-clipboard/clipboard": "1.16.3",
     "bgutils-js": "^4.0.3",
     "expo": "~57.0.30",
+    "expo-brightness": "~57.0.2",
     "expo-dev-client": "~57.0.20",
+    "expo-document-picker": "~57.0.3",
     "expo-file-system": "~57.0.7",
+    "expo-haptics": "~57.0.3",
+    "expo-linear-gradient": "~57.0.2",
+    "expo-navigation-bar": "~57.0.3",
+    "expo-network": "~57.0.2",
+    "expo-screen-orientation": "~57.0.3",
     "expo-sharing": "~57.0.23",
     "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.4",
     "expo-video": "~57.0.5",
     "expo-web-browser": "~57.0.3",
     "lucide-react-native": "^1.52.0",
@@ -62,7 +70,18 @@
     "enableCodeHighlight": true,
     "enableMath": true,
     "codeHighlightLanguages": [
-      "rust", "typescript", "javascript", "tsx", "python", "bash", "json", "yaml", "markdown", "c", "cpp", "go"
+      "rust",
+      "typescript",
+      "javascript",
+      "tsx",
+      "python",
+      "bash",
+      "json",
+      "yaml",
+      "markdown",
+      "c",
+      "cpp",
+      "go"
     ]
   },
   "engines": {

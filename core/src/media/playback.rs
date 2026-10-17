@@ -1,9 +1,9 @@
-//! Playback choices and HLS byte-range playlists for YouTube's AVC/AAC files.
+//! Playback choices and HLS byte-range playlists for YouTube's indexed files.
 //! Playlists and signed source addresses remain in the loopback proxy's memory.
 use super::{Result, media_url};
 use serde_json::{Value, json};
 
-pub(super) const SPEEDS: [f64; 10] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+pub(crate) const SPEEDS: [f64; 10] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
 pub(crate) fn range(value: &Value, length: u64) -> Option<(u64, u64)> {
     let number = |v: &Value| v.as_u64().or_else(|| v.as_str()?.parse().ok());
@@ -37,20 +37,25 @@ pub(crate) fn videos(catalog: &Value) -> Result<Vec<&Value>> {
                 .as_u64()
                 .is_some_and(|n| n > 0 && n <= 100_000_000_000)
                 && s["height"].as_u64().is_some_and(|h| h > 0 && h <= 8640)
+                && s["supported"] != false
                 && s["url"].as_str().and_then(media_url).is_some()
-                && mime.starts_with("video/mp4")
-                && mime.contains("avc1")
+                && matches!(super::container(s), Some("video/mp4" | "video/webm"))
+                && ["avc1", "vp09", "vp9", "av01", "hvc1", "hev1"]
+                    .iter()
+                    .any(|codec| mime.contains(codec))
                 && (s["kind"] == "combined" || (s["kind"] == "video" && has_audio && indexed(s)))
         })
         .collect();
     videos.sort_by_key(|s| {
         std::cmp::Reverse((
             s["height"].as_u64().unwrap_or(0),
+            s["fps"].as_u64().unwrap_or(0),
             s["kind"] == "video",
+            codec_priority(s),
             s["bitrate"].as_u64().unwrap_or(0),
         ))
     });
-    videos.dedup_by_key(|s| s["height"].as_u64());
+    videos.dedup_by_key(|s| (s["height"].as_u64(), s["fps"].as_u64()));
     videos.truncate(16);
     if videos.is_empty() {
         return Err("No playable video formats are available. Refresh the video.".into());
@@ -59,26 +64,57 @@ pub(crate) fn videos(catalog: &Value) -> Result<Vec<&Value>> {
 }
 
 pub(crate) fn audio(catalog: &Value) -> Option<&Value> {
+    audio_for(catalog, "")
+}
+
+pub(crate) fn audio_for<'a>(catalog: &'a Value, key: &str) -> Option<&'a Value> {
     catalog["streams"]
         .as_array()?
         .iter()
         .filter(|s| {
             let mime = s["mimeType"].as_str().unwrap_or("");
             s["kind"] == "audio"
-                && mime.starts_with("audio/mp4")
-                && mime.contains("mp4a")
+                && ((super::container(s) == Some("audio/mp4") && mime.contains("mp4a"))
+                    || (super::container(s) == Some("audio/webm") && mime.contains("opus")))
+                && s["supported"] != false
                 && indexed(s)
                 && s["url"].as_str().and_then(media_url).is_some()
+                && (key.is_empty() || s["audioKey"] == key)
         })
-        .max_by_key(|s| s["bitrate"].as_u64().unwrap_or(0))
+        .max_by_key(|s| {
+            (
+                s["audioOriginal"] == true,
+                s["audioDefault"] == true,
+                s["bitrate"].as_u64().unwrap_or(0),
+            )
+        })
+}
+
+fn codec_priority(stream: &Value) -> u8 {
+    let mime = stream["mimeType"].as_str().unwrap_or("");
+    if mime.contains("avc1") {
+        4
+    } else if mime.contains("vp09") || mime.contains("vp9") {
+        3
+    } else if mime.contains("hvc1") || mime.contains("hev1") {
+        2
+    } else if mime.contains("av01") {
+        1
+    } else {
+        0
+    }
 }
 
 pub(super) fn choices(catalog: &Value) -> Result<Value> {
     Ok(json!(
         videos(catalog)?
             .iter()
-            .map(|s| json!({"height":s["height"],
-        "label":format!("{}p", s["height"].as_u64().unwrap())}))
+            .map(|s| {
+                let fps=s["fps"].as_u64().unwrap_or(0);
+                let mut choice=json!({"height":s["height"],"label":format!("{}p{}",s["height"].as_u64().unwrap(),if fps>30 {fps.to_string()}else{String::new()})});
+                if fps>0 {choice["fps"]=json!(fps);}
+                choice
+            })
             .collect::<Vec<_>>()
     ))
 }

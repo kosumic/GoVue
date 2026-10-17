@@ -74,3 +74,45 @@ test('releases the old video slot on in-page navigation and ignores stale native
     assert.equal(env.window.document.documentElement.dataset.lingoplayNativePlayer, 'true');
   } finally { env.close(); }
 });
+
+test('a late metadata response cannot start a decoder that cancels the current request', async () => {
+  const env = setup();
+  try {
+    const metadata = new Map();
+    const decoded = [];
+    env.player.getPlayerResponse = () => ({ videoDetails: { videoId }, streamingData: { formats: [{ itag: 18, url: 'https://example.invalid/in-memory-media' }] } });
+    env.window.__lingoplayMediaInfo = () => new Promise(resolve => metadata.set(metadata.size, resolve));
+    env.window.__lingoplayDecode = async (_formats, _video, request) => {
+      decoded.push(request);
+      return [{ url: 'https://example.invalid/in-memory-media' }];
+    };
+    const older = env.window.__lingoplayMedia.resolve('old-document');
+    const newer = env.window.__lingoplayMedia.resolve('current-document');
+    metadata.get(1)({});
+    await newer;
+    metadata.get(0)({});
+    await older;
+    assert.deepEqual(decoded, ['current-document']);
+    assert.deepEqual(env.messages.filter(m => m.type === 'media').map(m => m.requestId), ['current-document']);
+  } finally { env.close(); }
+});
+
+test('cancel and navigation retire metadata work before it can decode or publish', async () => {
+  const env = setup();
+  try {
+    let release;
+    env.window.__lingoplayMediaInfo = () => new Promise(resolve => { release = resolve; });
+    env.window.__lingoplayDecode = async () => { assert.fail('retired requests must not decode'); };
+    const pending = env.window.__lingoplayMedia.resolve('cancelled-request');
+    env.window.__lingoplayMedia.cancel('unrelated-request');
+    env.window.__lingoplayMedia.cancel('cancelled-request');
+    release({});
+    await pending;
+    const navigated = env.window.__lingoplayMedia.resolve('old-video');
+    env.window.history.pushState({}, '', `/watch?v=${otherVideoId}`);
+    env.window.__lingoplayMedia.configure({});
+    release({});
+    await navigated;
+    assert.equal(env.messages.filter(m => m.type === 'media').length, 0);
+  } finally { env.close(); }
+});

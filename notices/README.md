@@ -2,9 +2,13 @@
 
 The injected player decoder bundles [YouTube.js](https://github.com/LuanRT/YouTube.js) and [BgUtils](https://github.com/LuanRT/BgUtils). Their MIT notices are included here and in the generated JavaScript shipped with the app.
 
-Litube was used as an implementation reference. Its Kotlin downloader, Android player, and GPL JavaScript were not copied into this project. LingoPlay implements the corresponding behavior using its shared React Native/Rust architecture and the upstream libraries above.
+LingoPlay is a React Native/Rust port of [HydeYYHH/Litube](https://github.com/HydeYYHH/Litube), based on commit `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f` (2026-10-16). The browser integration scripts under `src/youtube/litube/` are copied or adapted from LiTube, with the page bridge adapted to React Native. Player presentation and state are being ported to shared React Native and Rust. The shared vectors in `src/player/icons.tsx`, including the About mark, are adapted from the same revision’s Android drawables. LiTube's GNU GPL version 3 license is included in `LiTube-GPL-3.0.txt` and the repository `LICENSE`. Original MIT notices for dependencies remain applicable to those components.
 
 SponsorBlock data comes from the [SponsorBlock API](https://wiki.sponsor.ajay.app/w/API_Docs). Requests use the hash-prefix endpoint, and the client only applies matching-video segments in enabled categories.
+
+The Cast platform adapter ports LiTube's device authentication and framing helpers. Those helpers include NewTube (MIT) adaptations and Chromium (BSD) trust data; their notices are included in `NewTube-MIT.txt` and `Chromium-BSD.txt`. The Cast CRL trust anchor was regenerated from Chromium's certificate array, correcting an extra prefix byte in the reference copy. Receiver/session policy belongs in Rust; platform TLS and certificate verification stay in the native transport adapter.
+
+The shared Cast browser player bundles dash.js 4.7.4 from the same LiTube revision. Its BSD license is in `Dash-js-BSD.txt`; the bundle's third-party notices remain beside it in `core/src/cast/assets/dash.all.min.js.LICENSE.txt`. The player and its scripts are served locally inside the explicitly shared session.
 
 The Android build patches Expo Video's PiP activity lookup. Expo Video's MIT license is included in `Expo-Video-MIT.txt`.
 

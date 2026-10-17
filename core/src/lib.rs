@@ -12,9 +12,14 @@ use url::Url;
 
 uniffi::setup_scaffolding!();
 mod ai;
+mod browser;
+mod cast;
+mod downloads;
+mod gallery;
 mod language_catalog;
 mod languages;
 mod media;
+mod player;
 mod trace;
 mod transcript_playback;
 mod transport;
@@ -45,6 +50,23 @@ pub trait MediaHttp: Send + Sync {
 #[uniffi::export]
 pub fn install_media_http(backend: Box<dyn MediaHttp>) {
     transport::install_http(backend);
+}
+
+/// OS TLS and Wi-Fi access only. Protocol, routes and session ownership stay in Rust.
+#[uniffi::export(callback_interface)]
+pub trait CastPlatform: Send + Sync {
+    fn wifi_address(&self) -> String;
+    fn bind_wifi_socket(&self, socket_fd: u32, address: String) -> bool;
+    fn open(&self, host: String, port: u16) -> String;
+    fn read(&self, socket: String) -> Vec<u8>;
+    fn write(&self, socket: String, frame: Vec<u8>) -> bool;
+    fn close(&self, socket: String);
+    fn activity(&self, active: bool) -> bool;
+}
+
+#[uniffi::export]
+pub fn install_cast_platform(backend: Box<dyn CastPlatform>) {
+    cast::install(backend);
 }
 
 const MAX_BYTES: usize = 8_000_000;
@@ -335,6 +357,26 @@ fn load(root: &str, id: &str, track: &str) -> Result<Transcript> {
     Ok(data)
 }
 
+/// Caption sampling borrows the bounded cache without cloning every cue.
+fn with_transcript<T>(
+    root: &str,
+    id: &str,
+    track: &str,
+    read: impl FnOnce(&Transcript) -> T,
+) -> Result<T> {
+    let path = cache_path(root, id, track)?;
+    {
+        let docs = DOCUMENTS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((_, data)) = docs.iter().find(|(p, _)| p == &path) {
+            return Ok(read(data));
+        }
+    }
+    Ok(read(&load(root, id, track)?))
+}
+
 fn string<'a>(value: &'a Value, field: &str) -> Result<&'a str> {
     value[field]
         .as_str()
@@ -361,6 +403,15 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    if op.starts_with("cast_") {
+        return cast::dispatch(&command);
+    }
+    if op.starts_with("browser_") {
+        return browser::dispatch(&command, root);
+    }
+    if op.starts_with("player_") {
+        return player::dispatch(&command, root);
+    }
     if op.starts_with("vocabulary_") {
         return vocabulary::dispatch(&command, root);
     }
@@ -372,6 +423,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     if op.starts_with("media_") || op.starts_with("sponsor_") || op.starts_with("downloads_") {
         return media::dispatch(&command, root);
+    }
+    if op.starts_with("gallery_") {
+        return gallery::dispatch(&command, root);
     }
     if op == "info" {
         return Ok(json!({"engine": "rust", "version": env!("CARGO_PKG_VERSION")}));
