@@ -39,6 +39,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   useEffect(() => { if (!visible) { setUsageVisible(false); setHistoryVisible(false); setTranscriptVisible(false); } }, [visible]);
   useEffect(() => { setTranscriptVisible(false); }, [chatVideoId]);
   const [prompt, setPrompt] = useState('');
+  const [newChatVersion, setNewChatVersion] = useState(0);
   const [attachment, setAttachment] = useState<ChatTranscript | null>(null);
   const targets = [...ai.providers, ...ai.groups.map(g => ({ id: g.id, label: g.name, model: g.name, connected: !!g.connected, enabled: true, needsReauth: false }))];
   const selected = targets.find(p => p.id === (chats.conversation?.providerId || ai.activeId));
@@ -74,7 +75,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   }, [visible, chatVideoId, contextRetry]);
 
   function showPage(next: typeof page) { Keyboard.dismiss(); setHistoryVisible(false); ai.clear(); setPage(next); }
-  function newChat() { contextAbort.current?.abort(); setChatVideoId(null); chats.newChat(); setPrompt(''); setAttachment(null); showPage('chat'); }
+  function newChat() { contextAbort.current?.abort(); setChatVideoId(null); chats.newChat(); setNewChatVersion(value => value + 1); setPrompt(''); setAttachment(null); showPage('chat'); }
   async function choose(id: string, model: string) {
     const p = targets.find(p => p.id === id);
     if (!p?.connected || !p.enabled || p.needsReauth) { showPage('providers'); return; }
@@ -138,7 +139,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
         {page === 'chat' ? <>
           {!!contextError && <View style={styles.banner}><Text accessibilityRole="alert" style={styles.help}>{contextError}</Text><Button title="Retry transcript" onPress={() => setContextRetry(value => value + 1)} /></View>}
           {chats.conversation?.providerId && ai.ready && !selected?.connected && <View style={styles.banner}><Text style={styles.help}>Reconnect {chats.conversation.providerLabel} to continue this chat.</Text><Button title="Providers" onPress={() => showPage('providers')} /></View>}
-          <AiChat chat={chats} draft={prompt} onDraftChange={setPrompt} attachment={attachment} availableTranscript={availableTranscript}
+          <AiChat key={newChatVersion} chat={chats} draft={prompt} onDraftChange={setPrompt} attachment={attachment} availableTranscript={availableTranscript} voiceEnabled={visible && !historyVisible && !usageVisible && !transcriptVisible}
             connected={!!selected?.connected && !!selected?.enabled && !selected?.needsReauth && !!selectedModel && !ai.busy} loading={!ai.ready || !chats.ready || chats.loading || contextLoading} contextReady={contextReady}
             reasoning={reasoningName(chats.reasoningEffort ?? savedReasoning)} providerId={selected?.id} model={selectedModel}
             onSend={() => { void sendMessage(); }} onRetry={() => { if (contextReady && selected?.connected) void chats.send(selected.id, '', attachment, undefined, true); }}

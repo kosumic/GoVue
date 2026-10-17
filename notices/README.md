@@ -17,3 +17,5 @@ The bundled language picker uses language codes and aliases from the [Library of
 OpenMinis was studied as an architectural reference for model providers, account connections and token-usage reporting, including the Android usage screens at commit `b4c0661d5631ebab4d1a2e6f3fd4c805d4030a6c`. No OpenMinis code was copied or translated. LingoPlay implements the provider protocols and usage aggregation independently in its shared Rust core with shared React Native presentation and native adapters. Identity-token verification uses jsonwebtoken; its MIT notice is included in `Jsonwebtoken-MIT.txt`.
 
 AI replies and video summaries use [Enriched Markdown](https://github.com/software-mansion/enriched-markdown) for native Markdown rendering. Its license and the bundled parser, syntax-highlighting, Unicode, and math notices are included in `EnrichedMarkdown-ThirdParty.txt`.
+
+Chat voice input uses [Expo Speech Recognition](https://github.com/jamsch/expo-speech-recognition). Its MIT license is included in `Expo-Speech-Recognition-MIT.txt`.
