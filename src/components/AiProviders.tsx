@@ -41,6 +41,7 @@ export function AiProviders({ ai }: { ai: AiController }) {
   const [topP, setTopP] = useState('');
   const [query, setQuery] = useState('');
   const [transfer, setTransfer] = useState<string | null>(null);
+  const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<ConnectionPreview | null>(null);
@@ -63,6 +64,12 @@ export function AiProviders({ ai }: { ai: AiController }) {
   function clear() { ai.clear(); setError(''); setKey(''); setQuery(''); }
   function editProvider(p: Provider) { clear(); setKeySettings(null); setDraft(draftOf(p)); }
   function add(c: ProviderChoice) { clear(); setKeySettings(null); setDraft({ id: '', kind: c.kind, label: c.name, auth: c.auth[0], baseUrl: '', model: '', models: [], enabled: true, protocol: '', azure: false, appendV1Suffix: false, customUserAgent: '' }); }
+  function renderChoice(c: ProviderChoice) {
+    return <Pressable accessibilityRole="button" key={c.kind} onPress={() => add(c)} style={s.entry}>
+      <Plus size={18} color={colors.accent} />
+      <View style={s.grow}><Text style={s.label}>{c.name}</Text><Text style={s.help}>{c.description}</Text></View>
+    </Pressable>;
+  }
   function changeAuth(auth: string) {
     if (!draft || auth === (draft.auth || 'key')) return;
     setKey('');
@@ -223,7 +230,14 @@ export function AiProviders({ ai }: { ai: AiController }) {
       <Text style={s.section}>Connections</Text>
       {ai.providers.map((p, i) => <View key={p.id} style={s.row}><Pressable accessibilityRole="button" accessibilityLabel={`Edit provider ${p.label}`} style={s.grow} onPress={() => editProvider(p)}><Text style={s.label}>{p.label}</Text><Text style={s.help}>{!p.enabled ? 'Disabled' : p.needsReauth ? 'Sign-in expired' : p.connected ? `${p.models.filter(m => !m.hidden).length} models` : 'Connect to get started'}</Text></Pressable><Order up={!busy && i ? () => { void reorder(ai.providers.map(p => p.id), i, -1); } : undefined} down={!busy && i < ai.providers.length - 1 ? () => { void reorder(ai.providers.map(p => p.id), i, 1); } : undefined} /><ChevronRight size={18} color={colors.muted} /></View>)}
       <Text style={s.section}>Add a connection</Text>
-      {ai.choices.map(c => <Pressable accessibilityRole="button" key={c.kind} onPress={() => add(c)} style={s.entry}><Plus size={18} color={colors.accent} /><View style={s.grow}><Text style={s.label}>{c.name}</Text><Text style={s.help}>{c.description}</Text></View></Pressable>)}
+      {ai.choices.filter(c => !c.advanced).map(renderChoice)}
+      {ai.choices.some(c => c.advanced) && <>
+        <Pressable accessibilityRole="button" accessibilityLabel="Advanced connections" accessibilityState={{ expanded: advanced }} onPress={() => setAdvanced(value => !value)} style={s.entry}>
+          <ChevronRight size={18} color={colors.muted} style={{ transform: [{ rotate: advanced ? '90deg' : '0deg' }] }} />
+          <Text style={s.label}>Advanced connections</Text>
+        </Pressable>
+        {advanced && ai.choices.filter(c => c.advanced).map(renderChoice)}
+      </>}
       <Text style={s.section}>Model groups</Text>
       <Text style={s.help}>Group models across connections for fallback or round robin routing.</Text>
       {ai.groups.map((g, i) => <View key={g.id} style={s.row}><Pressable accessibilityRole="button" style={s.grow} onPress={() => editGroup(g)}><Text style={s.label}>{g.name}</Text><Text style={s.help}>{g.members.length} models · {g.strategy === 'loadBalance' ? 'Round robin' : 'Fallback'}</Text></Pressable><Order up={!busy && i ? () => { void reorder(ai.groups.map(g => g.id), i, -1, { kind: 'groups' }); } : undefined} down={!busy && i < ai.groups.length - 1 ? () => { void reorder(ai.groups.map(g => g.id), i, 1, { kind: 'groups' }); } : undefined} /><ChevronRight size={18} color={colors.muted} /></View>)}
