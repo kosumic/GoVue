@@ -37,10 +37,6 @@ import { BrowserTab, type TabHandle } from './src/browser/BrowserTab';
 import { isWebUrl, isYouTubeUrl, youtubeVideoId } from './src/browser/address';
 import { useMediaBrowser } from './src/media/useMediaBrowser';
 import { useDownloads } from './src/media/downloads';
-import {
-  PlayerRuntime,
-  type PlayerRuntimeHandle,
-} from './src/media/PlayerRuntime';
 import { embeddedPlayerFrame } from './src/media/playerLayout';
 import {
   usePlayerSession,
@@ -58,12 +54,11 @@ import {
   MediaResolver,
   type MediaResolverHandle,
 } from './src/media/MediaResolver';
-import { PLAYER_DECODER } from './src/youtube/generated/playerDecoder';
 import {
   BROWSER_BRIDGE,
   browserPreferencesScript,
 } from './src/youtube/browserBridge';
-import { YOUTUBE_BRIDGE } from './src/youtube/pageBridge';
+import { TokenRuntime } from './src/media/TokenRuntime';
 import { mediaSettingsScript } from './src/youtube/mediaBridge';
 import type { MediaSettings } from './src/core/media';
 import { Gallery } from './src/components/Gallery';
@@ -124,7 +119,6 @@ function Browser() {
   const watchRef = useRef(watch);
   watchRef.current = watch;
   const mediaView = useRef<WebView | null>(null);
-  const runtime = useRef<PlayerRuntimeHandle>(null);
   const nativeVideo = useRef<VideoView | null>(null);
   const [pageAgent, setPageAgent] = useState('');
   const [page, setPage] = useState<Page>(null);
@@ -162,7 +156,6 @@ function Browser() {
     mediaView,
     watch?.videoId || null,
     pageAgent,
-    runtime,
   );
   const run = (fn: () => Promise<unknown>) => {
     void fn().catch((e) => {
@@ -237,7 +230,6 @@ function Browser() {
     if (!watch || browser.tabs.some((tab) => tab.id === watch.id)) return;
     if (!mediaRef.current.playback?.offline)
       mediaRef.current.closePlayer(false, true);
-    sessionRef.current.pageTerminated();
     sessionRef.current.setMini(false);
     watchRef.current = null;
     mediaView.current = null;
@@ -601,16 +593,10 @@ function Browser() {
     }
     if (id !== watchRef.current?.id) return;
     mediaView.current = handles.current.get(id)?.view.current || null;
-    if (message.type === 'transcript') {
-      void session.handleMessage(raw, origin, message);
-      return;
-    }
     if (
       [
-        'media',
-        'mediaEval',
         'mediaReady',
-        'mediaChapters',
+        'playbackPosition',
         'playerLayout',
         'sponsorSkipped',
       ].includes(String(message.type))
@@ -695,14 +681,12 @@ function Browser() {
                       }).catch(() => {});
                     if (id === watchRef.current?.id) {
                       media.pageTerminated('The page changed. Try again.');
-                      session.pageTerminated();
                     }
                   }}
                   onDead={(id) => {
                     void browserAction('invalidate', { id }).catch(() => {});
                     if (id === watchRef.current?.id) {
                       media.pageTerminated();
-                      session.pageTerminated();
                     }
                   }}
                 />
@@ -794,8 +778,8 @@ function Browser() {
               </View>
             )}
           </View>
-          <PlayerRuntime ref={runtime} />
-          <MediaResolver ref={resolver} runtime={runtime} />
+          <TokenRuntime />
+          <MediaResolver ref={resolver} />
           <DownloadConfirm
             target={downloadTarget}
             onClose={() => setDownloadTarget(null)}

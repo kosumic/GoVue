@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { VideoPlayer } from 'expo-video';
 import type WebView from 'react-native-webview';
 import { isYouTubeUrl, youtubeVideoId } from '../browser/address';
-import { cancelPositionScript, pauseScript, playbackPositionScript } from '../youtube/pageBridge';
+import { cancelPositionScript, pauseScript, playbackPositionScript } from '../youtube/pageScripts';
 import { advanceTranscriptPlayback } from '../core/transcripts';
 import type { Transcript } from '../youtube/transcript';
 

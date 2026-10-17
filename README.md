@@ -21,6 +21,12 @@ Transcript-reader and AI work is deferred. Their existing modules and stored
 data are retained, with their former documentation in
 [docs/legacy-features.md](docs/legacy-features.md).
 
+Player subtitles, media resolution and download extraction run through the
+shared Rust extractor, independently of the browsing page. An isolated runtime
+executes token challenges; platform adapters supply HTTPS bytes and MP4 remuxing.
+There is no page-extraction fallback. See [extraction.md](docs/extraction.md) for
+the protocol, cache boundaries and current guest-client limitations.
+
 ## Development
 
 ```sh
@@ -33,6 +39,8 @@ cd android
 ```
 
 Use `npm run page:build` after editing browser injection or decoder source.
+`src/youtube/pageBridge.js` is standalone JavaScript for the WebView; the build
+generates its injection string, exposed with control helpers by `pageScripts.js`.
 Native projects and generated Rust bindings are ignored; persistent native
 configuration belongs in `app.json` or a config plugin. iOS builds require an
 Apple Silicon Mac with Xcode and `npm run ios` / `npm run prebuild:ios`.

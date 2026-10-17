@@ -131,6 +131,7 @@ public final class LingoPlayCoreModule: Module {
     }
     OnCreate {
       installMediaHttp(backend: NativeMediaHttp())
+      installExtractionHttp(backend: NativeExtractionHttp())
       installAiPlatform(platform: NativeAiPlatform())
     }
     AsyncFunction("ai") { (request: String) -> String in

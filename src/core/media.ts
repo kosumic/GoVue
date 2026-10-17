@@ -3,6 +3,7 @@ import {
   supportedMediaFormats,
 } from '../../modules/lingoplay-core';
 import { Platform } from 'react-native';
+import { extract } from './extraction';
 
 export type GestureKey =
   `gesture${'Tap' | 'DoubleTap' | 'LongPress' | 'Brightness' | 'Volume' | 'Seek' | 'Fullscreen'}${'Windowed' | 'Fullscreen'}`;
@@ -160,19 +161,10 @@ export type PlaybackSource = {
 
 export const mediaSettings = (settings?: Partial<MediaSettings>) =>
   coreRequest<MediaSettings>({ op: 'media_settings', settings });
-export async function acceptMedia(
-  raw: string,
-  origin: string,
-  requestId: string,
-  videoId: string,
-) {
-  const catalog = await coreRequest<MediaCatalog>({
-    op: 'media_catalog',
-    raw,
-    origin,
-    requestId,
-    videoId,
-  });
+export async function extractMedia(videoId: string, signal?: AbortSignal, fresh = false) {
+  return applyMediaCapabilities(await extract<MediaCatalog>('media', videoId, { signal, fresh }));
+}
+async function applyMediaCapabilities(catalog: MediaCatalog) {
   const keys = await supportedMediaFormats(
     catalog.streams.map((s) => ({
       key: s.key || `${s.itag}:`,

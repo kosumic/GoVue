@@ -22,6 +22,7 @@ import java.nio.ByteBuffer
 import io.github.kaminarios.lingoplay.core.MediaHttp
 import io.github.kaminarios.lingoplay.core.MediaRangeReply
 import io.github.kaminarios.lingoplay.core.installMediaHttp
+import io.github.kaminarios.lingoplay.core.installExtractionHttp
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -246,6 +247,7 @@ class LingoPlayCoreModule : Module() {
     }
     OnCreate {
       installMediaHttp(NativeMediaHttp())
+      installExtractionHttp(NativeExtractionHttp())
       installCastPlatform(NativeCastPlatform(requireNotNull(appContext.reactContext).applicationContext))
       installAiPlatform(NativeAiPlatform(requireNotNull(appContext.reactContext)))
     }

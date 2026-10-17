@@ -22,7 +22,7 @@ struct CachedCatalog {
     catalog: Value,
 }
 static CATALOGS: OnceLock<Mutex<VecDeque<CachedCatalog>>> = OnceLock::new();
-fn cached_catalog(root: &str, id: &str) -> Option<Value> {
+pub(crate) fn cached_catalog(root: &str, id: &str) -> Option<Value> {
     let mut entries = CATALOGS.get_or_init(Default::default).lock().ok()?;
     entries.retain(|entry| entry.at.elapsed() < Duration::from_secs(90));
     entries
@@ -30,7 +30,7 @@ fn cached_catalog(root: &str, id: &str) -> Option<Value> {
         .find(|entry| entry.root == root && entry.video_id == id)
         .map(|entry| entry.catalog.clone())
 }
-fn cache_catalog(root: &str, catalog: &Value) {
+pub(crate) fn cache_catalog(root: &str, catalog: &Value) {
     let Some(id) = catalog["videoId"].as_str() else {
         return;
     };
@@ -115,7 +115,7 @@ pub(crate) fn container(stream: &Value) -> Option<&str> {
         })
 }
 
-fn catalog(command: &Value) -> Result<Value> {
+pub(crate) fn catalog(command: &Value) -> Result<Value> {
     let id = string(command, "videoId")?;
     let raw = string(command, "raw")?;
     if !video_id(id) || raw.len() > MAX_BYTES || !trusted_origin(string(command, "origin")?, id) {

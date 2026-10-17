@@ -15,6 +15,7 @@ mod ai;
 mod browser;
 mod cast;
 mod downloads;
+mod extraction;
 mod gallery;
 mod language_catalog;
 mod languages;
@@ -26,6 +27,9 @@ mod transport;
 mod vocabulary;
 pub use ai::{
     AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
+};
+pub use extraction::{
+    ExtractionHeader, ExtractionHttp, ExtractionReply, ExtractionRequest, install_extraction_http,
 };
 
 #[derive(uniffi::Record)]
@@ -403,6 +407,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    if op.starts_with("extract_") {
+        return extraction::dispatch(&command, root);
+    }
     if op.starts_with("cast_") {
         return cast::dispatch(&command);
     }

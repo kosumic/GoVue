@@ -1,5 +1,3 @@
-import { PLAYER_DECODER } from './generated/playerDecoder.js';
-
 // Runs in YouTube's page runtime. Keep helpers inside this literal.
 export const MEDIA_BRIDGE = String.raw`
 (() => {
@@ -21,8 +19,6 @@ export const MEDIA_BRIDGE = String.raw`
   let lastLayout = '';
   let layoutFrame = 0;
   let observedPlayer = null;
-  let extraChapters = null;
-  let resolving = null;
   const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleLayout) : null;
   function reportLayout() {
     const videoId = id();
@@ -88,7 +84,6 @@ export const MEDIA_BRIDGE = String.raw`
   function tick() {
     const videoId = id();
     if (owner !== videoId) {
-      if(resolving){window.__lingoplayCancelDecode?.(resolving.requestId);resolving=null;}
       owner = videoId; segments = []; nativeOwner = null; lastSkip = ''; lastLayout = '';
     }
     const root = document.documentElement;
@@ -140,81 +135,6 @@ export const MEDIA_BRIDGE = String.raw`
       if(enabled) { player()?.pauseVideo?.(); player()?.querySelector('video')?.pause(); }
       tick();
     },
-    chapters(requestId) {
-      const job=extraChapters;if(!job||job.requestId!==requestId||job.videoId!==id())return;
-      extraChapters=null;void job.run();
-    },
-    cancel(requestId) {
-      if(resolving?.requestId!==requestId)return;
-      resolving=null;window.__lingoplayCancelDecode?.(requestId);
-    },
-    async resolve(requestId) {
-      const videoId=id();
-      if (!videoId) return;
-      if(resolving?.requestId===requestId)return;
-      if(resolving)window.__lingoplayCancelDecode?.(resolving.requestId);
-      const request={requestId,videoId};resolving=request;extraChapters=null;
-      const current=()=>resolving===request&&id()===videoId;
-      try {
-        let media;
-        for(let attempt=0;attempt<30;attempt++) {
-          if(!current()) return;
-          const p=player();
-          const response=p?.getPlayerResponse?.() || window.ytInitialPlayerResponse;
-          if(response?.videoDetails?.videoId===videoId) {
-            let streaming;
-            try { streaming=p?.getStreamingData?.(); if(typeof streaming==='string') streaming=JSON.parse(streaming); } catch {}
-            streaming=streaming?.streamingData || streaming || response.streamingData || {};
-            const details=response.videoDetails;
-            const fallback=window.__lingoplayMediaInfo ? await window.__lingoplayMediaInfo(videoId).catch(()=>null) : null;
-            if(!current())return;
-            const rawFormats=[...(response.streamingData?.formats||[]),...(response.streamingData?.adaptiveFormats||[]),...(streaming.formats||[]),...(streaming.adaptiveFormats||[]),...(fallback?.formats||[]),...(fallback?.adaptiveFormats||[])];
-            const byItag=new Map();
-            for(const format of rawFormats) {
-              let client='';
-              try {client=new URL(format.url||new URLSearchParams(format.signatureCipher||format.cipher||'').get('url')).searchParams.get('c')||'';}catch{}
-              const key=String(format.itag)+':'+String(format.audioTrack?.id||'')+':'+client;
-              const previous=byItag.get(key);
-              const usable=!!(format.url||format.signatureCipher||format.cipher);
-              const previousUsable=!!(previous?.url||previous?.signatureCipher||previous?.cipher);
-              if(!previous || (usable&&!previousUsable) || (usable===previousUsable && format.audioTrack?.audioIsDefault && !previous.audioTrack?.audioIsDefault)) byItag.set(key,format);
-            }
-            const unique=[...byItag.values()];
-            const hlsManifestUrl=fallback?.hlsManifestUrl||streaming.hlsManifestUrl;
-            if(!window.__lingoplayDecode && !hlsManifestUrl) throw Error('The media decoder could not initialize. Reload the video and try again.');
-            // Only decoded URLs can cross into native memory. Never substitute
-            // captured player requests, which can belong to prefetched adverts.
-            let formats=[];
-            try {if(unique.length) formats=await window.__lingoplayDecode(unique,videoId,requestId);}
-            catch(error){if(!hlsManifestUrl)throw error;}
-            if(!current())return;
-            const subtitles=(response.captions?.playerCaptionsTracklistRenderer?.captionTracks||[]).map((t,i)=>({id:String(t.vssId||t.languageCode+':'+i),label:t.name?.simpleText||t.name?.runs?.map(r=>r.text).join('')||t.languageCode,language:t.languageCode||'',automatic:t.kind==='asr'}));
-            const chapters=[];const seen=new WeakSet();let visited=0;
-            const walk=(node,depth=0)=>{
-              if(!node||typeof node!=='object'||depth>35||chapters.length>=300||visited++>100000||seen.has(node))return;seen.add(node);
-              if(node.chapterRenderer){const c=node.chapterRenderer;chapters.push({start:Number(c.timeRangeStartMillis)/1000,title:c.title?.simpleText||c.title?.runs?.map(r=>r.text).join('')||'',previewUrl:c.thumbnail?.thumbnails?.at(-1)?.url});}
-              if(node.macroMarkersListItemRenderer){const c=node.macroMarkersListItemRenderer;const commands=[c.onTap,...(c.onTap?.commandExecutorCommand?.commands||[])];const endpoint=commands.map(v=>v?.watchEndpoint||v?.innertubeCommand?.watchEndpoint).find(Boolean);chapters.push({start:Number(endpoint?.startTimeSeconds),timestamp:c.timeDescription?.simpleText||c.timeDescription?.runs?.map(r=>r.text).join('')||'',title:c.title?.simpleText||c.title?.runs?.map(r=>r.text).join('')||'',previewUrl:c.thumbnail?.thumbnails?.at(-1)?.url});}
-              for(const value of Object.values(node))if(value&&typeof value==='object')walk(value,depth+1);
-            };
-            if(window.ytInitialData?.currentVideoEndpoint?.watchEndpoint?.videoId===videoId)walk(window.ytInitialData);
-            if(!chapters.length&&window.ytcfg?.get?.('INNERTUBE_CONTEXT')){
-              extraChapters={requestId,videoId,run:async()=>{
-              const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),8000);
-              try{const response=await fetch('/youtubei/v1/next?prettyPrint=false',{method:'POST',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({context:window.ytcfg.get('INNERTUBE_CONTEXT'),videoId})});if(response.ok&&id()===videoId){walk(await response.json());if(id()===videoId)post({type:'mediaChapters',requestId,videoId,chapters});}}catch{}finally{clearTimeout(timeout);}
-              }};
-            }
-            media={title:details.title,author:details.author,duration:Number(details.lengthSeconds)||0,position:Number(p?.getCurrentTime?.())||0,live:!!(details.isLive||response.playabilityStatus?.liveStreamability),formats,subtitles,chapters,hlsManifestUrl,hlsUserAgent:fallback?.hlsManifestUrl?fallback.hlsUserAgent:navigator.userAgent};
-            if(formats.some(f=>f.url) || media.hlsManifestUrl) break;
-          }
-          if(attempt===0 && p && !nativeOwner) p.playVideo?.();
-          await new Promise(r=>setTimeout(r,250));
-        }
-        if(!current()) return;
-        if(!media) throw Error('YouTube is still loading. Play the video and try again.');
-        post({type:'media',requestId,videoId,ok:true,media});
-      } catch(error) { if(current()) post({type:'media',requestId,videoId,ok:false,error:error.message||'Media unavailable.'}); }
-      finally {if(resolving===request)resolving=null;}
-    }
   };
   setInterval(tick,250);
   window.addEventListener('scroll',scheduleLayout,{capture:true,passive:true});
@@ -228,6 +148,5 @@ true;
 `;
 
 export const mediaSettingsScript = settings => `${MEDIA_BRIDGE}\nwindow.__lingoplayMedia?.configure(${JSON.stringify(settings)}); true;`;
-export const mediaResolveScript = requestId => `${PLAYER_DECODER}\n${MEDIA_BRIDGE}\nwindow.__lingoplayMedia?.resolve(${JSON.stringify(requestId)}); true;`;
 export const mediaNativeScript = (videoId, enabled) => `window.__lingoplayMedia?.native(${JSON.stringify(videoId)},${JSON.stringify(enabled)}); true;`;
 export const mediaSponsorsScript = (videoId, segments) => `window.__lingoplayMedia?.sponsors(${JSON.stringify(videoId)},${JSON.stringify(segments)}); true;`;

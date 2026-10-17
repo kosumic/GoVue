@@ -9,13 +9,12 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
 import { useWebViewRenderer } from './useWebViewRenderer';
 import { isWebUrl } from './address';
-import { PLAYER_DECODER } from '../youtube/generated/playerDecoder';
 import {
   BROWSER_BRIDGE,
   BROWSER_BOOTSTRAP,
   browserPreferencesScript,
 } from '../youtube/browserBridge';
-import { YOUTUBE_BRIDGE } from '../youtube/pageBridge';
+import { YOUTUBE_BRIDGE } from '../youtube/pageScripts';
 import { mediaSettingsScript } from '../youtube/mediaBridge';
 import type { MediaSettings } from '../core/media';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -77,8 +76,6 @@ export const BrowserTab = forwardRef<
     const [source, setSource] = useState(initialSource.current);
     const valid = () => renderer.isCurrent() && !stoppedRef.current;
     const scripts =
-      PLAYER_DECODER +
-      '\n' +
       YOUTUBE_BRIDGE +
       '\n' +
       mediaSettingsScript(settings) +

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type WebView from 'react-native-webview';
 import { coreRequest } from '../../modules/lingoplay-core';
-import { acceptTranscript } from '../core/transcripts';
-import { extractionScript } from '../youtube/pageBridge';
+import { extractTranscript } from '../core/transcripts';
 import type { Transcript } from '../youtube/transcript';
 import type { useMediaBrowser } from '../media/useMediaBrowser';
 import { useSurfaceOrientation } from './useSurfaceOrientation';
@@ -59,11 +58,7 @@ export function usePlayerSession(
   const [captions, setCaptions] = useState<Transcript | null>(null);
   const [captionBusy, setCaptionBusy] = useState(false);
   const [captionError, setCaptionError] = useState('');
-  const pending = useRef<{
-    id: string;
-    videoId: string;
-    timer: ReturnType<typeof setTimeout>;
-  } | null>(null);
+  const pending = useRef<AbortController | null>(null);
   const writes = useRef(Promise.resolve());
   const mediaRef = useRef(media);
   mediaRef.current = media;
@@ -156,7 +151,7 @@ export function usePlayerSession(
     void advance('ended').catch(() => {});
   }, [media.cast.state.id, media.cast.state.phase]);
   function selectCaption(key: string, force = false) {
-    if (pending.current) clearTimeout(pending.current.timer);
+    pending.current?.abort();
     pending.current = null;
     setCaption('');
     setCaptionError('');
@@ -168,21 +163,21 @@ export function usePlayerSession(
       setCaptionBusy(false);
       return;
     }
-    const id = `caption:${Date.now()}`;
     const videoId = media.playback.videoId;
-    const timer = setTimeout(() => {
-      if (pending.current?.id === id) {
-        pending.current = null;
-        setCaptionBusy(false);
-        setCaptionError('Captions could not load. Try another language.');
-      }
-    }, 45000);
-    pending.current = { id, videoId, timer };
+    const controller = new AbortController();
+    pending.current = controller;
     setCaptionBusy(true);
-    webView.current?.injectJavaScript(extractionScript(id, next, false));
+    void extractTranscript(videoId, next, controller.signal).then(data => {
+      if (pending.current === controller) setCaptions(data);
+    }).catch(error => {
+      if (pending.current === controller && !controller.signal.aborted)
+        setCaptionError(error instanceof Error ? error.message : 'Captions could not load.');
+    }).finally(() => {
+      if (pending.current === controller) { pending.current = null; setCaptionBusy(false); }
+    });
   }
   useEffect(() => {
-    if (pending.current) clearTimeout(pending.current.timer);
+    pending.current?.abort();
     pending.current = null;
     setCaption('');
     setCaptions(null);
@@ -195,7 +190,7 @@ export function usePlayerSession(
     )
       selectCaption(media.settings.subtitleKey, true);
     return () => {
-      if (pending.current) clearTimeout(pending.current.timer);
+      pending.current?.abort();
       pending.current = null;
     };
   }, [media.playback?.videoId]);
@@ -228,52 +223,6 @@ export function usePlayerSession(
       listener.remove();
     };
   }, [captions, media.player]);
-  async function handleMessage(
-    raw: string,
-    origin: string,
-    message: { type?: string; requestId?: string; videoId?: string },
-  ) {
-    if (
-      message.type !== 'transcript' ||
-      message.requestId !== pending.current?.id
-    )
-      return false;
-    const request = pending.current;
-    if (!request) return false;
-    try {
-      const result = await acceptTranscript(
-        raw,
-        origin,
-        request.id,
-        request.videoId,
-      );
-      if (pending.current !== request) return true;
-      if (result.ok) setCaptions(result.transcript);
-      else setCaptionError(result.error);
-    } catch (e) {
-      if (pending.current === request)
-        setCaptionError(
-          e instanceof Error ? e.message : 'Captions could not load.',
-        );
-    } finally {
-      if (pending.current === request) {
-        clearTimeout(request.timer);
-        pending.current = null;
-        setCaptionBusy(false);
-      }
-    }
-    return true;
-  }
-  function pageTerminated() {
-    if (pending.current) {
-      clearTimeout(pending.current.timer);
-      pending.current = null;
-      setCaptionBusy(false);
-      setCaptionError(
-        'The caption request stopped. Reload the page and try again.',
-      );
-    }
-  }
   const pipControls = usePipControls({
     media,
     pip,
@@ -300,7 +249,5 @@ export function usePlayerSession(
     captionBusy,
     captionError,
     selectCaption,
-    handleMessage,
-    pageTerminated,
   };
 }

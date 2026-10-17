@@ -3,7 +3,7 @@ import { Alert, AppState } from 'react-native';
 import { useVideoPlayer, type VideoSource, type VideoTrack } from 'expo-video';
 import type WebView from 'react-native-webview';
 import {
-  acceptMedia,
+  extractMedia,
   defaultMediaSettings,
   fetchSponsors,
   mediaSettings,
@@ -17,15 +17,14 @@ import {
 } from '../core/media';
 import {
   mediaNativeScript,
-  mediaResolveScript,
   mediaSettingsScript,
   mediaSponsorsScript,
 } from '../youtube/mediaBridge';
-import { seekScript } from '../youtube/pageBridge';
+import { seekScript } from '../youtube/pageScripts';
 import { coreRequest } from '../../modules/lingoplay-core';
-import type { PlayerRuntimeHandle } from './PlayerRuntime';
 import { acceptPlayerLayout, type PlayerLayout } from './playerLayout';
 import { useCastSession } from '../player/useCastSession';
+import { useTranscriptPosition } from './useTranscriptPosition';
 
 type Playback = {
   videoId: string;
@@ -53,6 +52,7 @@ type Pending = {
   requestId: string;
   videoId: string;
   timer: ReturnType<typeof setTimeout>;
+  controller: AbortController;
   resolve: (value: MediaCatalog) => void;
   reject: (error: Error) => void;
 };
@@ -76,7 +76,6 @@ export function useMediaBrowser(
   webView: React.RefObject<WebView | null>,
   videoId: string | null,
   userAgent: string,
-  runtime: React.RefObject<PlayerRuntimeHandle | null>,
 ) {
   const [settings, setSettings] = useState(defaultMediaSettings);
   const [playback, setPlayback] = useState<Playback | null>(null);
@@ -108,7 +107,6 @@ export function useMediaBrowser(
   identity.current = videoId;
   const playbackRef = useRef<Playback | null>(null);
   const pending = useRef<Pending | null>(null);
-  const catalogOwner = useRef<string | null>(null);
   const pageAvailable = useRef(true);
   const sequence = useRef(0);
   const nativeGeneration = useRef(0);
@@ -127,6 +125,7 @@ export function useMediaBrowser(
     player.audioMixingMode = 'doNotMix';
     player.preservesPitch = true;
   });
+  const pagePlayback = useTranscriptPosition(webView, player, videoId, !!videoId && !playback, null);
   const cast = useCastSession({
     player,
     videoId: playback?.videoId ?? null,
@@ -218,10 +217,7 @@ export function useMediaBrowser(
   };
   function cancelPending(message = 'The video changed. Try again.') {
     if (pending.current) {
-      if (pageAvailable.current)
-        inject(
-          `window.__lingoplayMedia?.cancel(${JSON.stringify(pending.current.requestId)});window.__lingoplayCancelDecode?.(${JSON.stringify(pending.current.requestId)});true;`,
-        );
+      pending.current.controller.abort();
       clearTimeout(pending.current.timer);
       const cancelled = Error(message);
       cancelled.name = 'AbortError';
@@ -232,13 +228,8 @@ export function useMediaBrowser(
   function pageTerminated(
     message = 'The browser stopped. Reload the page and try again.',
   ) {
-    catalogOwner.current = null;
     pageAvailable.current = false;
     autoRetryAt.current = 0;
-    preparation.current = null;
-    setPreparing(false);
-    cancelPending(message);
-    setBusy(false);
     setPlayerLayout(null);
     ++qualitySequence.current;
     setSwitchingQuality(false);
@@ -503,32 +494,35 @@ export function useMediaBrowser(
     return () => subscription.remove();
   }, [player, speeds]);
   function resolveMedia() {
-    catalogOwner.current = null;
     const id = identity.current;
     if (!id) return Promise.reject(Error('Open a YouTube video first.'));
-    if (!pageAvailable.current || !webView.current) {
-      const failure = Error('Reload the browser page before loading media.');
-      setError(failure.message);
-      return Promise.reject(failure);
-    }
     cancelPending();
     setBusy(true);
     setError(null);
     setCatalog(null);
     return new Promise<MediaCatalog>((resolve, reject) => {
-      const requestId = `media:${Date.now()}:${++sequence.current}`;
+      const requestId = 'media:' + Date.now() + ':' + ++sequence.current;
+      const controller = new AbortController();
       const timer = setTimeout(() => {
         if (pending.current?.requestId !== requestId) return;
-        pending.current = null;
-        setBusy(false);
-        const error = Error(
-          'Media request timed out. Play the video and try again.',
-        );
-        setError(error.message);
-        reject(error);
-      }, 45000);
-      pending.current = { videoId: id, requestId, timer, resolve, reject };
-      inject(mediaResolveScript(requestId));
+        controller.abort(); pending.current = null; setBusy(false);
+        const error = Error('YouTube extraction timed out. Try again.');
+        setError(error.message); reject(error);
+      }, 95000);
+      const request = { videoId: id, requestId, timer, controller, resolve, reject };
+      pending.current = request;
+      void extractMedia(id, controller.signal).then(async data => {
+        const choices = await playbackChoices(data).catch(() => []);
+        if (pending.current !== request || identity.current !== id) return;
+        clearTimeout(timer); pending.current = null; setBusy(false);
+        catalogRef.current = data; setCatalog(data); setQualities(choices);
+        request.resolve(data);
+      }).catch(error => {
+        if (pending.current !== request) return;
+        clearTimeout(timer); pending.current = null; setBusy(false);
+        const failure = error instanceof Error ? error : Error('Could not extract media.');
+        setError(failure.message); request.reject(failure);
+      });
     });
   }
   async function handleMessage(
@@ -552,35 +546,8 @@ export function useMediaBrowser(
       videoId: owner,
     }).catch(() => false);
     if (!trusted || identity.current !== owner) return;
-    if (message.type === 'mediaChapters') {
-      const owner = catalogOwner.current;
-      if (
-        !owner ||
-        message.requestId !== owner ||
-        message.videoId !== identity.current
-      )
-        return;
-      try {
-        const chapters = await coreRequest<
-          NonNullable<MediaCatalog['chapters']>
-        >({
-          op: 'media_chapters',
-          raw,
-          origin,
-          requestId: owner,
-          videoId: message.videoId,
-        });
-        const data = catalogRef.current;
-        if (
-          owner === catalogOwner.current &&
-          data?.videoId === identity.current &&
-          data
-        ) {
-          const next = { ...data, chapters };
-          catalogRef.current = next;
-          setCatalog(next);
-        }
-      } catch {}
+    if (message.type === 'playbackPosition') {
+      pagePlayback.handlePosition(message, origin);
       return;
     }
     if (message.type === 'playerLayout') {
@@ -622,29 +589,6 @@ export function useMediaBrowser(
       }
       return;
     }
-    if (message.type === 'mediaEval') {
-      const request = pending.current;
-      if (
-        !request ||
-        message.requestId !== request.requestId ||
-        message.videoId !== request.videoId ||
-        identity.current !== request.videoId ||
-        typeof message.code !== 'string' ||
-        message.code.length > 2_000_000 ||
-        typeof message.evalId !== 'string' ||
-        !/^\d{1,12}$/.test(message.evalId)
-      )
-        return;
-      let values: Record<string, string> | null = null;
-      try {
-        values = (await runtime.current?.evaluate(message.code)) ?? null;
-      } catch {}
-      if (pending.current === request && identity.current === request.videoId)
-        inject(
-          `window.__lingoplayEvalReply?.(${JSON.stringify(message.evalId)},${JSON.stringify(values)}); true;`,
-        );
-      return;
-    }
     if (
       message.type === 'sponsorSkipped' &&
       message.videoId === identity.current &&
@@ -652,46 +596,6 @@ export function useMediaBrowser(
     ) {
       setNotice(`Skipped ${message.category.replaceAll('_', ' ')}`);
       return;
-    }
-    const request = pending.current;
-    if (
-      message.type !== 'media' ||
-      !request ||
-      message.requestId !== request.requestId ||
-      message.videoId !== request.videoId ||
-      identity.current !== request.videoId
-    )
-      return;
-    try {
-      const data = await acceptMedia(
-        raw,
-        origin,
-        request.requestId,
-        request.videoId,
-      );
-      const choices = await playbackChoices(data).catch(() => []);
-      if (pending.current !== request || identity.current !== request.videoId)
-        return;
-      clearTimeout(request.timer);
-      pending.current = null;
-      setBusy(false);
-      catalogRef.current = data;
-      setCatalog(data);
-      catalogOwner.current = request.requestId;
-      inject(
-        `window.__lingoplayMedia?.chapters(${JSON.stringify(request.requestId)});true;`,
-      );
-      setQualities(choices);
-      request.resolve(data);
-    } catch (error) {
-      if (pending.current !== request) return;
-      clearTimeout(request.timer);
-      pending.current = null;
-      setBusy(false);
-      const failure =
-        error instanceof Error ? error : Error('Could not load media.');
-      setError(failure.message);
-      request.reject(failure);
     }
   }
   async function openPlayer(
@@ -737,6 +641,7 @@ export function useMediaBrowser(
     const previous =
       playbackRef.current?.videoId === id ? playbackRef.current : null;
     const previousPosition = previous ? player.currentTime : 0;
+    const pagePosition = pagePlayback.position;
     const previousPlaying = previous
       ? player.status === 'error' || player.playing
       : true;
@@ -800,7 +705,7 @@ export function useMediaBrowser(
           : await coreRequest<number | null>({
               op: 'player_resume',
               videoId: data.videoId,
-              position: data.position,
+              position: pagePosition ?? data.position,
               duration: data.duration,
               live: data.live,
             });
@@ -860,7 +765,6 @@ export function useMediaBrowser(
     cancelPending();
     manualWeb.current = identity.current;
     catalogRef.current = null;
-    catalogOwner.current = null;
     setCatalog(null);
     setQualities([]);
     ++qualitySequence.current;
