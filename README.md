@@ -19,7 +19,9 @@ feature parity.
 
 The player's transcript button, beside speed and quality, opens a searchable
 reader with language selection, playback following, and tap-to-seek captions.
-AI work is deferred; its existing modules and stored data are retained.
+Open **Extensions → AI** to manage AI providers, accounts, models and model
+groups. Chat and video summaries remain deferred; existing chats and stored data
+are retained.
 Choose **ChatGPT / Codex** for account sign-in or **OpenAI API** for an API key.
 The alternative **ChatGPT plan sharing** connection is under **Advanced connections**.
 Earlier feature documentation remains in

@@ -1,34 +1,44 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Plus } from 'lucide-react-native';
 import { aiRequest } from '../../modules/lingoplay-core';
 import type { AiController, ConnectionPreview, Group, Model, Provider, ProviderChoice, ProviderDraft } from '../ai/useAi';
-import { colors } from '../theme';
+import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { AiMarkdown } from './AiMarkdown';
 
 const protocolNames: [string, string][] = [['', 'Provider default'], ['chat', 'Chat Completions'], ['responses', 'Responses'], ['anthropic', 'Anthropic Messages'], ['gemini', 'Gemini']];
 const levels = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const draftOf = (p: Provider): ProviderDraft => ({ id: p.id, label: p.label, kind: p.kind, baseUrl: p.baseUrl, model: p.model, enabled: p.enabled, auth: p.auth, protocol: p.protocol, azure: p.azure, appendV1Suffix: !!p.appendV1Suffix, customUserAgent: p.customUserAgent || '', models: p.models });
 function Action({ title, onPress, disabled = false }: { title: string; onPress: () => void; disabled?: boolean }) {
+  const s = useThemeStyles(makeStyles);
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.action, disabled && s.disabled]}><Text style={s.actionText}>{title}</Text></Pressable>;
 }
 function Field({ label, value, onChange, secure = false, numeric = false, editable = true, multiline = false, placeholder }: { label: string; value: string; onChange: (v: string) => void; secure?: boolean; numeric?: boolean; editable?: boolean; multiline?: boolean; placeholder?: string }) {
+  const colors = useThemeColors();
+  const s = useThemeStyles(makeStyles);
   return <View style={s.field}><Text style={s.label}>{label}</Text><TextInput accessibilityLabel={label} value={value} onChangeText={onChange} secureTextEntry={secure} autoCapitalize="none" autoCorrect={false} autoComplete="off" editable={editable} keyboardType={numeric ? 'decimal-pad' : 'default'} multiline={multiline} placeholder={placeholder} placeholderTextColor={colors.muted} style={[s.input, multiline && s.multiline, !editable && s.disabled]} /></View>;
 }
 function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+  const colors = useThemeColors();
+  const s = useThemeStyles(makeStyles);
   return <View style={s.row}><Text style={[s.label, s.grow]}>{label}</Text><Switch accessibilityLabel={label} value={value} onValueChange={onChange} trackColor={{ true: colors.accent }} /></View>;
 }
 function Choices({ items, value, onChange }: { items: [string, string][]; value: string; onChange: (v: string) => void }) {
+  const s = useThemeStyles(makeStyles);
   return <View style={s.choices}>{items.map(([id, label]) => <Pressable accessibilityRole="radio" accessibilityState={{ checked: value === id }} key={id} onPress={() => onChange(id)} style={[s.choice, value === id && s.selected]}><Text style={[s.help, value === id && s.selectedText]}>{label}</Text></Pressable>)}</View>;
 }
 function Order({ up, down }: { up?: () => void; down?: () => void }) {
+  const colors = useThemeColors();
+  const s = useThemeStyles(makeStyles);
   return <View style={s.order}><Pressable accessibilityRole="button" accessibilityLabel="Move up" disabled={!up} onPress={up} style={[s.orderButton, !up && s.disabled]}><ArrowUp size={16} color={colors.muted} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Move down" disabled={!down} onPress={down} style={[s.orderButton, !down && s.disabled]}><ArrowDown size={16} color={colors.muted} /></Pressable></View>;
 }
 
 export function AiProviders({ ai }: { ai: AiController }) {
+  const colors = useThemeColors();
+  const s = useThemeStyles(makeStyles);
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
   const [model, setModel] = useState<Model | null>(null);
   const [group, setGroup] = useState<Group | null>(null);
@@ -148,8 +158,15 @@ export function AiProviders({ ai }: { ai: AiController }) {
     } catch (e) { setError((e as Error).message); } finally { setSaving(false); }
   }
   const title = model ? 'Model settings' : group ? (group.id ? 'Edit model group' : 'New model group') : draft ? (draft.id ? draft.label : 'New connection') : transfer !== null ? 'Import providers' : '';
+  const screen = model ? 'model' : group ? 'group' : draft ? 'provider' : transfer !== null ? 'import' : 'providers';
   const back = () => { if (busy) return; if (model) setModel(null); else { setDraft(null); setGroup(null); setTransfer(null); } clear(); };
-  return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.page}>
+  useEffect(() => {
+    if (!title) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => { back(); return true; });
+    return () => subscription.remove();
+  });
+  // Start each editor at its first field rather than inheriting the previous page's scroll.
+  return <ScrollView key={screen} keyboardShouldPersistTaps="handled" contentContainerStyle={s.page}>
     {!!title && <View style={s.row}><Pressable accessibilityRole="button" accessibilityLabel="Back in provider settings" onPress={back} disabled={busy} style={s.back}><ChevronLeft size={22} color={colors.ink} /></Pressable><Text style={[s.title, s.grow]}>{title}</Text></View>}
     {model ? <>
       <Field label="Model ID" value={model.id} onChange={id => setModel({ ...model, id })} editable={!editing?.models.some(m => m.id === model.id)} />
@@ -251,8 +268,8 @@ export function AiProviders({ ai }: { ai: AiController }) {
     {!!(error || ai.error || editing?.credentialError) && <Text accessibilityRole="alert" style={s.error}>{error || ai.error || editing?.credentialError}</Text>}
   </ScrollView>;
 }
-const s = StyleSheet.create({
-  page: { padding: 20, gap: 14, paddingBottom: 48 }, row: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48 }, grow: { flex: 1 },
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  page: { padding: 20, gap: 14, paddingBottom: 48, width: '100%', maxWidth: 720, alignSelf: 'center' }, row: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48 }, grow: { flex: 1 },
   title: { color: colors.ink, fontSize: 18, fontWeight: '600' }, section: { color: colors.ink, fontSize: 17, fontWeight: '600', marginTop: 16 }, label: { color: colors.ink, fontSize: 14, fontWeight: '500' }, help: { color: colors.muted, fontSize: 12, lineHeight: 19 },
   field: { gap: 7 }, input: { color: colors.ink, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, borderRadius: 10, padding: 12, backgroundColor: colors.surface, fontSize: 14 }, multiline: { minHeight: 100, textAlignVertical: 'top', fontFamily: 'monospace' },
   action: { paddingHorizontal: 14, paddingVertical: 12, minHeight: 44, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: 10 }, actionText: { color: colors.accent, fontSize: 13, fontWeight: '600' },

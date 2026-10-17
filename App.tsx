@@ -94,7 +94,7 @@ const initial: BrowserState = {
   revision: 0,
   transient: 'none',
 };
-type Page = 'settings' | 'data' | 'about' | null;
+type Page = 'settings' | 'ai' | 'data' | 'about' | null;
 
 function Browser() {
   const insets = useSafeAreaInsets();
@@ -340,7 +340,7 @@ function Browser() {
       return true;
     }
     if (page) {
-      setPage(page === 'data' ? 'settings' : null);
+      setPage(page === 'data' || page === 'ai' ? 'settings' : null);
       return true;
     }
     if (gallery) {
@@ -814,7 +814,9 @@ function Browser() {
                       handle.view.current?.clearCache?.(true);
                   }}
                   onSettings={media.updateSettings}
-                  onClose={() => setPage(page === 'data' ? 'settings' : null)}
+                  onClose={() =>
+                    setPage(page === 'data' || page === 'ai' ? 'settings' : null)
+                  }
                   onNavigate={(target) =>
                     target === 'library' ? setSheet('library') : setPage(target)
                   }
