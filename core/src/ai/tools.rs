@@ -28,6 +28,8 @@ pub(super) fn merge_usage(prefix: &Value, next: &Value) -> Value {
 
 #[derive(Default)]
 pub(super) struct Stream {
+    responses: Vec<Value>,
+    response_indices: BTreeMap<u64, usize>,
     items: BTreeMap<u64, Value>,
     chat: BTreeMap<u64, Value>,
     chat_details: Vec<Value>,
@@ -41,8 +43,8 @@ impl Stream {
     pub fn call_headers(&self, protocol: &str) -> Vec<(String, String)> {
         match protocol {
             "responses" => self
-                .items
-                .values()
+                .responses
+                .iter()
                 .filter(|v| v["type"] == "function_call")
                 .map(|v| {
                     (
@@ -78,13 +80,20 @@ impl Stream {
     pub fn event(&mut self, protocol: &str, v: &Value) -> Result<()> {
         match protocol {
             "responses" => {
-                let index = v["output_index"].as_u64().unwrap_or(0);
                 match v["type"].as_str().unwrap_or_default() {
                     "response.output_item.added" | "response.output_item.done" => {
-                        self.items.insert(index, v["item"].clone());
+                        self.response_item(&v["item"], v["output_index"].as_u64())?;
                     }
                     "response.function_call_arguments.delta" => {
-                        if let Some(item) = self.items.get_mut(&index) {
+                        if let Some(index) = self
+                            .response_position(v["item_id"].as_str(), None)
+                            .or_else(|| {
+                                v["output_index"]
+                                    .as_u64()
+                                    .and_then(|i| self.response_indices.get(&i).copied())
+                            })
+                            && let Some(item) = self.responses.get_mut(index)
+                        {
                             append(item, "arguments", &v["delta"])?;
                         } else {
                             return Err("Tool arguments arrived without a call.".into());
@@ -92,11 +101,11 @@ impl Stream {
                     }
                     "response.completed" => {
                         if let Some(items) = v["response"]["output"].as_array() {
-                            self.items = items
-                                .iter()
-                                .enumerate()
-                                .map(|(i, v)| (i as u64, v.clone()))
-                                .collect();
+                            // Some streaming endpoints send an empty or partial final
+                            // snapshot. Completed item events must survive it.
+                            for item in items {
+                                self.response_item(item, None)?;
+                            }
                         }
                     }
                     _ => {}
@@ -152,7 +161,8 @@ impl Stream {
                 }
             }
         }
-        if self.items.len() + self.chat.len() > 256
+        if self.responses.len() + self.items.len() + self.chat.len() > 256
+            || self.response_indices.len() > 256
             || self.gemini.len() + self.chat_details.len() > 4096
             || self.value(protocol, "", "").to_string().len() > 500_000
         {
@@ -160,14 +170,49 @@ impl Stream {
         }
         Ok(())
     }
+    fn response_position(&self, id: Option<&str>, call_id: Option<&str>) -> Option<usize> {
+        self.responses.iter().position(|item| {
+            id.filter(|id| !id.is_empty())
+                .is_some_and(|id| item["id"] == id)
+                || call_id
+                    .filter(|id| !id.is_empty())
+                    .is_some_and(|id| item["call_id"] == id)
+        })
+    }
+    fn response_item(&mut self, item: &Value, output_index: Option<u64>) -> Result<()> {
+        let fields = item.as_object().ok_or("Invalid response output item.")?;
+        let position = self
+            .response_position(item["id"].as_str(), item["call_id"].as_str())
+            .or_else(|| output_index.and_then(|i| self.response_indices.get(&i).copied()));
+        let position = if let Some(position) = position {
+            // Final item fields replace streamed values, rather than appending
+            // arguments or encrypted reasoning a second time.
+            self.responses[position]
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.clone());
+            position
+        } else {
+            self.responses.push(item.clone());
+            self.responses.len() - 1
+        };
+        if let Some(index) = output_index {
+            self.response_indices.insert(index, position);
+        }
+        Ok(())
+    }
     pub fn value(&self, protocol: &str, text: &str, reasoning: &str) -> Value {
         let mut calls = Vec::new();
         let continuation = match protocol {
             "responses" => {
-                for item in self.items.values().filter(|v| v["type"] == "function_call") {
+                for item in self
+                    .responses
+                    .iter()
+                    .filter(|v| v["type"] == "function_call")
+                {
                     calls.push(json!({"id":item["call_id"],"name":item["name"],"arguments":item["arguments"]}));
                 }
-                json!(self.items.values().collect::<Vec<_>>())
+                json!(self.responses)
             }
             "anthropic" => {
                 let mut blocks = Vec::new();
