@@ -74,6 +74,13 @@ npm run check
 npx expo install --check
 ```
 
+Chat supports microphone dictation through `expo-speech-recognition`. Tap the
+microphone, speak, then review the draft before sending. Recognition uses the
+device locale and up to 100 vocabulary hints built in Rust from the draft,
+recent chat messages, and the attached transcript. LingoPlay does not save
+audio recordings. Rebuild the native app after installing the dependency so the
+speech module and microphone permissions are included.
+
 Signed media/caption URLs and raw responses stay in memory. Persisted queues,
 history and settings contain only validated, non-secret metadata. The local
 native playback transport binds to loopback. Cast uses a separate, revocable

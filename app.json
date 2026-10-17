@@ -30,9 +30,6 @@
       ],
       "permissions": [
         "INTERNET"
-      ],
-      "blockedPermissions": [
-        "android.permission.RECORD_AUDIO"
       ]
     },
     "ios": {
@@ -56,7 +53,14 @@
       ],
       "expo-sharing",
       "./plugins/withLocalMedia.cjs",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow LingoPlay to use the microphone for voice input in chat.",
+          "speechRecognitionPermission": "Allow LingoPlay to turn your speech into chat messages."
+        }
+      ]
     ]
   }
 }

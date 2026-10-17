@@ -21,6 +21,7 @@ mod language_catalog;
 mod languages;
 mod media;
 mod player;
+mod speech;
 mod trace;
 mod transcript_playback;
 mod transport;

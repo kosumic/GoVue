@@ -1699,8 +1699,15 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         return catalog::dispatch(c, root);
     }
     match string(&c, "op")? {
-        "ai_chats" | "ai_chat_get" | "ai_chat_delete" | "ai_chat_send" | "ai_chat_reasoning"
-        | "ai_chat_video_open" | "ai_chat_model" | "ai_usage" => conversations::dispatch(c, root),
+        "ai_chats"
+        | "ai_chat_get"
+        | "ai_chat_delete"
+        | "ai_chat_send"
+        | "ai_chat_reasoning"
+        | "ai_chat_video_open"
+        | "ai_chat_model"
+        | "ai_chat_speech_hints"
+        | "ai_usage" => conversations::dispatch(c, root),
         "ai_foreground" => {
             FOREGROUND.store(c["active"] == true, Ordering::Relaxed);
             Ok(Value::Null)

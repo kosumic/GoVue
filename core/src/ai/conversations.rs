@@ -673,12 +673,76 @@ fn usage_report(command: &Value, root: &Path) -> Result<Value> {
     Ok(report)
 }
 
+fn speech_hints(c: &Value, root: &Path) -> Result<Value> {
+    let chat = c["chatId"].as_str().map(|id| read(root, id)).transpose()?;
+    let draft = c["draft"].as_str().unwrap_or_default();
+    if draft.chars().count() > 8000 {
+        return Err("Message is too long.".into());
+    }
+    let texts = std::iter::once(draft)
+        .chain(chat.iter().map(|chat| chat.title.as_str()))
+        .chain(chat.iter().flat_map(|chat| {
+            chat.messages
+                .iter()
+                .rev()
+                .take(20)
+                .map(|m| m.content.as_str())
+        }));
+    let transcript = if c["transcript"].is_null() {
+        chat.as_ref().and_then(|chat| chat.transcript.clone())
+    } else {
+        let reference = &c["transcript"];
+        let video_id = string(reference, "videoId")?;
+        let track_id = string(reference, "trackId")?;
+        if !crate::video_id(video_id) || track_id.len() > 1000 {
+            return Err("Invalid transcript identity.".into());
+        }
+        Some(TranscriptRef {
+            video_id: video_id.into(),
+            track_id: track_id.into(),
+            title: String::new(),
+            language: String::new(),
+        })
+    };
+    if let Some(transcript) = transcript {
+        if chat
+            .as_ref()
+            .and_then(|chat| chat.video_id.as_ref())
+            .is_some_and(|id| *id != transcript.video_id)
+        {
+            return Err("This transcript belongs to a different video.".into());
+        }
+        // Evicted captions should not prevent dictation using the conversation vocabulary.
+        let _g = crate::REQUEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let hints = crate::with_transcript(
+            root.to_str().ok_or("Invalid transcript storage path.")?,
+            &transcript.video_id,
+            &transcript.track_id,
+            |data| {
+                crate::speech::hints(
+                    texts.clone(),
+                    std::iter::once(data.title.as_str())
+                        .chain(data.segments.iter().map(|s| s.text.as_str())),
+                )
+            },
+        );
+        return Ok(json!(hints.unwrap_or_else(|_| crate::speech::hints(
+            texts,
+            std::iter::empty()
+        ))));
+    }
+    Ok(json!(crate::speech::hints(texts, std::iter::empty())))
+}
+
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     if c["op"] == "ai_chat_send" {
         return send(c, root);
     }
     let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
     match string(&c, "op")? {
+        "ai_chat_speech_hints" => speech_hints(&c, &root),
         "ai_usage" => usage_report(&c, &root),
         "ai_chats" => Ok(
             json!({"chats":visible_chats(&root)?.iter().map(|chat| json!({"id":chat.id,"videoId":chat.video_id.as_ref().or_else(|| chat.transcript.as_ref().map(|t| &t.video_id)),"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title)})).collect::<Vec<_>>()}),

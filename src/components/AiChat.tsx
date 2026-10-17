@@ -1,11 +1,12 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { ArrowDown, ArrowUp, Brain, Captions, ChevronDown, ChevronRight, Copy, MessageCircle, Plus, RotateCw, Square, X } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Brain, Captions, ChevronDown, ChevronRight, Copy, MessageCircle, Mic, Plus, RotateCw, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats';
 import { AiMarkdown } from './AiMarkdown';
 import { AiReasoning } from './AiReasoning';
+import { useVoiceInput } from '../ai/useVoiceInput';
 
 const Message = memo(function Message({ message, last, busy, onRetry, reduceMotion }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; reduceMotion: boolean }) {
   const colors = useThemeColors();
@@ -31,7 +32,7 @@ const Message = memo(function Message({ message, last, busy, onRetry, reduceMoti
   </Animated.View>;
 });
 
-export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
+export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
   chat: ChatController;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -40,6 +41,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   connected: boolean;
   loading: boolean;
   contextReady?: boolean;
+  voiceEnabled?: boolean;
   onSend: () => void;
   onRetry: () => void;
   onAttach: () => void;
@@ -61,6 +63,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   const [reduceMotion, setReduceMotion] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   const messages = chat.conversation?.messages ?? [];
+  const voice = useVoiceInput({ enabled: voiceEnabled && !loading && contextReady, chatId: chat.conversation?.id, transcript: attachment ?? availableTranscript, draft, onDraftChange });
   function scrollToEnd(animated = false) {
     nearBottom.current = true; setShowJump(false);
     list.current?.scrollToEnd({ animated });
@@ -77,7 +80,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   useEffect(() => { nearBottom.current = true; setShowJump(false); follow(); }, [chat.conversation?.id]);
   useEffect(() => { setShowReasoning(false); }, [chat.conversation?.id, providerId, model]);
   function send() { nearBottom.current = true; setShowJump(false); setShowReasoning(false); onSend(); }
-  const canSend = contextReady && connected && !!draft.trim() && !loading && !chat.settingsBusy;
+  const canSend = contextReady && connected && !!draft.trim() && !loading && !chat.settingsBusy && !voice.active;
   return <View style={styles.workspace}>
     <View style={styles.thread}>
       <FlatList ref={list} data={messages} keyExtractor={m => m.id} extraData={chat.busy}
@@ -111,18 +114,25 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
       </View>}
       <View style={styles.composer}>
         <TextInput ref={input} accessibilityLabel="Message LingoPlay" placeholder={attachment ? 'Ask about this video…' : 'Ask anything…'} placeholderTextColor={colors.muted}
-          value={draft} onChangeText={onDraftChange} multiline maxLength={8000} style={styles.input} selectionColor={colors.accent} editable={!loading} />
+          value={draft} onChangeText={value => { voice.cancel(); onDraftChange(value); }} multiline maxLength={8000} style={styles.input} selectionColor={colors.accent} editable={!loading} />
         {showReasoning && providerId && model && <AiReasoning id={providerId} model={model} value={chat.reasoningEffort} busy={chat.settingsBusy} deferred={chat.busy} onSelect={level => { void chat.setReasoning(level).then(saved => { if (saved) setShowReasoning(false); }); }} />}
         <View style={styles.composerTools}>
           {availableTranscript && !attachment && <Pressable accessibilityRole="button" accessibilityLabel="Attach current transcript" disabled={chat.busy || loading} onPress={onAttach} style={[styles.attachButton, chat.busy && styles.disabled]}><Plus size={22} color={colors.ink} /></Pressable>}
           <Pressable accessibilityRole="button" accessibilityLabel={`Reasoning effort: ${reasoning}`} accessibilityHint="Changes apply to your next message" accessibilityState={{ expanded: showReasoning, disabled: !connected || loading || chat.settingsBusy }} disabled={!connected || loading || chat.settingsBusy} onPress={() => setShowReasoning(!showReasoning)} style={[styles.reasoningButton, (!connected || loading || chat.settingsBusy) && styles.disabled]}><Brain size={16} color={colors.accent} /><Text numberOfLines={1} style={styles.reasoningText}>{reasoning}</Text><ChevronDown size={12} color={colors.muted} style={showReasoning ? styles.expanded : undefined} /></Pressable>
           <View style={styles.spacer} />
+          <Pressable accessibilityRole="button" accessibilityLabel={voice.active ? 'Stop voice input' : 'Start voice input'} accessibilityHint="Dictate a message using words from this chat and transcript as hints" accessibilityState={{ selected: voice.active, disabled: loading || !contextReady || voice.phase === 'stopping' }}
+            disabled={loading || !contextReady || voice.phase === 'stopping'} onPress={() => { input.current?.blur(); voice.toggle(); }} style={[styles.attachButton, voice.active && styles.voiceActive, (loading || !contextReady || voice.phase === 'stopping') && styles.disabled]}>
+            {voice.phase === 'preparing' || voice.phase === 'stopping' ? <ActivityIndicator size="small" color={colors.accent} /> : voice.active ? <Square size={18} fill={colors.accent} color={colors.accent} /> : <Mic size={22} color={colors.ink} />}
+          </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={chat.busy ? 'Stop response' : 'Send message'} disabled={!chat.busy && !canSend}
             onPress={chat.busy ? chat.stop : send} style={({ pressed }) => [styles.send, (!chat.busy && !canSend || pressed) && styles.disabled]}>
             {chat.busy ? <Square size={16} fill={colors.surface} color={colors.surface} /> : <ArrowUp size={22} strokeWidth={2.3} color={colors.surface} />}
           </Pressable>
         </View>
+        {voice.active && <Text accessibilityLiveRegion="polite" style={styles.voiceStatus}>{voice.phase === 'preparing' ? 'Starting voice input…' : voice.phase === 'stopping' ? 'Finishing voice input…' : 'Listening… Tap the microphone to finish.'}</Text>}
       </View>
+      {!!voice.error && <Text accessibilityRole="alert" style={styles.error}>{voice.error}</Text>}
+      {voice.needsSettings && <Pressable accessibilityRole="button" onPress={() => { void Linking.openSettings(); }} style={styles.messageAction}><Text style={styles.actionText}>Open Settings</Text></Pressable>}
     </View>
   </View>;
 }
@@ -145,6 +155,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   reasoningButton: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 44, paddingHorizontal: 9, flexShrink: 1 }, reasoningText: { color: colors.accent, fontSize: 12, flexShrink: 1 },
   expanded: { transform: [{ rotate: '180deg' }] },
   attachButton: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }, send: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  voiceActive: { backgroundColor: colors.accentSoft, borderRadius: 22 }, voiceStatus: { color: colors.accent, fontSize: 12, paddingHorizontal: 18, paddingTop: 6, paddingBottom: 7 },
   attachment: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, backgroundColor: colors.accentSoft }, attachmentLink: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, minHeight: 56 }, attachmentText: { flex: 1, paddingVertical: 9, gap: 2 }, attachmentTitle: { color: colors.ink, fontSize: 12, fontWeight: '500' }, attachmentHelp: { color: colors.muted, fontSize: 10 },
   jump: { position: 'absolute', alignSelf: 'center', bottom: 8, width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' }, disabled: { opacity: 0.38 },
 });
