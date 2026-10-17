@@ -10,13 +10,13 @@ export type ProviderDraft = { id: string; label: string; kind: ProviderKind; bas
 export type Provider = ProviderDraft & { enabled: boolean; models: Model[]; connected: boolean; account?: string; planEnabled: boolean; needsReauth?: boolean; credentialError?: string; connection?: ConnectionPreview };
 export type Group = { id: string; name: string; members: { providerId: string; model: string }[]; strategy: 'fallback' | 'loadBalance'; fallbackOnAnyError: boolean; reasoning: string; contextLimit: number | null; connected?: boolean };
 export type ProviderChoice = { kind: ProviderKind; name: string; auth: string[]; description: string; advanced?: boolean };
-type Config = { providers: Provider[]; groups: Group[]; choices: ProviderChoice[]; activeId: string | null };
+type Config = { providers: Provider[]; groups: Group[]; choices: ProviderChoice[]; activeId: string | null; agentMd: string };
 type Login = { url: string; returnUrl?: string; mode: 'browser' | 'device'; userCode?: string };
 type Task = { status: 'running' | 'completed' | 'failed' | 'cancelled'; text: string; message?: string; error?: string; login?: Login; result?: { models?: Model[]; planEnabled?: boolean; revoked?: boolean; connected?: boolean } };
 type Started = { taskId: string; url?: string; returnUrl?: string };
 
 export function useAi(visible: boolean, contextId: string) {
-  const [config, setConfig] = useState<Config>({ providers: [], groups: [], choices: [], activeId: null });
+  const [config, setConfig] = useState<Config>({ providers: [], groups: [], choices: [], activeId: null, agentMd: '' });
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState('');
   const [text, setText] = useState('');

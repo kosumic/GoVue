@@ -52,6 +52,8 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
   const [query, setQuery] = useState('');
   const [transfer, setTransfer] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
+  const [agentDraft, setAgentDraft] = useState<string | null>(null);
+  const [agentSaved, setAgentSaved] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<ConnectionPreview | null>(null);
@@ -62,6 +64,7 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
   const authChanged = !!editing && (draft?.auth || 'key') !== (editing.auth || 'key');
   const connected = !!editing?.connected && !authChanged;
   const busy = !!ai.busy || saving;
+  const agentMd = agentDraft ?? ai.agentMd;
   useEffect(() => {
     let active = true;
     setPreview(null);
@@ -244,6 +247,11 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
       <Action title="Import configuration" disabled={busy || !transfer.trim()} onPress={() => { try { const data = JSON.parse(transfer); void ai.mutate({ op: 'ai_import', data }).then(r => { if (r) setTransfer(null); }); } catch { setError('Enter valid provider configuration JSON.'); } }} />
     </> : <>
       {onUsage && <Pressable accessibilityRole="button" accessibilityLabel="Token usage" onPress={onUsage} style={s.entry}><Gauge size={24} color={colors.ink} /><View style={s.grow}><Text style={s.label}>Token usage</Text><Text style={s.help}>Totals, cache and model breakdowns</Text></View><ChevronRight size={20} color={colors.muted} /></Pressable>}
+      <Text style={s.section}>AGENT.md</Text>
+      <Text style={s.help}>Add instructions for every AI chat and video summary, such as your preferred language, learning level, or response style. Saved changes apply to your next message. Clear and save to remove them.</Text>
+      <Field label="AGENT.md instructions" multiline editable={!busy} value={agentMd} onChange={value => { setAgentDraft(value); setAgentSaved(false); }} placeholder={'# Learning preferences\nReply in English. Explain unfamiliar words with examples.'} />
+      <Action title="Save instructions" disabled={busy || agentMd === ai.agentMd} onPress={() => { setError(''); void ai.mutate({ op: 'ai_settings', agentMd }).then(next => { if (next) { setAgentDraft(null); setAgentSaved(true); } }); }} />
+      {agentSaved && <Text accessibilityLiveRegion="polite" style={s.help}>Instructions saved.</Text>}
       <Text style={s.help}>Connect accounts, choose your models, and control how requests are routed.</Text>
       <Text style={s.section}>Connections</Text>
       {ai.providers.map((p, i) => <View key={p.id} style={s.row}><Pressable accessibilityRole="button" accessibilityLabel={`Edit provider ${p.label}`} style={s.grow} onPress={() => editProvider(p)}><Text style={s.label}>{p.label}</Text><Text style={s.help}>{!p.enabled ? 'Disabled' : p.needsReauth ? 'Sign-in expired' : p.connected ? `${p.models.filter(m => !m.hidden).length} models` : 'Connect to get started'}</Text></Pressable><Order up={!busy && i ? () => { void reorder(ai.providers.map(p => p.id), i, -1); } : undefined} down={!busy && i < ai.providers.length - 1 ? () => { void reorder(ai.providers.map(p => p.id), i, 1); } : undefined} /><ChevronRight size={18} color={colors.muted} /></View>)}

@@ -30,6 +30,9 @@ Tap the transcript context card to read or search the captions used by the AI.
 Reasoning changes made during a response apply to the next message.
 Open **Extensions → AI** to manage AI providers, accounts, models and model
 groups.
+Paste or write **AGENT.md instructions** there to set your preferred language,
+learning level, or response style for all chats and summaries. Save to apply them
+to the next message, including in existing chats. Clear and save to remove them.
 Choose **Token usage** in AI settings for saved-chat totals, provider/model
 breakdowns, cache hit rates and output speed. Open a conversation for its context
 and reasoning details. Missing provider counts are shown as unavailable; older
