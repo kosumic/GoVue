@@ -16,6 +16,37 @@ pub(super) struct Cue {
     pub text: String,
 }
 
+impl Cue {
+    pub(super) fn from_transcript(transcript: &crate::Transcript, id: &str) -> Result<Self> {
+        let index = id
+            .strip_prefix("cue-")
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or("Invalid caption reference.")?;
+        let cue = transcript
+            .segments
+            .get(index)
+            .ok_or("Unknown caption reference.")?;
+        let end = if cue.duration > 0.0 {
+            cue.start + cue.duration
+        } else {
+            transcript
+                .segments
+                .get(index + 1)
+                .map(|s| s.start)
+                .ok_or("This caption has no audio boundary.")?
+        };
+        if end <= cue.start || end - cue.start > 30.0 {
+            return Err("Choose captions with audio between 0 and 30 seconds long.".into());
+        }
+        Ok(Self {
+            id: id.to_owned(),
+            start: cue.start,
+            duration: end - cue.start,
+            text: cue.text.clone(),
+        })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Definition {
@@ -296,36 +327,12 @@ impl Game {
         let rules = rules(&definition)?;
         let mut cues = Vec::new();
         for id in &definition.cue_ids {
-            let index = id
-                .strip_prefix("cue-")
-                .and_then(|s| s.parse::<usize>().ok())
-                .ok_or("Invalid caption reference.")?;
             let transcript = transcript.ok_or("Attach a video transcript to use its audio.")?;
-            let cue = transcript
-                .segments
-                .get(index)
-                .ok_or("Unknown caption reference.")?;
-            let end = if cue.duration > 0.0 {
-                cue.start + cue.duration
-            } else {
-                transcript
-                    .segments
-                    .get(index + 1)
-                    .map(|s| s.start)
-                    .ok_or("This caption has no audio boundary.")?
-            };
-            if end <= cue.start || end - cue.start > 30.0 {
-                return Err("Choose captions with audio between 0 and 30 seconds long.".into());
-            }
+            let cue = Cue::from_transcript(transcript, id)?;
             if cues.iter().any(|c: &Cue| &c.id == id) {
                 continue;
             }
-            cues.push(Cue {
-                id: id.clone(),
-                start: cue.start,
-                duration: end - cue.start,
-                text: cue.text.clone(),
-            });
+            cues.push(cue);
         }
         if cues.iter().map(|cue| cue.text.len()).sum::<usize>() > 12_000 {
             return Err("Choose a smaller set of captions for this game.".into());

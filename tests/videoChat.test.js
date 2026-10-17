@@ -11,7 +11,7 @@ const first = 'abcdefghijk', second = '0123456789a';
 const transcript = videoId => ({ videoId, title: `Video ${videoId}`, trackId: '.en', language: 'English', tracks: [], segments: [{ start: 1, duration: 3, text: 'These captions are the chat context.' }] });
 
 async function harness(videoId, restore = async id => transcript(id)) {
-  const calls = [], opened = [], saved = new Map();
+  const calls = [], opened = [], saved = new Map(), audioCalls = [];
   let chatProps;
   const provider = { id: 'fixture', label: 'Fixture', model: 'first', connected: true, enabled: true, models: [] };
   const ai = { providers: [provider], groups: [], activeId: provider.id, ready: true, busy: '', clear() {}, stop() {}, async select(id, model) { if (model) provider.model = model; return true; } };
@@ -38,6 +38,7 @@ async function harness(videoId, restore = async id => transcript(id)) {
       builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'mock-core', external: true }));
       builder.onResolve({ filter: /\/core\/transcripts$/ }, () => ({ path: 'mock-transcripts', external: true }));
       builder.onResolve({ filter: /\/ai\/useAi$/ }, () => ({ path: 'mock-ai', external: true }));
+      builder.onResolve({ filter: /\/ai\/useGameAudio$/ }, () => ({ path: 'mock-audio', external: true }));
       builder.onResolve({ filter: /\/(AiChat|AiProviders|AiModels|AiUsageSheet|AiReasoning|AiHistoryDrawer|IconButton|TranscriptPanel)$/ }, args => ({ path: `mock-component/${args.path.split('/').at(-1)}`, external: true }));
     } }],
   });
@@ -48,6 +49,7 @@ async function harness(videoId, restore = async id => transcript(id)) {
     if (name === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView' };
     if (name === 'lucide-react-native') return Object.fromEntries(['ChevronDown', 'ChevronLeft', 'Menu', 'Play', 'SquarePen', 'X'].map(key => [key, key]));
     if (name === 'mock-ai') return { useAi: () => ai };
+    if (name === 'mock-audio') return { useTranscriptAudio: scope => ({ phase: 'idle', error: '', stop() {}, async play(cueId) { audioCalls.push({ ...scope, cueId }); } }) };
     if (name === 'mock-transcripts') return { restoreTranscript: restore, extractTranscript: async () => { throw Error('Unexpected extraction'); } };
     if (name.startsWith('mock-component/')) {
       const component = name.split('/')[1];
@@ -59,7 +61,7 @@ async function harness(videoId, restore = async id => transcript(id)) {
   const props = { visible: true, videoId, transcript: null, onClose() {}, onOpenVideo: id => opened.push(id) };
   let root;
   await act(async () => { root = create(createElement(module.exports.AiSheet, props)); });
-  return { calls, saved, opened, props: () => chatProps,
+  return { calls, saved, opened, audioCalls, props: () => chatProps,
     render: changes => act(async () => { root.update(createElement(module.exports.AiSheet, { ...props, ...changes })); }),
     unmount: () => act(() => root.unmount()), root };
 }
@@ -82,6 +84,9 @@ test('opening a video chat attaches context and changing its model preserves the
   assert.deepEqual(reader.props.data, transcript(first));
   assert.equal(reader.props.onSeek, undefined);
   assert.equal(reader.props.onExtract, undefined);
+  assert.equal(env.audioCalls.length, 0, 'opening the transcript does not prepare audio');
+  await act(() => reader.props.onPlayLine(0));
+  assert.deepEqual(env.audioCalls, [{ chatId: `video_${first}`, videoId: first, trackId: '.en', cueId: 'cue-0' }]);
   await act(() => reader.props.onClose());
   assert.equal(env.root.root.findAllByType('TranscriptPanel').length, 0);
   assert.equal(env.calls.length, beforeReader, 'reading the attached captions does not reload or interrupt the chat');

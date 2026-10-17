@@ -492,6 +492,28 @@ fn game_audio(c: &Value, root: &Path) -> Result<Value> {
     games::audio::prepare(root, &video_id, &cue, &c["catalog"])
 }
 
+fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
+    let (video_id, cue) = {
+        let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+        let chat = read(root, string(c, "chatId")?)?;
+        let reference = chat.transcript.ok_or("This chat has no transcript.")?;
+        if c["videoId"] != reference.video_id || c["trackId"] != reference.track_id {
+            return Err("This transcript is no longer attached to the chat.".into());
+        }
+        let _guard = crate::REQUEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let cue = crate::with_transcript(
+            root.to_str().ok_or("Invalid transcript storage path.")?,
+            &reference.video_id,
+            &reference.track_id,
+            |data| games::Cue::from_transcript(data, string(c, "cueId")?),
+        )??;
+        (reference.video_id, cue)
+    };
+    games::audio::prepare(root, &video_id, &cue, &c["catalog"])
+}
+
 fn send(c: Value, root: PathBuf) -> Result<Value> {
     let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
     let existing = c["chatId"].as_str().filter(|id| !id.is_empty());
@@ -870,6 +892,9 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     }
     if c["op"] == "ai_game_audio" {
         return game_audio(&c, &root);
+    }
+    if c["op"] == "ai_chat_audio" {
+        return transcript_audio(&c, &root);
     }
     let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
     match string(&c, "op")? {

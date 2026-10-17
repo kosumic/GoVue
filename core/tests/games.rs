@@ -473,6 +473,8 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     );
     let reply = &chat["messages"][1];
     let mut command = json!({"op":"ai_game_audio","chatId":chat["id"],"messageId":reply["id"],"gameId":reply["games"][0]["id"],"cueId":"cue-0"});
+    let transcript_audio = json!({"op":"ai_chat_audio","chatId":chat["id"],"videoId":video,"trackId":".en","cueId":"cue-0"});
+    assert_eq!(ok(root, transcript_audio.clone())["needsMedia"], true);
     assert_eq!(ok(root, command.clone())["needsMedia"], true);
     assert!(ranges.0.lock().unwrap().is_empty());
     command["catalog"] = json!({"videoId":video,"origin":"https://m.youtube.com","live":false,"streams":[{"itag":140,"kind":"audio","mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","audioOriginal":true,"bitrate":128000,"bytes":1000,"url":"https://r1.googlevideo.com/audio?sig=PRIVATE_SIGNED_AUDIO","initRange":{"start":0,"end":99},"indexRange":{"start":100,"end":155}}]});
@@ -497,6 +499,30 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
         .read_to_end(&mut data)
         .unwrap();
     assert_eq!(data.len(), 400);
+    let shared = ok(root, transcript_audio.clone());
+    assert_eq!(shared["needsMedia"], false);
+    assert_eq!(shared["start"], clip["start"]);
+    assert_eq!(shared["end"], clip["end"]);
+    assert_eq!(
+        ranges.0.lock().unwrap().len(),
+        3,
+        "the transcript reuses the game's cached bytes without a media catalog"
+    );
+    ok(
+        root,
+        json!({"op":"ai_game_audio_release","token":shared["token"]}),
+    );
+    for (field, value) in [
+        ("videoId", json!("0123456789a")),
+        ("trackId", json!(".fr")),
+        ("cueId", json!("cue-999")),
+        ("cueId", json!("../unsafe")),
+    ] {
+        let mut invalid = transcript_audio.clone();
+        invalid[field] = value;
+        assert_eq!(call(root, invalid)["ok"], false);
+    }
+    assert_eq!(ranges.0.lock().unwrap().len(), 3);
     ok(
         root,
         json!({"op":"ai_game_audio_release","token":clip["token"]}),
