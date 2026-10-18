@@ -57,7 +57,15 @@ Search matches either language and keeps the paired lines together; copy and
 share include both selected languages. Tap a selected language to remove it.
 AI opens the same full-screen conversation workspace as
 **Chat** in the bottom navigation. Open the conversation drawer for saved chats,
-new chats, providers, and token usage. Opening AI from a video reopens its one
+new chats, providers, and token usage. Search the drawer by conversation title or
+message text; message matches open the conversation at the matching message.
+Use the magnifying glass in an open chat to find text, see a highlighted excerpt,
+and move through matches with the previous/next arrows. Searches are local,
+case insensitive, and cover user and assistant messages. Find also includes the
+current streamed reply and shows up to 500 matches; narrow the query for more.
+Long press a conversation to pin, archive, rename, or delete it. Pinned chats stay
+at the top; **Archived chats** lets you browse, search, and restore archived chats.
+Opening AI from a video reopens its one
 saved conversation, or creates an empty chat with the transcript as context.
 Opening chat never sends a message or starts a summary. Choose a model from the
 header and send your own question; model changes keep the video's conversation.

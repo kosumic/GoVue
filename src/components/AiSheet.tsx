@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Alert, BackHandler, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { ChevronDown, ChevronLeft, Menu, Play, SquarePen, X } from 'lucide-react-native';
+import { ChevronDown, ChevronLeft, Menu, Play, Search, SquarePen, X } from 'lucide-react-native';
 import { useAi } from '../ai/useAi';
 import type { Transcript } from '../youtube/transcript';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -53,18 +53,20 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   const [page, setPage] = useState<'chat' | 'providers' | 'models'>('chat');
   const [historyVisible, setHistoryVisible] = useState(false);
   const [usageVisible, setUsageVisible] = useState(false);
+  const [find, setFind] = useState<{ chatId: string; query: string } | null>(null);
   useEffect(() => {
     if (!visible) return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (transcriptVisible) setTranscriptVisible(false);
       else if (historyVisible) setHistoryVisible(false);
+      else if (find) closeFind();
       else if (page !== 'chat') showPage('chat');
       else close();
       return true;
     });
     return () => subscription.remove();
-  }, [visible, transcriptVisible, historyVisible, page, onClose]);
-  useEffect(() => { if (!visible) { setUsageVisible(false); setHistoryVisible(false); setTranscriptVisible(false); } }, [visible]);
+  }, [visible, transcriptVisible, historyVisible, find, page, onClose]);
+  useEffect(() => { if (!visible) { setUsageVisible(false); setHistoryVisible(false); setTranscriptVisible(false); setFind(null); } }, [visible]);
   useEffect(() => { setTranscriptVisible(false); }, [chatVideoId]);
   const [prompt, setPrompt] = useState('');
   const [newChatVersion, setNewChatVersion] = useState(0);
@@ -103,7 +105,8 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   }, [visible, chatVideoId, contextRetry]);
 
   function close() { Keyboard.dismiss(); onClose(); }
-  function showPage(next: typeof page) { Keyboard.dismiss(); setHistoryVisible(false); ai.clear(); setPage(next); }
+  function closeFind() { Keyboard.dismiss(); setFind(null); }
+  function showPage(next: typeof page) { Keyboard.dismiss(); setHistoryVisible(false); setFind(null); ai.clear(); setPage(next); }
   function newChat() { contextAbort.current?.abort(); setChatVideoId(null); chats.newChat(); setNewChatVersion(value => value + 1); setPrompt(''); setAttachment(null); showPage('chat'); }
   async function choose(id: string, model: string) {
     const p = targets.find(p => p.id === id);
@@ -115,12 +118,14 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
       showPage('chat');
     }
   }
-  async function openChat(id: string) {
+  async function openChat(id: string, query?: string) {
     contextAbort.current?.abort(); setContextLoading(false);
     setPrompt('');
     const saved = chats.history.find(chat => chat.id === id);
     if (saved?.videoId) {
-      setChatVideoId(saved.videoId); setContextRetry(value => value + 1); showPage('chat'); return;
+      setChatVideoId(saved.videoId); setContextRetry(value => value + 1); showPage('chat');
+      if (query) setFind({ chatId: id, query });
+      return;
     }
     const chat = await chats.open(id);
     if (!chat) return;
@@ -128,6 +133,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
     setAttachment(chat.transcript);
     if (targets.some(p => p.id === chat.providerId)) await ai.select(chat.providerId);
     showPage('chat');
+    if (query) setFind({ chatId: chat.id, query });
   }
   function deleteChat(chat: SavedChat) {
     Alert.alert('Delete chat?', chat.title, [{ text: 'Keep', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { if (chats.conversation?.id === chat.id) newChat(); void chats.remove(chat.id).then(() => chatViewports.current.delete(chat.id)); } }]);
@@ -158,11 +164,12 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
       <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={keyboardVerticalOffset}>
         <View style={styles.safe} accessibilityElementsHidden={historyVisible || transcriptVisible} importantForAccessibility={historyVisible || transcriptVisible ? 'no-hide-descendants' : 'auto'}>
         <View style={styles.heading}>
-          {page === 'chat' ? <IconButton icon={Menu} label="Open conversations" onPress={() => { Keyboard.dismiss(); void chats.refresh().catch(() => {}); setHistoryVisible(true); }} /> : <IconButton icon={ChevronLeft} label="Back to chat" onPress={() => { ai.stop(); showPage('chat'); }} />}
+          {page === 'chat' ? <IconButton icon={Menu} label="Open conversations" onPress={() => { Keyboard.dismiss(); setFind(null); void chats.refresh().catch(() => {}); setHistoryVisible(true); }} /> : <IconButton icon={ChevronLeft} label="Back to chat" onPress={() => { ai.stop(); showPage('chat'); }} />}
           {page === 'chat' ? <Pressable accessibilityRole="button" accessibilityLabel="Choose AI model" disabled={!!chatVideoId && chats.conversation?.videoId !== chatVideoId} onPress={() => showPage('models')} style={styles.chatTitle}>
             <Text numberOfLines={1} style={styles.brand}>{chats.conversation?.title || 'LingoPlay'}</Text>
             <View style={styles.modelLabel}><Text numberOfLines={1} style={styles.modelName}>{selectedModel?.replace(/^gpt-/, 'GPT-') || 'Choose a model'}</Text><ChevronDown size={12} color={colors.muted} /></View>
           </Pressable> : <Text accessibilityRole="header" style={styles.pageTitle}>{page === 'models' ? 'Choose a model' : 'Providers'}</Text>}
+          {page === 'chat' && !!chats.conversation?.messages.length && <IconButton icon={Search} label="Find in chat" active={find?.chatId === chats.conversation.id} onPress={() => { Keyboard.dismiss(); setFind(current => current?.chatId === chats.conversation!.id ? null : { chatId: chats.conversation!.id, query: '' }); }} />}
           {page === 'chat' && <IconButton icon={SquarePen} label="New chat" onPress={newChat} />}
           <IconButton icon={X} label="Close AI assistant" onPress={close} />
         </View>
@@ -173,7 +180,8 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
         {page === 'chat' ? <>
           {!!contextError && <View style={styles.banner}><Text accessibilityRole="alert" style={styles.help}>{contextError}</Text><Button title="Retry transcript" onPress={() => setContextRetry(value => value + 1)} /></View>}
           {chats.conversation?.providerId && ai.ready && !selected?.connected && <View style={styles.banner}><Text style={styles.help}>Reconnect {chats.conversation.providerLabel} to continue this chat.</Text><Button title="Providers" onPress={() => showPage('providers')} /></View>}
-          <AiChat key={newChatVersion} viewports={chatViewports.current} chat={chats} draft={prompt} onDraftChange={setPrompt} attachment={attachment} availableTranscript={availableTranscript} voiceEnabled={visible && !historyVisible && !usageVisible && !transcriptVisible}
+          <AiChat key={newChatVersion} viewports={chatViewports.current} chat={chats} draft={prompt} onDraftChange={setPrompt} attachment={attachment} availableTranscript={availableTranscript} voiceEnabled={visible && !historyVisible && !usageVisible && !transcriptVisible && !find}
+            findQuery={find?.chatId === chats.conversation?.id ? find?.query : undefined} onCloseFind={closeFind}
             onBeforeGameAudio={onBeforeGameAudio}
             connected={!!selected?.connected && !!selected?.enabled && !selected?.needsReauth && !!selectedModel && !ai.busy} loading={!ai.ready || !chats.ready || chats.loading || contextLoading} contextReady={contextReady}
             reasoning={reasoningName(chats.reasoningEffort ?? savedReasoning)} providerId={selected?.id} model={selectedModel}
@@ -182,7 +190,8 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
         </> : page === 'models' ? <AiModels ai={ai} selectedId={selected?.id} selectedModel={selectedModel} onSelect={(id, model) => { void choose(id, model); }} onManage={() => showPage('providers')} /> : <AiProviders ai={ai} onUsage={() => { Keyboard.dismiss(); setUsageVisible(true); }} />}
         </View>
         <AiHistoryDrawer visible={historyVisible} chats={chats.history} selectedId={chats.conversation?.id} error={chats.error}
-          onClose={() => setHistoryVisible(false)} onNew={newChat} onOpen={id => { void openChat(id); }} onDelete={deleteChat}
+          onClose={() => setHistoryVisible(false)} onNew={newChat} onOpen={(id, query) => { void openChat(id, query); }} onDelete={deleteChat}
+          onChange={chats.change}
           onProviders={() => showPage('providers')} onUsage={() => { setHistoryVisible(false); setUsageVisible(true); }} />
         <AiUsageSheet visible={visible && usageVisible} chatId={chats.conversation?.id} onClose={() => setUsageVisible(false)} />
         {visible && transcriptVisible && <View style={styles.transcriptReader} accessibilityViewIsModal>
