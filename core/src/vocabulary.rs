@@ -1,5 +1,6 @@
 use super::{
-    Result, Segment, caption_words::is_word, folded, load, string, video_id, with_transcript,
+    Result, Segment, Transcript, caption_words::is_word, folded, load, string, video_id,
+    with_transcript,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -212,8 +213,62 @@ fn index(command: &Value, key: &str) -> Result<usize> {
         .ok_or_else(|| format!("Invalid {key}."))
 }
 
+fn selected_token<'a>(data: &'a Transcript, command: &Value) -> Result<Token<'a>> {
+    let segment = data
+        .segments
+        .get(index(command, "segmentIndex")?)
+        .ok_or("This caption line is no longer available.")?;
+    let token = caption_tokens(segment, data.caption_metadata.as_ref())
+        .into_iter()
+        .nth(index(command, "tokenIndex")?)
+        .filter(|token| token.word)
+        .ok_or("Choose a word in the caption.")?;
+    if token.text != string(command, "word")? {
+        return Err("This caption changed. Hold the word again.".into());
+    }
+    Ok(token)
+}
+
+fn source_language(data: &Transcript) -> Result<(&'static str, &'static str)> {
+    let source = data
+        .tracks
+        .iter()
+        .find(|track| track.id == data.track_id)
+        .map_or(data.language.as_str(), |track| track.language.as_str());
+    crate::language_catalog::translation_language(source)
+        .ok_or("The caption language is unavailable for translation.".into())
+}
+
+pub(super) fn word_context(command: &Value, root: &str) -> Result<Value> {
+    let data = load(
+        root,
+        string(command, "videoId")?,
+        string(command, "trackId")?,
+    )?;
+    let token = selected_token(&data, command)?;
+    let (code, name) = source_language(&data)?;
+    Ok(
+        json!({"word":token.text,"sourceLanguage":name,"sourceLangCode":code,
+        "sentence":data.segments[index(command,"segmentIndex")?].text.chars().take(1000).collect::<String>()}),
+    )
+}
+
+pub(super) fn word_audio(command: &Value, root: &str) -> Result<Option<(f64, f64)>> {
+    let data = load(
+        root,
+        string(command, "videoId")?,
+        string(command, "trackId")?,
+    )?;
+    let token = selected_token(&data, command)?;
+    Ok(token.start.zip(token.end).filter(|(start, end)| {
+        start.is_finite() && end.is_finite() && *start >= 0.0 && end > start && end - start <= 30.0
+    }))
+}
+
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     match string(command, "op")? {
+        "vocabulary_word_audio" => Ok(word_audio(command, root)?
+            .map_or(Value::Null, |(start, end)| json!({"start":start,"end":end}))),
         "vocabulary_details" => with_transcript(
             root,
             string(command, "videoId")?,
@@ -269,6 +324,29 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     .collect::<Vec<_>>()
             ))
         }
+        "vocabulary_translation" => {
+            let data = load(
+                root,
+                string(command, "videoId")?,
+                string(command, "trackId")?,
+            )?;
+            let token = selected_token(&data, command)?;
+            let (source_code, _) = source_language(&data)?;
+            let mut plans = Vec::new();
+            let mut seen = HashSet::new();
+            for target in crate::languages::translation_targets(root, source_code)? {
+                let (target_code, target_name) =
+                    crate::language_catalog::translation_language(&target)
+                        .ok_or("Choose your known and learning languages in Language settings.")?;
+                if !seen.insert(target_code) {
+                    continue;
+                }
+                plans.push(json!({"input":token.text, "sourceLangCode":source_code,
+                "targetLangCode":target_code, "targetLanguage":target_name,
+                "sameLanguage":source_code == target_code}));
+            }
+            Ok(json!(plans))
+        }
         "vocabulary_save" => {
             let video = string(command, "videoId")?;
             if !video_id(video) {
@@ -279,15 +357,9 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .segments
                 .get(index(command, "segmentIndex")?)
                 .ok_or("This caption line is no longer available.")?;
-            let tokens = caption_tokens(segment, data.caption_metadata.as_ref());
-            let token = tokens
-                .get(index(command, "tokenIndex")?)
-                .filter(|token| token.word)
-                .ok_or("Choose a word in the caption.")?;
-            if token.text != string(command, "word")? {
-                return Err("This caption changed. Hold the word again to save it.".into());
-            }
+            let token = selected_token(&data, command)?;
             let id = identity(&data.language, token.text);
+            let start = token.start.unwrap_or(segment.start);
             let mut words = read(root)?;
             if let Some(entry) = words.iter().find(|entry| entry.id == id) {
                 return Ok(json!({"entry":entry,"saved":false}));
@@ -298,7 +370,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 language: data.language,
                 video_id: data.video_id,
                 title: data.title,
-                start: token.start.unwrap_or(segment.start),
+                start,
                 context: segment.text.clone(),
                 saved_at: SystemTime::now()
                     .duration_since(UNIX_EPOCH)

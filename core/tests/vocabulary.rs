@@ -115,6 +115,68 @@ fn unicode_boundaries_preserve_caption_text_and_keep_punctuation_out_of_words() 
 }
 
 #[test]
+fn translation_uses_all_learning_languages_for_known_words_and_a_native_language_for_learning_words()
+ {
+    let store = Store::new();
+    store.value(json!({"op":"language_settings","settings":{
+        "known":[{"language":"French","level":"B1"},{"language":"English","level":"native"}],
+        "learning":[{"language":"Spanish","level":"B1"},{"language":"German","level":"A2"},{"language":"es","level":"A1"}]
+    }}));
+    let plan = |language: &str| {
+        let mut command = Store::selection(language, 0, 0, "Hello");
+        command["op"] = json!("vocabulary_translation");
+        store.value(command)
+    };
+    store.transcript("en-US");
+    let plans = plan("en-US");
+    assert_eq!(plans.as_array().unwrap().len(), 2);
+    assert_eq!(
+        plans[0],
+        json!({"input":"Hello","sourceLangCode":"en","targetLangCode":"es","targetLanguage":"Spanish","sameLanguage":false})
+    );
+    assert_eq!(plans[1]["targetLangCode"], "de");
+    assert_eq!(plans[1]["targetLanguage"], "German");
+    store.transcript("es-MX");
+    let plans = plan("es-MX");
+    assert_eq!(plans.as_array().unwrap().len(), 1);
+    assert_eq!(plans[0]["sourceLangCode"], "es");
+    assert_eq!(plans[0]["targetLangCode"], "en");
+    assert!(
+        !store.file().exists(),
+        "translating does not save vocabulary"
+    );
+}
+
+#[test]
+fn translation_validates_caption_selection_and_requires_learning_languages_for_known_words() {
+    let store = Store::new();
+    store.transcript("en");
+    let mut command = Store::selection("en", 0, 0, "Hello");
+    command["op"] = json!("vocabulary_translation");
+    let fallback = store.value(command.clone());
+    assert_eq!(fallback[0]["sameLanguage"], true);
+    for (field, value) in [
+        ("word", json!("world")),
+        ("tokenIndex", json!(1)),
+        ("segmentIndex", json!(99)),
+        ("videoId", json!("not-a-video")),
+    ] {
+        let mut invalid = command.clone();
+        invalid[field] = value;
+        assert_eq!(store.call(invalid)["ok"], false);
+    }
+    store.value(json!({"op":"language_settings","settings":{"known":[{"language":"English","level":"native"}],"learning":[]}}));
+    let missing = store.call(command.clone());
+    assert_eq!(missing["ok"], false);
+    assert!(missing["error"].as_str().unwrap().contains("want to learn"));
+    store.value(json!({"op":"language_settings","settings":{"known":[{"language":"English","level":"native"}],"learning":[{"language":"en","level":"B2"},{"language":"Japanese","level":"A1"}]}}));
+    let plans = store.value(command);
+    assert_eq!(plans.as_array().unwrap().len(), 1);
+    assert_eq!(plans[0]["targetLangCode"], "ja");
+    assert!(!store.file().exists());
+}
+
+#[test]
 fn saves_source_context_deduplicates_by_language_and_survives_cache_eviction() {
     let store = Store::new();
     assert_eq!(store.list(""), json!([]));

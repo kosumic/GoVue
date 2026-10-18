@@ -29,7 +29,7 @@ function ChatTranscript({ data, chatId, onClose, onBeforeAudio }: { data: Transc
     comparisonLoading={reader.comparisonLoading} comparisonError={reader.comparisonError} onSelectTrack={reader.selectTrack}
     loading={reader.loading} error={reader.error} cached={false} pauseAfterLine={false} onClose={onClose}
     position={audio.phase !== 'idle' && line !== null ? line.source.segments[line.index]?.start ?? null : null} audio={audio}
-    onPlayLine={(index, source = data) => setLine({ source, index })} />;
+    onBeforeWordAudio={onBeforeAudio} onPlayLine={(index, source = data) => setLine({ source, index })} />;
 }
 
 function Button({ title, onPress, disabled = false }: { title: string; onPress: () => void; disabled?: boolean }) {

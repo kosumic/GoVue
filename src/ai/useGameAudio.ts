@@ -8,9 +8,14 @@ type Clip = { needsMedia: false; uri: string; token: string; start: number; end:
 type Missing = { needsMedia: true; videoId: string };
 type GameScope = { chatId: string; messageId: string; gameId: string };
 type TranscriptScope = { chatId: string; videoId: string; trackId: string };
+type WordScope = { videoId: string; trackId: string; segmentIndex: number; tokenIndex: number; word: string };
 
 // Games and the transcript reader share audio focus as well as Rust's clip cache.
 let stopFocusedAudio: (() => void) | null = null;
+
+export function stopCaptionAudio() {
+  stopFocusedAudio?.();
+}
 
 export function useGameAudio(scope: GameScope, beforePlay?: () => Promise<void> | void) {
   return useCaptionAudio(scope, beforePlay);
@@ -20,7 +25,11 @@ export function useTranscriptAudio(scope: TranscriptScope, beforePlay?: () => Pr
   return useCaptionAudio(scope, beforePlay);
 }
 
-function useCaptionAudio(scope: GameScope | TranscriptScope, beforePlay?: () => Promise<void> | void) {
+export function useWordAudio(scope: WordScope, beforePlay?: () => Promise<void> | void) {
+  return useCaptionAudio(scope, beforePlay);
+}
+
+function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforePlay?: () => Promise<void> | void) {
   const player = useVideoPlayer(null, player => {
     player.audioMixingMode = 'doNotMix';
     player.timeUpdateEventInterval = 0.05;
@@ -65,7 +74,7 @@ function useCaptionAudio(scope: GameScope | TranscriptScope, beforePlay?: () => 
       if (!mounted.current || generation.current !== version || controller.signal.aborted) throw Error('Audio playback was stopped.');
     };
     try {
-      const command = { op: 'gameId' in scope ? 'ai_game_audio' : 'ai_chat_audio', ...scope, cueId };
+      const command = { op: 'word' in scope ? 'ai_word_audio' : 'gameId' in scope ? 'ai_game_audio' : 'ai_chat_audio', ...scope, cueId };
       let source = await aiRequest<Clip | Missing>(command);
       if (!source.needsMedia) clip = source;
       check();

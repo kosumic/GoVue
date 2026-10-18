@@ -262,6 +262,12 @@ fn resolve(value: &str) -> Option<&'static LanguageOption> {
         })
 }
 
+pub(super) fn translation_language(value: &str) -> Option<(&'static str, &'static str)> {
+    resolve(value)
+        .or_else(|| resolve(value.split(['-', '_']).next()?))
+        .map(|language| (language.code.as_str(), language.name))
+}
+
 #[derive(Default, Deserialize)]
 struct ChoicesRequest {
     #[serde(default)]

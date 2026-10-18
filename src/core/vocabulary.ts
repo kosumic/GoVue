@@ -22,3 +22,10 @@ export const listWords = (query = '') => coreRequest<SavedWord[]>({ op: 'vocabul
 export const removeWord = (id: string) => coreRequest<null>({ op: 'vocabulary_remove', id });
 export const saveWord = (data: Transcript, segmentIndex: number, tokenIndex: number, word: string) =>
   coreRequest<{ entry: SavedWord; saved: boolean }>({ op: 'vocabulary_save', videoId: data.videoId, trackId: data.trackId, segmentIndex, tokenIndex, word });
+
+export type WordSelection = { source: Transcript; segmentIndex: number; tokenIndex: number; word: string };
+export type WordTranslationPlan = { input: string; sourceLangCode: string; targetLangCode: string; targetLanguage: string; sameLanguage: boolean };
+export const wordAudioTiming = ({ source, segmentIndex, tokenIndex, word }: WordSelection) =>
+  coreRequest<{ start: number; end: number } | null>({ op: 'vocabulary_word_audio', videoId: source.videoId, trackId: source.trackId, segmentIndex, tokenIndex, word });
+export const planWordTranslation = ({ source, segmentIndex, tokenIndex, word }: WordSelection) =>
+  coreRequest<WordTranslationPlan[]>({ op: 'vocabulary_translation', videoId: source.videoId, trackId: source.trackId, segmentIndex, tokenIndex, word });

@@ -8,9 +8,10 @@ import { exportTranscript, readTranscripts, type TranscriptReader, type Transcri
 import { IconButton } from './IconButton';
 import { TranscriptWords } from './TranscriptWords';
 import { TranscriptTranslations } from './TranscriptTranslations';
-import { captionDetails, saveWord } from '../core/vocabulary';
+import { WordTranslationSheet } from './WordTranslationSheet';
+import { captionDetails, saveWord, type WordSelection } from '../core/vocabulary';
 
-export function TranscriptPanel({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, audio, onSummarize, onDownload, downloadDisabled }: {
+export function TranscriptPanel({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, onBeforeWordAudio, audio, onSummarize, onDownload, downloadDisabled }: {
   data: Transcript | null;
   comparison?: Transcript | null;
   trackIds?: string[];
@@ -27,6 +28,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   onExtract?: (track?: string) => void;
   onSeek?: (seconds: number) => void;
   onPlayLine?: (index: number, source: Transcript) => void;
+  onBeforeWordAudio?: () => Promise<void> | void;
   audio?: { phase: 'idle' | 'loading' | 'playing'; error: string; stop: () => void };
   onSummarize?: () => void;
   onDownload?: () => void;
@@ -38,6 +40,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   const [copied, setCopied] = useState(false);
   const [wordFeedback, setWordFeedback] = useState('');
   const [translationsVisible, setTranslationsVisible] = useState(false);
+  const [wordSelection, setWordSelection] = useState<(WordSelection & { anchor?: { x: number; y: number } }) | null>(null);
   const savingWord = useRef(false);
   const activeData = useRef([data, comparison]);
   activeData.current = [data, comparison];
@@ -46,6 +49,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
     setWordFeedback('');
     setCopied(false);
     setTranslationsVisible(false);
+    setWordSelection(null);
     return () => { activeData.current = []; };
   }, [data, comparison]);
   const [matches, setMatches] = useState<{ query: string; data: Transcript; comparison: Transcript | null; reader: TranscriptReader } | null>(null);
@@ -192,7 +196,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>
         <View style={styles.languageRow}>
-          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : [data.language, comparison?.language].filter(Boolean).join(' + ')}{canPlay ? onSeek ? ' · Tap a word or line to play' : ' · Tap a line to play' : ''} · Hold a word to save</Text>
+          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : [data.language, comparison?.language].filter(Boolean).join(' + ')}{canPlay ? onSeek ? ' · Tap a word or line to play' : ' · Tap a line to play' : ''} · Hold a word to translate</Text>
           {canPlay && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
             onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
@@ -229,12 +233,14 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
                     separatorStyle={styles.speakerSeparator}
                     onSeek={canPlay ? () => playLine(source, line.index) : undefined}
                     onSeekWord={onSeek ? seconds => { setFollowPlayback(true); onSeek(seconds); } : undefined}
+                    onTranslate={(tokenIndex, word, anchor) => { stopFollowing(); setWordSelection({ source, segmentIndex: line.index, tokenIndex, word, anchor }); }}
                     onSave={(tokenIndex, word) => { void saveCaptionWord(source, line.index, tokenIndex, word); }} />
                 </View>
               </Pressable>;
             })}
           </View>} />
       </> : null}
+      {wordSelection && sources.includes(wordSelection.source) && !loading && !error && <WordTranslationSheet selection={wordSelection} anchor={wordSelection.anchor} onBeforeAudio={onBeforeWordAudio} onClose={() => setWordSelection(null)} />}
     </View>
   );
 }
