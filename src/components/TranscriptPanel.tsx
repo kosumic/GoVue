@@ -182,7 +182,6 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           </Pressable>}
         </View>}
         {onSelectTrack && <>
-          <Text style={styles.trackHelp}>{selectedTracks.length}/2 languages · {selectedTracks.length === 2 ? 'Tap a selected language to remove it' : data.tracks.length > 1 ? 'Select another language to compare' : 'Only one language available'}</Text>
           <ScrollView ref={trackList} horizontal showsHorizontalScrollIndicator={false} style={[styles.tracks, { height: Math.max(48, Math.ceil(20 * fontScale) + 28) }]} contentContainerStyle={styles.trackContent}>
             {tracks.map(track => {
               const selected = selectedTracks.includes(track.id);
@@ -267,7 +266,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   retry: { backgroundColor: colors.accent, paddingHorizontal: 22, paddingVertical: 13, borderRadius: 12, marginTop: 8 },
   retryText: { color: colors.surface, fontWeight: '600' },
   tracks: { flexGrow: 0, flexShrink: 0 },
-  trackHelp: { color: colors.muted, fontSize: 11, marginHorizontal: 20, marginBottom: 8 },
   disabledTrack: { opacity: 0.4 },
   comparisonStatus: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 20, marginBottom: 8 },
   comparisonError: { flex: 1, color: colors.muted, fontSize: 12 },
