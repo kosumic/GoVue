@@ -1,164 +1,406 @@
-# GoVue
+<p align="center">
+  <img src="assets/icon.png" alt="GoVue app icon" width="128">
+</p>
 
-Formerly LingoPlay. The Android application ID and iOS bundle ID, credential
-storage keys, data and download directories, and backup format markers keep
-their original names so existing installations, sign-ins, and exports continue
-to work. New links use `govue://`; existing `lingoplay://` links remain supported.
+<h1 align="center">GoVue</h1>
 
-A port of [LiTube](https://github.com/HydeYYHH/Litube) to **shared React Native UI
-and a Rust core**, for Android and iOS. Android is the first implementation and
-verification target.
+<p align="center">
+  <strong>Watch YouTube. Learn from every line.</strong><br>
+  Native playback, searchable captions, saved vocabulary, and AI conversations on Android and iOS.
+</p>
 
-YouTube supplies browsing, comments, subscriptions and account pages inside a
-WebView. The app supplies the embedded, fullscreen and mini-player experience,
-player menus, queue, extension settings and downloads. Expo Video owns playback,
-background audio and picture-in-picture. Rust owns format validation, selection,
-settings, queue/history, navigation state, caption processing and bounded media
-streaming. Kotlin and Swift adapt platform APIs.
+<p align="center">
+  <a href="https://github.com/kosumic/GoVue/actions/workflows/ci.yml"><img src="https://github.com/kosumic/GoVue/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License: GPL version 3"></a>
+  <a href="https://expo.dev"><img src="https://img.shields.io/badge/React%20Native%20%2B%20Expo-000020?logo=expo&amp;logoColor=white" alt="Built with React Native and Expo"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.99.0-000000?logo=rust&amp;logoColor=white" alt="Built with Rust 1.99.0"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-24.15.0%2B-339933?logo=node.js&amp;logoColor=white" alt="Node.js 24.15.0 or newer"></a>
+  <a href="https://x.com/Kosumi1989"><img src="https://img.shields.io/badge/Follow-%40Kosumi1989-000000?logo=x&amp;logoColor=white" alt="Follow @Kosumi1989 on X"></a>
+</p>
 
-The port follows LiTube commit `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f`
-(2026-10-16). Browser integration scripts are adapted from that source. See
-[PORTING.md](PORTING.md) for the acceptance inventory and verification status.
-The port is in progress; an implemented control is not evidence of verified
-feature parity.
+GoVue brings YouTube browsing and language learning into one mobile app. Find a
+video, follow its captions, replay a phrase, save an unfamiliar word, or ask your
+chosen AI model about what you just watched. Comments, recommendations,
+subscriptions, and account pages remain available through YouTube's web interface.
 
-The player's Transcript and AI buttons appear before speed and quality. Transcript
-opens a searchable reader with language selection, playback following, and
-tap-to-seek captions. YouTube JSON3 word timings are preserved when available:
-the current word is highlighted, and tapping a word seeks to its start. Hold a
-word to open a floating card near it and translate on device with
-`expo-translate-text`, then optionally save it with that timestamp. Words in a
-learning language translate into a language you know, preferring your native
-language. Words in a known language translate into
-all your learning languages, with a separate result for each. Languages outside
-your profile use a known language, or English when none is available.
-The card can generate a usage example with translations using your selected AI
-model, or explain the word's base form and grammar in its current caption, in
-your known/native language. Each example sentence and translation has a speaker
-button for text-to-speech in its own language using `expo-speech`. If the word
-has individual timestamps, Play word plays its original audio and stops at the
-word's end. It shares the reader and games' lazy video-caption audio cache;
-words in the same caption reuse its downloaded fragments.
-The first translation may download a language model. Android uses ML Kit; iOS
-requires iOS 18 or newer for translation. A native app rebuild is required after
-installing the module. Captions without word timings use the line start; refresh
-an older cached transcript to fetch word timings.
-The reader keeps original line breaks, reconstructs continuations within caption
-windows, and displays authored emphasis and Japanese pronunciation readings.
-Subtle dividers mark possible speaker changes when the caption track supplies
-those flags, including changes within a caption; they do not identify speakers.
-Readings are searchable and included when copying or sharing. **Translate…**
-offers YouTube's available machine translations with their source language;
-default caption selection follows the selected audio track when YouTube supplies
-the association. **Caption details** shows source structure, audio associations,
-and recognition-score and speech-boundary statistics. These scores are not
-calibrated accuracy percentages, and speech-boundary hints do not identify speakers.
-Validated cue fragments, timing, formatting, window definitions, confidence,
-speech-boundary hints, and translation/audio metadata stay in the native caption
-cache; upstream addresses, tokens, and raw responses remain excluded.
-Select up to two transcript languages to compare captions
-interleaved in timestamp order, even when the languages split lines differently.
-Search matches either language and keeps the paired lines together; copy and
-share include both selected languages. Tap a selected language to remove it.
-AI opens the same full-screen conversation workspace as
-**Chat** in the bottom navigation. Open the conversation drawer for saved chats,
-new chats, providers, and token usage. Search the drawer by conversation title or
-message text; message matches open the conversation at the matching message.
-Use the magnifying glass in an open chat to find text, see a highlighted excerpt,
-and move through matches with the previous/next arrows. Searches are local,
-case insensitive, and cover user and assistant messages. Find also includes the
-current streamed reply and shows up to 500 matches; narrow the query for more.
-Long press a conversation to pin, archive, rename, or delete it. Pinned chats stay
-at the top; **Archived chats** lets you browse, search, and restore archived chats.
-Opening AI from a video reopens its one
-saved conversation, or creates an empty chat with the transcript as context.
-Opening chat never sends a message or starts a summary. Choose a model from the
-header and send your own question; model changes keep the video's conversation.
-Use **Open video** in chat to return to its existing video tab or open it again.
-Tap the transcript context card to read or search the captions used by the AI.
-Tap a line to hear its original audio and stop at the end of that caption. Audio
-loads on demand and is cached locally for replay and reuse by the chat's games.
-Reasoning changes made during a response apply to the next message.
-Each response has a regenerate button beside its copy action. Regenerating an
-earlier response replaces that response and all later messages using its original prompt.
-Open **Extensions → AI** to manage AI providers, accounts, models and model
-groups.
-Paste or write **AGENT.md instructions** there to set your preferred language,
-learning level, or response style for all chats and summaries. Save to apply them
-to the next message, including in existing chats. Clear and save to remove them.
-Choose **Token usage** in AI settings for saved-chat totals, provider/model
-breakdowns, cache hit rates and output speed. Open a conversation for its context
-and reasoning details. Missing provider counts are shown as unavailable; older
-replies may lack cache, timing and completion-date metadata. These are local
-saved-history statistics, not the provider's billing or subscription quota.
-Unreported cache counts appear as unknown, and cache hit rates use only replies
-with both input and cache counts. Earlier request messages keep their original
-normalized text; unchanged transcripts are attached once. Provider tool and
-reasoning items are replayed from a bounded memory cache and never saved to disk.
-Restarting the app or evicting that cache falls back to normalized chat history
-and may start a new provider cache prefix.
-Both ChatGPT account connections keep a stable conversation identity in the
-prompt-cache key and session headers across turns and tool calls.
-Choose **ChatGPT / Codex** for account sign-in or **OpenAI API** for an API key.
-The alternative **ChatGPT plan sharing** connection is under **Advanced connections**.
-Earlier feature documentation remains in
-[docs/legacy-features.md](docs/legacy-features.md).
+The app ports [LiTube](https://github.com/HydeYYHH/Litube) to shared React Native
+presentation and a Rust core, with small Kotlin and Swift platform adapters.
+Android is the first implementation and verification target; the port is in
+progress. See [project status](#project-status) for verified behavior and open work.
 
-Player subtitles, media resolution and download extraction run through the
-shared Rust extractor, independently of the browsing page. An isolated runtime
-executes token challenges; platform adapters supply HTTPS bytes and MP4 remuxing.
-There is no page-extraction fallback. See [extraction.md](docs/extraction.md) for
-the protocol, cache boundaries and current guest-client limitations.
+## Contents
+
+- [What you can do](#what-you-can-do)
+  - [Watch with native controls](#watch-with-native-controls)
+  - [Read along in two languages](#read-along-in-two-languages)
+  - [Build vocabulary from what you watch](#build-vocabulary-from-what-you-watch)
+  - [Talk to your own AI models](#talk-to-your-own-ai-models)
+  - [Keep videos for later](#keep-videos-for-later)
+- [Get started](#get-started)
+- [How it works](#how-it-works)
+  - [Data and connections](#data-and-connections)
+- [Architecture](#architecture)
+  - [React Native Frontend](#react-native-frontend)
+  - [GoVue Rust Core](#govue-rust-core)
+- [Development](#development)
+  - [Android](#android)
+  - [iOS](#ios)
+  - [Generated files](#generated-files)
+  - [Validation](#validation)
+- [Project status](#project-status)
+- [Documentation](#documentation)
+- [Community](#community)
+- [Credits](#credits)
+- [License](#license)
+
+## What you can do
+
+### Watch with native controls
+
+- Play videos in an embedded player, fullscreen, or a floating mini-player while
+  keeping YouTube comments and recommendations interactive.
+- Choose speed, quality, audio tracks, and captions; browse chapters and manage
+  the playback queue.
+- Continue with background audio and picture-in-picture through Expo Video.
+- Configure SponsorBlock categories, caption appearance, gestures, and playback
+  preferences in **Extensions**.
+
+### Read along in two languages
+
+- Open **Transcript** from the player to search captions, follow playback, and
+  tap a line or a timed word to seek.
+- Compare up to two languages, interleaved by timestamp. Search either language;
+  copy and share include both.
+- Keep authored line breaks, emphasis, and Japanese pronunciation readings.
+- Choose available caption tracks or YouTube machine translations, inspect
+  caption details, and reuse normalized transcripts from the on-device cache.
+
+### Build vocabulary from what you watch
+
+- Set the languages you know and want to learn, including current and target
+  levels, under **Extensions → Languages**.
+- Hold a transcript word to translate it on device and save it with its video
+  context and timestamp.
+- Ask your selected AI model for translated usage examples or an explanation of
+  the word's base form and grammar in the current caption.
+- Listen to examples with text-to-speech or use **Play word** to hear the original
+  video audio. Exact word playback depends on available word timings.
+
+On-device translation may download a language model on first use. Android uses
+ML Kit; iOS translation requires iOS 18 or newer.
+
+### Talk to your own AI models
+
+- Open **AI** from a video to reuse its saved conversation with transcript context,
+  or open **Chat** from the bottom navigation. Opening a chat does not send a message.
+- Configure providers, accounts, models, and fallback or round-robin model groups
+  under **Extensions → AI**. Connections include ChatGPT / Codex, OpenAI API,
+  Claude, Gemini, OpenRouter, Grok, Kimi Code, optional Copilot, and compatible endpoints.
+- Stream replies with Markdown and provider-supplied reasoning, change reasoning
+  effort for the next turn, regenerate responses, and inspect local token usage.
+- Search messages and conversations; pin, archive, rename, or delete saved chats.
+- Dictate questions, read answers aloud, and save **AGENT.md instructions** for
+  your preferred language, learning level, or response style.
+- Ask for interactive learning games that can replay caption audio and retain
+  progress between sessions.
+
+Account eligibility and model access depend on the provider. See the
+[reader and chat guide](docs/reader-and-chat.md) for controls, timing behavior,
+voice input, and usage statistics, and the
+[interactive games reference](docs/interactive-games.md) for the game runtime.
+
+### Keep videos for later
+
+- Choose video or audio downloads, quality, audio track, subtitles, cover images,
+  and filenames.
+- Manage individual downloads or playlist and queue batches, with pause, resume,
+  retry, offline playback, and file export.
+- Publish verified downloads to **Downloads/GoVue** on Android 10 and newer.
+- Export and import extension settings.
+
+Downloads currently target finite MP4 video and M4A audio. Live downloads and
+durable partial-download recovery after process termination remain open.
+
+## Get started
+
+Build a native app using the [Android](#android) or [iOS](#ios) instructions below.
+GoVue needs its local Rust module and cannot run in Expo Go.
+
+1. Open YouTube and choose a video with captions.
+2. Tap **Transcript** in the player. Select one or two languages and tap a caption
+   to follow it in the video.
+3. Set your languages in **Extensions → Languages**, then hold a word in the
+   reader to translate or save it.
+4. Add a provider and model in **Extensions → AI**, open **AI** from the video,
+   and send your own question about the transcript.
+
+GoVue was formerly named LingoPlay. Existing installations keep their application
+identifiers, credentials, data directories, and backup format markers. New links
+use `govue://`; existing `lingoplay://` links still work.
+
+## How it works
+
+YouTube's WebView supplies browsing, comments, subscriptions, and account pages.
+GoVue places its native player over the page's reported video bounds, keeping
+comments and recommendations interactive. The WebView stays mounted when the
+reader opens; embedded, fullscreen, and mini-player layouts share one mounted
+video surface.
+
+Playback, subtitles, and downloads use the Rust extractor independently of the
+browsing page. Platform adapters supply bounded HTTPS requests; isolated runtimes
+handle token challenges and signature code. The current guest extractor does not
+select formats requiring signature/throttle evaluation and has no page-extraction
+fallback. See [extraction](docs/extraction.md) for the protocol and limitations.
+
+### Data and connections
+
+Normalized transcripts, saved words, chats, settings, and history live in the
+native sandbox. Signed media/caption URLs and raw upstream responses stay in
+memory and are excluded from persistent metadata and logs. Provider credentials
+use Android Keystore-backed storage or iOS Keychain.
+
+AI requests go directly to the selected provider. Attached transcript context is
+sent with your questions. Local token statistics describe saved history and do
+not represent provider billing or subscription quotas.
+
+Native playback uses opaque media routes bound to loopback. Casting uses a
+separate, revocable listener on the current private Wi-Fi address; see the
+[casting networking policy](docs/cast-networking.md) and its
+[verification status](PORTING.md#scoped-cast-transport-2026-10-17).
+
+## Architecture
+
+GoVue shares its React Native presentation and Rust core between Android and
+iOS. React Native owns presentation and browser integration; Rust owns
+application logic, validation, state, and persistence. Kotlin and Swift adapt
+platform APIs through the [local Expo module](modules/govue-core/).
+
+### React Native Frontend
+
+```mermaid
+flowchart TB
+  subgraph Frontend["React Native / TypeScript · shared presentation"]
+    Screens["Browser · reader · vocabulary · chat<br/>player controls · queue · settings · downloads"]
+    Browser["YouTube WebView + page bridges<br/>browsing · comments · account pages"]
+    Video["Expo Video<br/>playback · background audio · PiP"]
+    Runtimes["Isolated renderers<br/>token challenges · signature evaluation"]
+    Adapters["Thin TypeScript adapters<br/>semantic requests · validated core replies"]
+    Screens --> Browser
+    Screens --> Video
+    Screens <--> Adapters
+    Adapters <--> Runtimes
+  end
+  Module["GoVueCore Expo module<br/>Kotlin / Swift · generated UniFFI bindings"]
+  Core["GoVue Rust core<br/>logic · state · validation · persistence"]
+  Adapters <--> Module
+  Module <--> Core
+  Video -->|"opaque loopback media routes"| Core
+  classDef react fill:#e9f1ff,stroke:#3772c5,color:#172033
+  classDef native fill:#e9f7f5,stroke:#23847a,color:#172033
+  classDef rust fill:#fff0e7,stroke:#c45f24,color:#172033
+  class Screens,Browser,Video,Runtimes,Adapters react
+  class Module native
+  class Core rust
+```
+
+[App.tsx](App.tsx) and [src/](src/) render the shared browser, player controls,
+reader, vocabulary, chat, settings, and download screens. The
+[YouTube bridges](src/youtube/) coordinate the page and web player, while
+[isolated runtimes](src/media/) execute token challenges and signature code in
+separate renderers. Expo Video owns playback, background audio, and PiP.
+
+### GoVue Rust Core
+
+```mermaid
+flowchart TB
+  Boundary["GoVueCore / UniFFI JSON boundary<br/>execute · ai · dictation"]
+  subgraph Rust["govue-core · shared Rust library"]
+    Dispatch["Request validation and dispatch"]
+    Player["Browser and player state<br/>settings · queue/history · navigation · SponsorBlock"]
+    Captions["Transcripts and learning<br/>parse · normalize · search/export<br/>language profiles · vocabulary · caption audio"]
+    AI["AI services<br/>providers/auth · streaming · conversations<br/>reasoning/usage · games · speech state"]
+    Media["Media and downloads<br/>extraction · format selection · transfers<br/>bounded streaming · Cast sessions"]
+    Storage["Native sandbox persistence<br/>normalized captions · chats · words<br/>settings · history · verified media"]
+    Dispatch --> Player
+    Dispatch --> Captions
+    Dispatch --> AI
+    Dispatch --> Media
+    Player --> Storage
+    Captions --> Storage
+    AI --> Storage
+    Media --> Storage
+  end
+  Platform["Kotlin / Swift adapters<br/>bounded HTTPS · secure credentials<br/>MP4 remuxing · OS file publication"]
+  YouTube["YouTube HTTPS endpoints"]
+  Providers["Configured AI providers"]
+  Boundary <--> Dispatch
+  Media <--> Platform
+  AI <--> Platform
+  Platform <--> YouTube
+  Platform <--> Providers
+  classDef native fill:#e9f7f5,stroke:#23847a,color:#172033
+  classDef rust fill:#fff0e7,stroke:#c45f24,color:#172033
+  classDef remote fill:#edf7e8,stroke:#5f8f45,color:#172033
+  class Boundary,Platform native
+  class Dispatch,Player,Captions,AI,Media,Storage rust
+  class YouTube,Providers remote
+```
+
+The [Rust core](core/) validates requests and owns caption processing, media
+selection, AI protocols, game transitions, settings, queue/history, and download
+planning and transfer state. Kotlin and Swift provide network bytes, secure
+credential storage, file publication, and MP4 remuxing. Signed upstream addresses
+remain in memory; local playback receives scoped routes from Rust's media server.
 
 ## Development
+
+GoVue uses React Native 0.86 and Expo SDK 57 with custom native builds. The
+[Nix flake](flake.nix) supplies Node.js 24, **Rust 1.99.0**, and the platform
+dependencies. Rust is pinned in [rust-toolchain.toml](rust-toolchain.toml);
+Node.js 24.15 or newer is required for the TypeScript build scripts. Enter the
+development shell before installing dependencies.
+
+### Android
+
+On Linux, the shell includes JDK 17, Android SDK Platform 36, NDK, and CMake.
+Connect an ARM64 device with USB debugging enabled:
 
 ```sh
 nix develop path:.
 npm ci
-npm run core:android
-npx expo prebuild --platform android --no-install
-cd android
-./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+npm run android
 ```
 
-Use `npm run page:build` after editing browser injection or decoder source.
-`src/youtube/pageBridge.js` is standalone JavaScript for the WebView; the build
-generates its injection string, exposed with control helpers by `pageScripts.js`.
-Native projects and generated Rust bindings are ignored; persistent native
-configuration belongs in `app.json` or a config plugin. iOS builds require an
-Apple Silicon Mac with Xcode and `npm run ios` / `npm run prebuild:ios`.
+Gradle builds the Rust library and bindings automatically. The Nix shell limits
+Android builds to `arm64-v8a`.
 
-After live Android verification:
+For Metro over USB, run these inside the development shell:
+
+```sh
+adb reverse tcp:8081 tcp:8081
+npm start
+```
+
+If the development client needs to be opened manually, use another terminal:
+
+```sh
+adb shell am start -a android.intent.action.VIEW \
+  -d 'govue://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081' \
+  io.github.kaminarios.lingoplay
+```
+
+To build and install a standalone APK from the repository root, inside the shell:
+
+```sh
+npm run core:android
+npx expo prebuild --platform android --no-install
+NODE_ENV=production android/gradlew -p android :app:assembleRelease \
+  -PreactNativeArchitectures=arm64-v8a
+adb install -r android/app/build/outputs/apk/release/app-release.apk
+```
+
+This bundles JavaScript and runs without Metro. The generated release variant
+currently uses the development signing key; production signing is not configured.
+
+### iOS
+
+Use an Apple Silicon Mac with Xcode, after verifying shared changes on Android:
+
+```sh
+nix develop path:.
+npm ci
+npm run ios
+```
+
+`npm run ios` builds the Rust device and simulator libraries, generates the
+XCFramework and Swift bindings, then runs Expo. Use `npm run prebuild:ios` to
+generate the native project without launching it. Keep Nix's host SDK/compiler
+overrides out of Xcode builds; the Darwin shell and Rust build script select
+Xcode's tools for Apple targets.
+
+### Generated files
+
+`npm ci` applies the local native patches and bundles the injected browser code.
+After changing `src/youtube/pageBridge.js`, the LiTube browser scripts, or decoder
+and token sources under `scripts/`, regenerate the bundles:
+
+```sh
+npm run page:build
+```
+
+Root `android/` and `ios/` projects, generated bindings, compiled Rust libraries,
+and browser bundles are ignored. Keep persistent native configuration in
+[app.json](app.json) or [config plugins](plugins/), and native adapter sources in
+[modules/govue-core](modules/govue-core/). Regenerate bindings with
+`npm run core:android` or `npm run core:ios`.
+
+Android builds `expo-video` from source to include `scripts/patch-video.ts`;
+keep its postinstall patch and autolinking override together.
+
+### Validation
+
+Get behavior working on a live Android device, then run inside the shell:
 
 ```sh
 npm run check
 npx expo install --check
 ```
 
-Chat supports microphone dictation through `expo-speech-recognition`. Tap the
-microphone and speak; partial results appear separately, and only final results
-are added to the current draft. Rust owns dictation state and joins recognized
-text with spacing appropriate for English, Chinese, and Japanese. Recognition
-uses the device locale and up to 100 vocabulary hints built in Rust from the draft,
-recent chat messages, and the attached transcript. GoVue does not save
-audio recordings. Rebuild the native app after installing the dependency so the
-speech module and microphone permissions are included. Hint loading falls back
-to draft vocabulary after 1.5 seconds. Android finishes on a pause; iOS supports
-continuous dictation until stopped.
+These cover TypeScript, injected browser behavior, Rust formatting, Clippy, and
+Rust boundary/cache tests. CI also audits Rust dependencies, builds and lints an
+ARM64 Android APK, then compiles an unsigned ARM64 iOS app. See
+[CI documentation](.github/README.md). Fixture and compile checks complement
+live device verification.
 
-Each assistant response has a **Read** button in its footer. It reads the response
-with the device's default text-to-speech voice and becomes **Stop** during playback.
-Reading pauses video and caption audio, skips Markdown formatting and link targets,
-and stops when you leave the conversation, background the app, or start dictation.
-Long responses are split into speech requests by the Rust core.
+## Project status
 
-Signed media/caption URLs and raw responses stay in memory. Persisted queues,
-history and settings contain only validated, non-secret metadata. The local
-native playback transport binds to loopback. Cast uses a separate, revocable
-listener on the current private Wi-Fi address under the owner's
-[casting-only networking exception](docs/cast-networking.md).
+The LiTube port follows commit `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f`
+(2026-10-16). [PORTING.md](PORTING.md) records the acceptance inventory, device
+evidence, and remaining gaps; implemented controls still need verification.
+
+| Area | Current evidence and remaining work |
+| --- | --- |
+| Android | Pixel checks cover native VOD/live playback, quality and speed changes, captions, fullscreen/mini-player transitions, transcript context, and saved video chats. Comprehensive gesture and menu verification remains open. |
+| Downloads | Video and cover publication, read-back integrity, and reuse after restart were checked on the Pixel. Durable partial recovery remains open. |
+| PiP and background audio | A protected PiP audio handoff passed. The latest transition refinement, physical button checks, and extended background behavior remain open. |
+| Cast | Shared playback, pause/resume, seek, and revocation were checked through a USB relay. Direct Wi-Fi, physical receivers, and iOS adapters remain open; further Cast work is deferred. |
+| iOS | Shared code and native adapters exist; current extraction and UI parity still require a Mac build and live verification. |
+
+The current standalone extractor uses a guest client. Sign-in-required videos
+and videos unavailable to that client fail explicitly, even if the browsing
+WebView is signed in. Available formats and captions depend on YouTube.
+
+## Documentation
+
+- [Reader, vocabulary, and chat guide](docs/reader-and-chat.md)
+- [Interactive games and caption audio](docs/interactive-games.md)
+- [Standalone extraction and cache boundaries](docs/extraction.md)
+- [Porting inventory and verification evidence](PORTING.md)
+- [Casting networking policy](docs/cast-networking.md)
+- [CI and dependency automation](.github/README.md)
+- [Historical feature and profiling notes](docs/legacy-features.md) — includes
+  superseded extraction and UI descriptions.
+
+## Community
+
+- Report reproducible bugs and request features through
+  [GitHub Issues](https://github.com/kosumic/GoVue/issues).
+- Follow [@Kosumi1989](https://x.com/Kosumi1989) for project updates.
+
+Feedback is especially useful around Android playback, transcript and vocabulary
+workflows, AI connections, and iOS compatibility. Include the platform, build,
+steps to reproduce, and any relevant public video when reporting a problem.
+
+## Credits
+
+GoVue ports LiTube's browser integration and player experience to React Native
+and Rust. [Whip](https://github.com/KaminariOS/whip) is an engineering and
+documentation reference. Upstream attribution and dependency licenses are in
+[third-party notices](notices/README.md).
 
 ## License
 
-GNU GPL version 3; see [LICENSE](LICENSE). LiTube attribution and dependency
-licenses are in [notices/README.md](notices/README.md).
+GoVue is licensed under [GNU GPL version 3](LICENSE).
+
+Third-party work remains subject to its original terms; see
+[third-party notices](notices/README.md).
