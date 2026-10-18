@@ -60,7 +60,7 @@ function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforeP
     try { player.pause(); } catch {}
     if (mounted.current) { setPhase('idle'); setError(''); }
   }
-  async function play(cueId: string) {
+  async function play(cueId: string, onStarted?: () => void) {
     stopFocusedAudio?.();
     stop();
     focus.current = stop;
@@ -119,6 +119,7 @@ function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforeP
         active.current = { cancel: () => finish(cancellation) };
         player.play();
         setPhase('playing');
+        onStarted?.();
       });
     } catch (error) {
       if (cancelled()) return;

@@ -36,9 +36,12 @@ document.querySelector('#listen').onclick = async () => {
 ```
 
 `onState` calls back immediately and on every subsequent host update. `dispatch`
-resolves to the saved state. `playAudio` resolves when playback ends. `game.cues`
-contains the selected captions as `{ id, text, start, duration }`. Scripts render
-state and handle DOM interactions; Rust owns durable transitions and scoring.
+resolves to the saved state. `playAudio` replaces any pending or playing clip
+and resolves when playback starts. Keep audio cards enabled so another tap can
+replace the current clip. Preparation failures reject the Promise; the host shows
+any later playback failures. `game.cues` contains the selected captions as
+`{ id, text, start, duration }`. Scripts render state and handle DOM interactions;
+Rust owns durable transitions and scoring.
 
 ## Rules
 

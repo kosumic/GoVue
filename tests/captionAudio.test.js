@@ -138,3 +138,25 @@ test('loading failures give feedback and the next tap can retry', async t => {
   assert.equal(env.transcript().error, '');
   await act(async () => { env.players[0].emit('playToEnd'); await retry; });
 });
+
+test('tapping another game card replaces playing audio after acknowledging its start', async t => {
+  const env = await harness(t);
+  const started = [];
+  let first, second, finished = false;
+  await act(() => { first = env.game().play('cue-0', () => started.push('cue-0')); });
+  first.then(() => { finished = true; });
+  const player = env.players[1];
+  assert.deepEqual(started, ['cue-0']);
+  assert.equal(finished, false, 'the card is acknowledged before the clip ends');
+  assert.equal(player.playing, true);
+  await act(() => { second = env.game().play('cue-1', () => started.push('cue-1')); });
+  await first;
+  assert.equal(finished, true);
+  assert.deepEqual(started, ['cue-0', 'cue-1']);
+  assert.equal(player.source.uri, clip('cue-1').uri);
+  assert.equal(player.playing, true, 'cleanup from the old clip cannot pause the new one');
+  assert.equal(env.game().error, '');
+  await act(async () => { player.emit('playToEnd'); await second; });
+  assert.equal(env.game().phase, 'idle');
+  assert.deepEqual(env.calls.filter(call => call.op === 'ai_game_audio_release').map(call => call.token), ['cue-0', 'cue-1']);
+});
