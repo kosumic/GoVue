@@ -642,6 +642,33 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         chat.reasoning_effort = parse_reasoning(value)?;
     }
     let retry = c["retry"] == true;
+    let retry_message = c
+        .get("retryMessageId")
+        .map(|value| {
+            let id = value
+                .as_str()
+                .filter(|id| valid_id(id))
+                .ok_or("Invalid response to regenerate.")?;
+            if !retry || existing.is_none() {
+                return Err("Choose an existing response to regenerate.");
+            }
+            chat.messages
+                .iter()
+                .position(|message| message.id == id && message.role == "assistant")
+                .ok_or("This response is no longer available to regenerate.")
+        })
+        .transpose()?;
+    let retry_prompt = if retry {
+        let index = retry_message
+            .or_else(|| chat.messages.len().checked_sub(1))
+            .filter(|&index| chat.messages[index].role == "assistant")
+            .and_then(|index| index.checked_sub(1))
+            .filter(|&index| chat.messages[index].role == "user")
+            .ok_or("There is no message to retry.")?;
+        Some(index)
+    } else {
+        None
+    };
     let edit = c
         .get("editMessageId")
         .map(|value| {
@@ -658,13 +685,8 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
                 .ok_or("This message is no longer available to edit.")
         })
         .transpose()?;
-    let prompt = if retry {
-        chat.messages
-            .iter()
-            .rev()
-            .find(|m| m.role == "user")
-            .map(|m| m.content.as_str())
-            .ok_or("There is no message to retry.")?
+    let prompt = if let Some(index) = retry_prompt {
+        chat.messages[index].content.as_str()
     } else {
         string(&c, "prompt")?
     }
@@ -673,15 +695,16 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
     if prompt.is_empty() || prompt.len() > 16_000 {
         return Err("Enter a message of up to 16,000 bytes.".into());
     }
-    let edited_id = edit.map(|index| chat.messages[index].id.clone());
+    let prompt_id = edit
+        .or(retry_prompt)
+        .map(|index| chat.messages[index].id.clone());
     if let Some(index) = edit {
         chat.messages.truncate(index);
         if index == 0 && chat.video_id.is_none() {
             chat.title.clear();
         }
-    } else if retry {
-        chat.messages.pop();
-        chat.messages.pop();
+    } else if let Some(index) = retry_prompt {
+        chat.messages.truncate(index);
     }
     if chat.messages.len() >= 198 {
         return Err("This chat is full. Start a new chat to continue.".into());
@@ -776,7 +799,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         };
     }
     chat.messages.push(Message {
-        id: match edited_id {
+        id: match prompt_id {
             Some(id) => id,
             None => random()?,
         },

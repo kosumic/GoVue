@@ -66,6 +66,8 @@ Tap the transcript context card to read or search the captions used by the AI.
 Tap a line to hear its original audio and stop at the end of that caption. Audio
 loads on demand and is cached locally for replay and reuse by the chat's games.
 Reasoning changes made during a response apply to the next message.
+Each response has a regenerate button beside its copy action. Regenerating an
+earlier response replaces that response and all later messages using its original prompt.
 Open **Extensions → AI** to manage AI providers, accounts, models and model
 groups.
 Paste or write **AGENT.md instructions** there to set your preferred language,
