@@ -157,6 +157,8 @@ export const BrowserTab = forwardRef<
             key={renderer.generation}
             source={source}
             userAgent={userAgent}
+            // Match browser text sizing: Android font scaling clips YouTube's line-clamped titles.
+            textZoom={100}
             style={s.fill}
             containerStyle={s.fill}
             javaScriptEnabled
