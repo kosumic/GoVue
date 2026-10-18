@@ -198,7 +198,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           </ScrollView>
           <TranscriptTranslations visible={translationsVisible} tracks={translations} selected={selectedTracks} onSelect={onSelectTrack} onClose={() => setTranslationsVisible(false)} />
         </>}
-        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={[styles.trackText, styles.comparisonMessage]}>{translations.some(track => track.id === selectedTracks[1]) ? 'Preparing YouTube translation… This can take over a minute.' : 'Loading comparison…'}</Text></View>}
+        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={[styles.trackText, styles.comparisonMessage]}>{translations.some(track => track.id === selectedTracks[1]) ? 'Loading YouTube translation…' : 'Loading comparison…'}</Text></View>}
         {!!comparisonError && <View style={styles.comparisonStatus}><Text accessibilityRole="alert" style={styles.comparisonError}>{comparisonError}</Text>
           {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()}><Text style={styles.selectedText}>Retry</Text></Pressable>}</View>}
         {searchVisible && <View style={styles.search}><Search size={16} color={colors.muted} /><TextInput autoFocus accessibilityLabel="Search transcript" placeholder="Find in transcript" placeholderTextColor={colors.muted}
