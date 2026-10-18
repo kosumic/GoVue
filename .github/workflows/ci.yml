@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
   schedule:
     - cron: '17 9 * * 1'
   workflow_dispatch:
@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Rust and JavaScript checks
+  rust:
+    name: Rust checks
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -34,6 +34,28 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+
+      - name: Lint Rust
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Test Rust
+        run: cargo test --locked -p lingoplay-core
+
+      - name: Audit Rust dependencies
+        uses: rustsec/audit-check@858dc40f52ca2b8570b7a997c1c4e35c6fc9a432 # main
+        with:
+          token: ${{ github.token }}
+
+  javascript:
+    name: JavaScript checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -43,13 +65,130 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check types, browser behavior, Rust formatting, lints, and tests
-        run: npm run check
+      - name: Check types
+        run: npm run typecheck
+
+      - name: Test JavaScript and browser behavior
+        run: npm test
 
       - name: Check Expo dependencies
         run: npx expo install --check
 
-      - name: Audit Rust dependencies
-        uses: rustsec/audit-check@858dc40f52ca2b8570b7a997c1c4e35c6fc9a432 # main
+  android:
+    name: Android build and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
         with:
-          token: ${{ github.token }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+
+      # Enter Nix before installing packages or generating build outputs so
+      # path:. does not copy node_modules/ or target/ into the Nix store.
+      - name: Generate native project, build arm64 APK, and lint
+        run: |
+          nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
+            npm ci --include=dev
+            npm run core:android
+            npx expo prebuild --platform android --no-install
+            android/gradlew -p android :app:assembleDebug :app:lintDebug :lingoplay-core:lintDebug \
+              -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon
+          NIX_SHELL
+
+      - name: Upload Android build and lint reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: lingoplay-android-checks
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/reports/lint-results-debug.*
+            modules/lingoplay-core/android/build/reports/lint-results-debug.*
+          retention-days: 7
+
+  ios:
+    name: iOS unsigned compile
+    needs: android
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Generate Rust XCFramework and iOS project
+        id: native
+        run: |
+          test "$(uname -m)" = arm64
+          nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
+            npm ci --include=dev
+            npm run prebuild:ios -- --no-install
+            printf "pod=%s\n" "$(command -v pod)" >> "$GITHUB_OUTPUT"
+          NIX_SHELL
+
+      # CocoaPods and Xcode run outside Nix's compiler/SDK environment.
+      - name: Install native dependencies
+        env:
+          POD_COMMAND: ${{ steps.native.outputs.pod }}
+        run: |
+          "$POD_COMMAND" install --project-directory=ios
+
+      - name: Compile unsigned arm64 iOS app
+        run: |
+          xcodebuild -quiet \
+            -workspace ios/LingoPlay.xcworkspace -scheme LingoPlay \
+            -configuration Release -sdk iphoneos -destination generic/platform=iOS \
+            -derivedDataPath "$RUNNER_TEMP/LingoPlayDerivedData" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
+          app_path="$RUNNER_TEMP/LingoPlayDerivedData/Build/Products/Release-iphoneos/LingoPlay.app"
+          test -s "$app_path/main.jsbundle"
+          test "$(lipo -archs "$app_path/LingoPlay")" = arm64
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$app_path" "$RUNNER_TEMP/LingoPlay-unsigned.app.zip"
+
+      - name: Upload unsigned compile artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: lingoplay-ios-unsigned-compile-only
+          path: ${{ runner.temp }}/LingoPlay-unsigned.app.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  check:
+    name: CI complete
+    if: always()
+    needs: [rust, javascript, android, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -e 'all(.[]; .result == "success")' <<< "$RESULTS"

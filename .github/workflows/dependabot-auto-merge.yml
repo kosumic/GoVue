@@ -1,0 +1,51 @@
+name: Dependabot auto-merge
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    name: Merge tested Dependabot update
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.pull_requests[0].number
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # This privileged workflow never checks out or executes PR code.
+      - name: Merge the tested pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          TESTED_HEAD_SHA: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+          TESTED_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          BASE_BRANCH: master
+        run: |
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+          if ! jq -e --arg head "$TESTED_HEAD_SHA" --arg base "$BASE_BRANCH" '
+            .user.login == "dependabot[bot]" and .state == "open" and .draft == false and
+            .head.repo.id == .base.repo.id and .head.sha == $head and .base.ref == $base
+          ' <<< "$pr" > /dev/null; then
+            echo "Skipping PR #$PR_NUMBER because its author, state, repository, base, or head changed"
+            exit 0
+          fi
+
+          base_sha="$(gh api "repos/$GITHUB_REPOSITORY/branches/$BASE_BRANCH" --jq '.commit.sha')"
+          if [[ -z "$TESTED_BASE_SHA" || "$base_sha" != "$TESTED_BASE_SHA" ]]; then
+            echo "Skipping PR #$PR_NUMBER because $BASE_BRANCH changed after CI started"
+            exit 0
+          fi
+
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --match-head-commit "$TESTED_HEAD_SHA" --squash --delete-branch

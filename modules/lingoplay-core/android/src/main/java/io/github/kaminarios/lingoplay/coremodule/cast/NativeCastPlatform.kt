@@ -42,7 +42,7 @@ internal class NativeCastPlatform(private val context: Context) : CastPlatform {
     android.util.Log.w("LingoPlayCast", "Wi-Fi listener binding failed: ${error.javaClass.simpleName}; errno=$errno")
     false
   } }
-  override fun open(host: String, port: UShort): String {
+  override fun connect(host: String, port: UShort): String {
     val selected = wifi() ?: return ""
     return sockets.open(host, port.toInt(), selected.first)
   }
