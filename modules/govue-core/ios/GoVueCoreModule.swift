@@ -139,12 +139,12 @@ public final class GoVueCoreModule: Module {
       let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("LingoPlay/transcripts", isDirectory: true)
       return aiExecute(request: request, storagePath: directory.path)
-    }
+    }.runOnQueue(.global(qos: .userInitiated))
     AsyncFunction("execute") { (request: String) -> String in
       let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("LingoPlay/transcripts", isDirectory: true)
       return execute(request: request, storagePath: directory.path)
-    }
+    }.runOnQueue(.global(qos: .userInitiated))
     AsyncFunction("mux") { (video: String, audio: String, output: String) async throws -> String in
       func local(_ value: String) throws -> URL {
         guard let url = URL(string: value), url.isFileURL,

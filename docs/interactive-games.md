@@ -9,10 +9,35 @@ one card runs at a time. Expand it for more space; closing, expanding, or reload
 an interface preserves its Rust state. Game audio pauses the main video and stops
 when the interface closes or the app enters the background.
 
+## Practice saved games
+
+Open **Practice** from the conversation sidebar to review saved games as swipeable
+activities. **Review all** starts a finite session; **Continue** resumes the saved
+queue. Drag anywhere on the card left for **Forgot** and right for **Know**, or
+use the matching buttons. The card follows your finger; releasing a short drag
+springs it back. Horizontal drags starting on game content or buttons move the
+card, while taps and vertical scrolling stay with the generated game.
+**Undo** restores the previous swipe and rating.
+Games control their own answer reveals and interactions.
+
+New games are saved to the independent native Practice library. Existing chat
+games are imported when opening Practice, and retained when deleting their chat.
+Game state is shared between chat and Practice. Closing or restarting the app
+preserves the queue, ratings, and activity state. **Restart activity** resets its
+rules to their initial state. The results screen offers forgotten activities or
+another session. Reviews do not automatically send messages to the assistant.
+
+Games with an original video show **Open original**, including a timestamp when
+available. The optional tool field `sourceCueId` selects a validated caption for
+this link, even for activities without audio; otherwise the first selected audio
+caption supplies the timestamp. Source identity and caption timing are frozen
+with the game. Source links reuse the app's video tab and preserve Practice
+progress for returning.
+
 ## Definition
 
 The tool accepts `title`, `html` (a body fragment), `css`, `script`, `rules` (a
-JSON-encoded string), and `cueIds` (an array). Transcript context labels each
+JSON-encoded string), `cueIds` (an array), and optional `sourceCueId`. Transcript context labels each
 caption `cue-N`, where N is its zero-based normalized caption index. Selected
 caption text and timing are copied into the saved game, independently of the
 bounded transcript cache.
@@ -90,8 +115,9 @@ repeated word tiles separate IDs. Include undo/reset actions and understandable
 feedback. Unsupported mechanics need another generic Rust operation, rather than
 a game-specific native component.
 
-Actions are serialized, revision-checked, deduplicated by event ID, and saved
-atomically with their game. Audio requests are recorded as `audio_requested`.
+Actions are serialized, revision-checked, deduplicated by recent event ID, and saved
+atomically in the independent game library. Recent events are kept in a bounded
+history so repeated practice does not exhaust an activity. Audio requests are recorded as `audio_requested`.
 `notify: true` queues an assistant response after any current response finishes.
 Every new model turn includes the latest games' states, selected captions, and
 recent action histories as untrusted reference data. The interacted game is
@@ -101,7 +127,15 @@ immediately; user interaction never leaves a model tool call open.
 
 ## Audio and runtime boundaries
 
-Audio is fetched on the first play request. Rust selects indexed AAC audio,
+Opening an activity asynchronously prepares its declared caption audio in the
+shared Rust cache. Preparation checks existing files first, shares pending work
+with Play requests, and does not acquire playback routes or audio focus. The
+interface shows preparing, ready, or retry status while remaining usable.
+Playback starts when the game requests it. Swiping away or backgrounding cancels
+obsolete preparation where possible and stops playback; completed files remain
+cached and late results cannot update another card.
+
+Rust selects indexed AAC audio,
 downloads its initialization and caption-overlapping fMP4 segments using bounded
 requests, and serves a local HLS clip to Expo Video. Subsequent plays use the
 cached bytes, including after restart. Caption start/end offsets limit playback;

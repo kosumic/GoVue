@@ -89,6 +89,12 @@ interfaces can use selected captions and original audio, with progress saved by
 Rust. See [interactive chat games](interactive-games.md) for the runtime contract
 and audio limits.
 
+Open **Practice** in the conversation sidebar to swipe through saved games:
+left for **Forgot**, right for **Know**. Activities retain their own interactions,
+and Undo restores the previous swipe. Progress survives app restarts and chat
+deletion. Activities prepare their audio asynchronously when opened and can link
+back to the original YouTube video and caption timestamp.
+
 ## Find and organize chats
 
 Open the conversation drawer for saved chats, new chats, providers, and token

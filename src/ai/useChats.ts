@@ -62,6 +62,17 @@ export function useChats(visible: boolean, contextId: string) {
     const result = await aiRequest<{ chats: SavedChat[] }>({ op: 'ai_chats' });
     if (mounted.current && version === historyEpoch.current) setHistory(result.chats);
   }
+  async function refreshGames() {
+    const chatId = current.current?.id;
+    if (!chatId) return;
+    const version = epoch.current;
+    const saved = await aiRequest<Conversation>({ op: 'ai_chat_get', chatId });
+    if (!mounted.current || epoch.current !== version || current.current?.id !== chatId) return;
+    update({ ...current.current, messages: current.current.messages.map(message => {
+      const games = saved.messages.find(value => value.id === message.id)?.games;
+      return games ? { ...message, games } : message;
+    }) });
+  }
   function cancel(clearFeedback: boolean) {
     if (clearFeedback) gameFeedback.current = [];
     ++epoch.current;
@@ -262,6 +273,6 @@ export function useChats(visible: boolean, contextId: string) {
     if (previousContext.current === contextId) return;
     previousContext.current = contextId; stop();
   }, [contextId]);
-  return { conversation, history, busy, loading, ready, error, settingsBusy, gameAction, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, openVideo, selectModel, remove, change, newChat, refresh };
+  return { conversation, history, busy, loading, ready, error, settingsBusy, gameAction, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, openVideo, selectModel, remove, change, newChat, refresh, refreshGames };
 }
 export type ChatController = ReturnType<typeof useChats>;

@@ -13,6 +13,7 @@ import { AiUsageSheet } from './AiUsageSheet';
 import { reasoningName } from './AiReasoning';
 import { useChats, type ChatTranscript, type SavedChat } from '../ai/useChats';
 import { AiHistoryDrawer } from './AiHistoryDrawer';
+import { GamePractice } from './GamePractice';
 import { extractTranscript, restoreTranscript } from '../core/transcripts';
 import { TranscriptPanel } from './TranscriptPanel';
 import { useTranscriptAudio } from '../ai/useGameAudio';
@@ -37,7 +38,7 @@ function Button({ title, onPress, disabled = false }: { title: string; onPress: 
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, disabled && styles.disabled]}><Text style={styles.buttonText}>{title}</Text></Pressable>;
 }
 
-export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, browserControl, onBeforeGameAudio, keyboardVerticalOffset }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; onOpenVideo?: (videoId: string) => void; browserControl?: ReactNode; onBeforeGameAudio?: () => Promise<void> | void; keyboardVerticalOffset: number }) {
+export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, browserControl, onBeforeGameAudio, keyboardVerticalOffset }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; onOpenVideo?: (videoId: string, start?: number) => void; browserControl?: ReactNode; onBeforeGameAudio?: () => Promise<void> | void; keyboardVerticalOffset: number }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const [chatVideoId, setChatVideoId] = useState(videoId);
@@ -50,7 +51,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   const ai = useAi(visible, chatVideoId || '');
   const chats = useChats(visible, chatVideoId || '');
   const chatViewports = useRef<ChatViewportStore>(new Map());
-  const [page, setPage] = useState<'chat' | 'providers' | 'models'>('chat');
+  const [page, setPage] = useState<'chat' | 'providers' | 'models' | 'practice'>('chat');
   const [historyVisible, setHistoryVisible] = useState(false);
   const [usageVisible, setUsageVisible] = useState(false);
   const [find, setFind] = useState<{ chatId: string; query: string } | null>(null);
@@ -106,7 +107,11 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
 
   function close() { Keyboard.dismiss(); onClose(); }
   function closeFind() { Keyboard.dismiss(); setFind(null); }
-  function showPage(next: typeof page) { Keyboard.dismiss(); setHistoryVisible(false); setFind(null); ai.clear(); setPage(next); }
+  function showPage(next: typeof page) {
+    Keyboard.dismiss(); setHistoryVisible(false); setFind(null); ai.clear();
+    if (page === 'practice' && next === 'chat') void chats.refreshGames().catch(() => {});
+    setPage(next);
+  }
   function newChat() { contextAbort.current?.abort(); setChatVideoId(null); chats.newChat(); setNewChatVersion(value => value + 1); setPrompt(''); setAttachment(null); showPage('chat'); }
   async function choose(id: string, model: string) {
     const p = targets.find(p => p.id === id);
@@ -168,7 +173,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
           {page === 'chat' ? <Pressable accessibilityRole="button" accessibilityLabel="Choose AI model" disabled={!!chatVideoId && chats.conversation?.videoId !== chatVideoId} onPress={() => showPage('models')} style={styles.chatTitle}>
             <Text numberOfLines={1} style={styles.brand}>{chats.conversation?.title || 'GoVue'}</Text>
             <View style={styles.modelLabel}><Text numberOfLines={1} style={styles.modelName}>{selectedModel?.replace(/^gpt-/, 'GPT-') || 'Choose a model'}</Text><ChevronDown size={12} color={colors.muted} /></View>
-          </Pressable> : <Text accessibilityRole="header" style={styles.pageTitle}>{page === 'models' ? 'Choose a model' : 'Providers'}</Text>}
+          </Pressable> : <Text accessibilityRole="header" style={styles.pageTitle}>{page === 'models' ? 'Choose a model' : page === 'practice' ? 'Practice' : 'Providers'}</Text>}
           {page === 'chat' && !!chats.conversation?.messages.length && <IconButton icon={Search} label="Find in chat" active={find?.chatId === chats.conversation.id} onPress={() => { Keyboard.dismiss(); setFind(current => current?.chatId === chats.conversation!.id ? null : { chatId: chats.conversation!.id, query: '' }); }} />}
           {page === 'chat' && <IconButton icon={SquarePen} label="New chat" onPress={newChat} />}
           <IconButton icon={X} label="Close AI assistant" onPress={close} />
@@ -187,12 +192,12 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
             reasoning={reasoningName(chats.reasoningEffort ?? savedReasoning)} providerId={selected?.id} model={selectedModel}
             onSend={sendMessage} onRetry={messageId => { if (contextReady && selected?.connected && selected.enabled && !selected.needsReauth && selectedModel) void chats.send(selected.id, '', attachment, undefined, true, undefined, undefined, messageId); }}
             onAttach={attachCurrent} onDetach={chatVideoId ? undefined : () => setAttachment(null)} onOpenTranscript={() => { Keyboard.dismiss(); setTranscriptVisible(true); }} onSummarize={summarize} onModels={() => showPage('models')} />
-        </> : page === 'models' ? <AiModels ai={ai} selectedId={selected?.id} selectedModel={selectedModel} onSelect={(id, model) => { void choose(id, model); }} onManage={() => showPage('providers')} /> : <AiProviders ai={ai} onUsage={() => { Keyboard.dismiss(); setUsageVisible(true); }} />}
+        </> : page === 'practice' ? <GamePractice onBeforeAudio={onBeforeGameAudio} onOpenSource={onOpenVideo} /> : page === 'models' ? <AiModels ai={ai} selectedId={selected?.id} selectedModel={selectedModel} onSelect={(id, model) => { void choose(id, model); }} onManage={() => showPage('providers')} /> : <AiProviders ai={ai} onUsage={() => { Keyboard.dismiss(); setUsageVisible(true); }} />}
         </View>
         <AiHistoryDrawer visible={historyVisible} chats={chats.history} selectedId={chats.conversation?.id} error={chats.error}
           onClose={() => setHistoryVisible(false)} onNew={newChat} onOpen={(id, query) => { void openChat(id, query); }} onDelete={deleteChat}
           onChange={chats.change}
-          onProviders={() => showPage('providers')} onUsage={() => { setHistoryVisible(false); setUsageVisible(true); }} />
+          onProviders={() => showPage('providers')} onUsage={() => { setHistoryVisible(false); setUsageVisible(true); }} onPractice={() => showPage('practice')} />
         <AiUsageSheet visible={visible && usageVisible} chatId={chats.conversation?.id} onClose={() => setUsageVisible(false)} />
         {visible && transcriptVisible && <View style={styles.transcriptReader} accessibilityViewIsModal>
           {contextTranscript && chats.conversation?.transcript?.videoId === contextTranscript.videoId && chats.conversation.transcript.trackId === contextTranscript.trackId
