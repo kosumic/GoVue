@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Check, ChevronDown, ChevronRight, CircleCheck, CircleHelp, CircleX, Copy, RotateCw } from 'lucide-react-native';
+import { Check, ChevronDown, ChevronRight, CircleCheck, CircleHelp, CircleX, Copy, RotateCw, Square, Volume2 } from 'lucide-react-native';
 import type { ChatMessage } from '../ai/useChats';
 import { formatTokens } from '../ai/usage';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -17,7 +17,7 @@ function Detail({ label, value }: { label: string; value: string | undefined }) 
   return value === undefined ? null : <View style={s.detail}><Text style={s.label}>{label}</Text><Text selectable style={s.value}>{value}</Text></View>;
 }
 
-export function AiMessageDetails({ message, last, retryDisabled, onRetry }: { message: ChatMessage; last: boolean; retryDisabled: boolean; onRetry: () => void }) {
+export function AiMessageDetails({ message, last, retryDisabled, onRetry, reading, readDisabled, onRead }: { message: ChatMessage; last: boolean; retryDisabled: boolean; onRetry: () => void; reading: boolean; readDisabled: boolean; onRead: () => void }) {
   const colors = useThemeColors();
   const s = useThemeStyles(makeStyles);
   const { copied, copyText } = useCopyFeedback();
@@ -33,6 +33,7 @@ export function AiMessageDetails({ message, last, retryDisabled, onRetry }: { me
   const streamTime = usage?.streamMs ? `${Number((usage.streamMs / 1000).toFixed(1))}s` : undefined;
   const summary = [message.modelName || message.model, tokens, streamTime ? `Stream duration: ${streamTime}` : null].filter(Boolean).join(' · ');
   const disabled = retryDisabled || message.status === 'streaming';
+  const speechDisabled = readDisabled || message.status === 'streaming' || !message.content.trim();
   return <View style={s.footer}>
     <View style={s.row}>
       <Pressable accessibilityRole="button" accessibilityLabel="Response details" accessibilityHint={cacheLabel} accessibilityState={{ expanded }} onPress={() => setExpanded(!expanded)} style={s.summary}>
@@ -40,6 +41,9 @@ export function AiMessageDetails({ message, last, retryDisabled, onRetry }: { me
         <CacheIcon size={13} color={cache === 'hit' ? colors.action : colors.muted} />
         {!!cachePercent && <Text numberOfLines={1} style={s.cachePercent}>{cachePercent}</Text>}
         {expanded ? <ChevronDown size={13} color={colors.muted} /> : <ChevronRight size={13} color={colors.muted} />}
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={reading ? 'Stop reading response' : 'Read response aloud'} accessibilityState={{ selected: reading, disabled: speechDisabled }} disabled={speechDisabled} onPress={onRead} style={[s.action, speechDisabled && s.disabled]}>
+        {reading ? <Square size={16} color={colors.action} /> : <Volume2 size={16} color={colors.muted} />}
       </Pressable>
       {!!message.content && <Pressable accessibilityRole="button" accessibilityLabel={copied ? 'Response copied' : 'Copy response'} accessibilityLiveRegion="polite" onPress={() => copyText(message.content)} style={s.action}>
         {copied ? <Check size={16} color={colors.action} /> : <Copy size={16} color={colors.muted} />}
