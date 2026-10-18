@@ -11,7 +11,7 @@ const scope = { chatId: 'chat', videoId: 'abcdefghijk', trackId: '.en' };
 const clip = token => ({ needsMedia: false, token, uri: `http://127.0.0.1:1234/${token}/index.m3u8`, start: 2.5, end: 4.5 });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-async function harness(t, respond = async command => clip(command.cueId)) {
+async function harness(t, respond = async command => clip(command.cueId), options = {}) {
   const calls = [], extractions = [], players = [], apps = new Set();
   let transcript, game;
   const result = await build({ entryPoints: ['src/ai/useGameAudio.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
@@ -43,13 +43,13 @@ async function harness(t, respond = async command => clip(command.cueId)) {
     if (name === 'mock-core') return core;
     if (name === 'mock-media') return media;
     if (name === 'expo-video') return { useVideoPlayer };
-    if (name === 'react-native') return { AppState: { addEventListener(_, listener) { apps.add(listener); return { remove: () => apps.delete(listener) }; } } };
+    if (name === 'react-native') return { AppState: { currentState: 'active', addEventListener(_, listener) { apps.add(listener); return { remove: () => apps.delete(listener) }; } } };
     return require(name);
   }, module, module.exports);
   let pausedVideo = 0;
   function Audio() {
     transcript = module.exports.useTranscriptAudio(scope, () => { ++pausedVideo; });
-    game = module.exports.useGameAudio({ chatId: scope.chatId, messageId: 'reply', gameId: 'game' });
+    game = module.exports.useGameAudio(options.scope ?? { chatId: scope.chatId, messageId: 'reply', gameId: 'game' }, undefined, options.cueIds ?? []);
     return null;
   }
   let root;
@@ -159,4 +159,67 @@ test('tapping another game card replaces playing audio after acknowledging its s
   await act(async () => { player.emit('playToEnd'); await second; });
   assert.equal(env.game().phase, 'idle');
   assert.deepEqual(env.calls.filter(call => call.op === 'ai_game_audio_release').map(call => call.token), ['cue-0', 'cue-1']);
+});
+
+test('displaying a practice game prepares its captions without taking audio focus or creating playback routes', async t => {
+  const pending = deferred();
+  const env = await harness(t, command => command.prefetch ? pending.promise : clip('practice'), {
+    scope: { practice: true, gameId: 'saved-game' }, cueIds: ['cue-0'],
+  });
+  assert.deepEqual(env.calls, [{ op: 'ai_practice_audio', practice: true, gameId: 'saved-game', cueId: 'cue-0', prefetch: true }]);
+  assert.equal(env.game().cachePhase, 'loading');
+  assert.equal(env.game().phase, 'idle');
+  assert.equal(env.players[1].sources.length, 0);
+  assert.equal(env.pausedVideo(), 0);
+  let playing;
+  await act(() => { playing = env.game().play('cue-0'); });
+  assert.equal(env.calls.length, 1, 'Play joins the pending preparation');
+  await act(async () => { pending.resolve({ needsMedia: false }); });
+  assert.equal(env.game().cachePhase, 'ready');
+  assert.equal(env.game().phase, 'playing');
+  assert.equal(env.calls.filter(command => command.prefetch).length, 1);
+  assert.equal(env.calls.filter(command => command.op === 'ai_practice_audio' && !command.prefetch).length, 1);
+  await act(async () => { env.players[1].emit('playToEnd'); await playing; });
+  assert.ok(env.calls.some(command => command.op === 'ai_game_audio_release' && command.token === 'practice'));
+});
+
+test('preparing another card leaves playing transcript audio alone and retries after background cancellation', async t => {
+  const pending = deferred();
+  let attempt = 0;
+  const env = await harness(t, command => {
+    if (!command.prefetch) return clip('transcript');
+    if (command.catalog) return pending.promise;
+    return ++attempt === 1 ? { needsMedia: true, videoId: scope.videoId } : { needsMedia: false };
+  }, { cueIds: ['cue-0'] });
+  assert.equal(env.extractions.length, 1);
+  assert.equal(env.extractions[0].signal.aborted, false);
+  let playing;
+  await act(() => { playing = env.transcript().play('cue-1'); });
+  assert.equal(env.players[0].playing, true);
+  assert.equal(env.players[1].playing, false);
+  assert.equal(env.game().cachePhase, 'loading');
+  await act(async () => { for (const listener of env.apps) listener('background'); await playing; });
+  assert.equal(env.extractions[0].signal.aborted, true);
+  await act(async () => { pending.resolve({ needsMedia: false }); });
+  assert.equal(env.game().cachePhase, 'loading', 'an obsolete completion cannot report success');
+  await act(async () => { for (const listener of env.apps) listener('active'); });
+  assert.equal(env.game().cachePhase, 'ready');
+  assert.equal(env.players[0].playing, false);
+  assert.equal(env.game().error, '');
+  assert.equal(env.game().cacheError, '');
+});
+
+test('a failed visible-card preparation can retry without starting playback', async t => {
+  let attempt = 0;
+  const env = await harness(t, command => {
+    assert.equal(command.prefetch, true);
+    if (++attempt === 1) throw Error('Temporary network failure');
+    return { needsMedia: false };
+  }, { cueIds: ['cue-0'] });
+  assert.equal(env.game().cachePhase, 'error');
+  assert.equal(env.game().cacheError, 'Temporary network failure');
+  await act(() => env.game().retryCache());
+  assert.equal(env.game().cachePhase, 'ready');
+  assert.equal(env.game().cacheError, '');
+  assert.equal(env.players[1].sources.length, 0);
 });

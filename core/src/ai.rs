@@ -24,6 +24,7 @@ mod catalog;
 mod connections;
 mod conversations;
 mod games;
+mod practice;
 mod replay;
 mod search;
 mod tools;
@@ -2016,6 +2017,9 @@ fn disconnect(root: &Path, p: &Provider, remove: bool, job: &Arc<Job>) -> Result
     Ok(json!({"revoked":revoked}))
 }
 fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
+    if string(&c, "op")?.starts_with("ai_practice_") {
+        return conversations::dispatch(c, root);
+    }
     if catalog::operation(string(&c, "op")?) {
         return catalog::dispatch(c, root);
     }

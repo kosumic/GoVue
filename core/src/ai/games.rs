@@ -57,6 +57,34 @@ pub(super) struct Definition {
     /// JSON keeps the tool schema portable across the supported providers.
     pub rules: String,
     pub cue_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_cue_id: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct Source {
+    pub video_id: String,
+    pub title: String,
+    pub start: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+impl Source {
+    pub fn valid(&self) -> bool {
+        crate::video_id(&self.video_id)
+            && self.title.len() <= 10_000
+            && self.track_id.as_ref().is_none_or(|id| id.len() <= 500)
+            && self
+                .language
+                .as_ref()
+                .is_none_or(|language| language.len() <= 500)
+            && self
+                .start
+                .is_none_or(|n| n.is_finite() && (0.0..=31_536_000.0).contains(&n))
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -102,6 +130,8 @@ pub(super) struct Game {
     pub state: Value,
     pub revision: u64,
     events: Vec<Event>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
 }
 
 fn key(value: &str) -> bool {
@@ -169,6 +199,7 @@ fn rules(definition: &Definition) -> Result<Rules> {
         || definition.rules.len() > 48_000
         || definition.cue_ids.len() > 24
         || definition.cue_ids.iter().any(|id| !key(id))
+        || definition.source_cue_id.as_ref().is_some_and(|id| !key(id))
     {
         return Err("Invalid generated game document.".into());
     }
@@ -339,6 +370,30 @@ impl Game {
         if cues.iter().map(|cue| cue.text.len()).sum::<usize>() > 12_000 {
             return Err("Choose a smaller set of captions for this game.".into());
         }
+        let source_start = if let Some(id) = &definition.source_cue_id {
+            let index = id
+                .strip_prefix("cue-")
+                .and_then(|s| s.parse::<usize>().ok())
+                .ok_or("Invalid source caption reference.")?;
+            Some(
+                transcript
+                    .and_then(|t| t.segments.get(index))
+                    .ok_or("Attach the source transcript to link a caption.")?
+                    .start,
+            )
+        } else {
+            cues.iter().map(|cue| cue.start).min_by(f64::total_cmp)
+        };
+        let source = transcript.map(|t| Source {
+            video_id: t.video_id.clone(),
+            title: t.title.clone(),
+            start: source_start,
+            track_id: Some(t.track_id.clone()),
+            language: Some(t.language.clone()),
+        });
+        if source.as_ref().is_some_and(|s| !s.valid()) {
+            return Err("Invalid game source.".into());
+        }
         Ok(Self {
             version: 1,
             id: random()?,
@@ -348,6 +403,7 @@ impl Game {
             state: rules.initial_state,
             revision: 0,
             events: Vec::new(),
+            source,
         })
     }
     pub fn validate(&self) -> bool {
@@ -357,8 +413,9 @@ impl Game {
             && self.call_id.len() <= 200
             && self.state.is_object()
             && bounded(&self.state, MAX_STATE).is_ok()
-            && self.revision <= 10_000
+            && self.revision < u64::MAX
             && self.events.len() <= MAX_EVENTS
+            && self.source.as_ref().is_none_or(Source::valid)
             && self.cues.len() <= 24
             && self.cues.iter().all(|c| {
                 key(&c.id)
@@ -381,9 +438,6 @@ impl Game {
         if command["revision"].as_u64() != Some(self.revision) {
             return Err("This game changed. Reload it and try again.".into());
         }
-        if self.events.len() >= MAX_EVENTS {
-            return Err("This game is full. Ask the assistant for a new game.".into());
-        }
         let name = string(command, "action")?;
         let input = &command["input"];
         if !input.is_object() {
@@ -394,6 +448,7 @@ impl Game {
             if !self.cues.iter().any(|cue| cue.id == input["cueId"]) {
                 return Err("Unknown game audio caption.".into());
             }
+            self.compact();
             self.events.push(Event {
                 id: event_id.into(),
                 revision: self.revision,
@@ -421,8 +476,14 @@ impl Game {
             next[&update.key] = evaluate(&update.value, &next, input, &mut budget)?;
         }
         bounded(&next, MAX_STATE)?;
+        let revision = self
+            .revision
+            .checked_add(1)
+            .filter(|n| *n < u64::MAX)
+            .ok_or("This game's revision limit has been reached.")?;
         self.state = next;
-        self.revision += 1;
+        self.revision = revision;
+        self.compact();
         self.events.push(Event {
             id: event_id.into(),
             revision: self.revision,
@@ -433,10 +494,38 @@ impl Game {
         });
         Ok(action.notify)
     }
+    fn compact(&mut self) {
+        if self.events.len() >= MAX_EVENTS {
+            self.events.drain(..MAX_EVENTS / 2);
+        }
+    }
+    pub fn reset(&mut self, revision: u64) -> Result<()> {
+        if revision != self.revision {
+            return Err("This game changed. Reload it and try again.".into());
+        }
+        let next = rules(&self.definition)?.initial_state;
+        let revision = self
+            .revision
+            .checked_add(1)
+            .filter(|n| *n < u64::MAX)
+            .ok_or("This game's revision limit has been reached.")?;
+        self.state = next;
+        self.revision = revision;
+        self.compact();
+        self.events.push(Event {
+            id: random()?,
+            revision,
+            action: "practice_reset".into(),
+            input: json!({}),
+            notify: false,
+            at: now(),
+        });
+        Ok(())
+    }
     pub fn context(&self) -> Value {
         let mut skip = self.events.len().saturating_sub(32);
         loop {
-            let value = json!({"gameId":self.id,"title":self.definition.title,"cues":self.cues,"state":self.state,"revision":self.revision,"events":&self.events[skip..],"omittedEarlierEvents":skip});
+            let value = json!({"gameId":self.id,"title":self.definition.title,"source":self.source,"cues":self.cues,"state":self.state,"revision":self.revision,"events":&self.events[skip..],"omittedEarlierEvents":skip});
             if value.to_string().len() <= 60_000 || skip == self.events.len() {
                 return value;
             }
@@ -453,12 +542,14 @@ pub(super) fn tool() -> Value {
         "title":{"type":"string"},"html":{"type":"string","description":"HTML body fragment. Use semantic buttons and labels; no scripts, frames, links, external assets or inline event handlers."},
         "css":{"type":"string"},"script":{"type":"string","description":"Presentation JavaScript using window.game. Render state with textContent. Durable state and scoring belong in rules."},
         "rules":{"type":"string","description":"JSON string with initialState (object) and actions: [{name,when?:expression,updates:[{key,value:expression}],notify?:boolean}]."},
-        "cueIds":{"type":"array","items":{"type":"string"},"description":"Caption IDs used by playAudio, e.g. cue-42. At most 24."}
+        "cueIds":{"type":"array","items":{"type":"string"},"description":"Caption IDs used by playAudio, e.g. cue-42. At most 24. Their audio is cached asynchronously when the game opens."},
+        "sourceCueId":{"type":"string","description":"Optional cue-N reference for the original video's timestamp link, including games without audio. The host validates it against the attached transcript."}
     },"required":["title","html","css","script","rules","cueIds"],"additionalProperties":false}})
 }
 
 pub(super) const INSTRUCTIONS: &str = r#"
 When asked for a game, quiz or interactive exercise, call create_interactive_game to create a playable HTML card. Invent the UI; do not output HTML as chat text. Keep games small and accessible, use the current theme CSS variables --background, --ink, --muted, --accent, --raised. Use short phrases supported by the transcript. Caption IDs cue-N refer to the zero-based caption index. Audio is caption-level, not isolated word timing. A game may omit audio with cueIds:[].
+When asked for practice cards, words, grammar or sentence activities, use the same game tool. Each game is a swipeable activity saved in Practice; the host supplies Forgot/Know review controls. Design its interactions freely, including answer reveals when useful. Prefer one focused learning item per game. Set sourceCueId to link its original caption; the host supplies the source button. Declare only clips the activity uses in cueIds; the host preloads them on display without playing or notifying the assistant.
 Game SDK: game.onState(state => render(state)) immediately supplies the current state and each subsequent Rust state. game.dispatch(actionName, inputObject) returns a Promise of the new state. game.playAudio({cueId:'cue-42'}) lazily plays original video audio, replaces any clip already loading or playing, and returns a Promise when playback starts. Keep audio cards enabled so tapping another card replaces the current clip; never disable all cards or use a shared busy flag while audio plays. Later playback failures are shown by the host. game.cues is the selected captions array {id,text,start,duration}. game.onState callbacks should only render; dispatch and playAudio must happen on user interaction. Show errors in the UI by catching Promises. Never fetch, navigate, access parent/native APIs, use localStorage, import libraries, or create audio/video elements. JavaScript is presentation only. Use textContent for text, never interpolate caption/user text into executable HTML. Avoid timers and expensive animation. Cards are 400px tall and may scroll internally.
 Rules JSON: {"initialState":{...},"actions":[{"name":"choose","when":optionalExpression,"updates":[{"key":"selected","value":expression}],"notify":false}]}. Updates run in order against the evolving state. Mark submit/check/hint/complete actions notify:true so the assistant sees the user's attempt. Every action is recorded; the next agent turn receives the history. Expressions are {"literal":anyJSON}, {"state":"topLevelKey"}, {"input":"topLevelKey"}, or {"op":"name","args":[expressions]}. Supported operations: eq/add/lt/get/contains/append/remove/concat/and/or (2 args), not/length/last (1 arg), if(condition,then,else)/slice(array,start,end) (3 args). get reads an array index or object key. eq compares JSON values, including arrays. if is lazy. append adds one item; remove removes matching items. Store correct answers in rules, validate input with when, and compute scores with rules. Use tile IDs for repeated words. No game-specific native renderer is needed.
 Example word-order rule: {"name":"choose","when":{"op":"not","args":[{"op":"contains","args":[{"state":"selected"},{"input":"id"}]}]},"updates":[{"key":"selected","value":{"op":"append","args":[{"state":"selected"},{"input":"id"}]}}]}. A check action can set correct using eq(selected,literal answer order) and notify:true. Also provide undo/reset and clear feedback. The host persists state and restores it on reopening.

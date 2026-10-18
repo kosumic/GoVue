@@ -21,9 +21,10 @@ type Props = {
   onDeactivate: () => void;
   onAction: GameAction;
   onBeforeAudio?: () => Promise<void> | void;
+  practice?: boolean;
 };
 
-function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expanded }: Props & { expanded: boolean }) {
+export function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expanded, practice }: Props & { expanded: boolean }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const view = useRef<WebView>(null);
@@ -38,7 +39,7 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
     const session = `game-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     return { session, source: { baseUrl: 'about:blank', html: gameDocument({ definition: game.definition, state: game.state, cues: game.cues, session, colors: { ...colors, dark: colors.background === '#0F0F0F' } }) } };
   });
-  const audio = useGameAudio({ chatId, messageId, gameId: game.id }, onBeforeAudio);
+  const audio = useGameAudio(practice ? { practice: true, gameId: game.id } : { chatId, messageId, gameId: game.id }, onBeforeAudio, game.cues.map(cue => cue.id));
   function reply(id: string, state?: Record<string, unknown>, error?: string) {
     if (alive.current && view.current) view.current.injectJavaScript(`window.__lingoGameReply?.(${scriptJSON({ id, state, error })}); true;`);
   }
@@ -122,6 +123,9 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
       {audio.phase === 'loading' ? <ActivityIndicator size="small" color={colors.accent} /> : <Play size={14} color={colors.accent} />}
       <Pressable accessibilityRole="button" accessibilityLabel="Stop game audio" onPress={audio.stop} style={styles.control}><Square size={16} color={colors.ink} /></Pressable>
     </View>}
+    {audio.cachePhase === 'loading' && <View style={styles.cacheStatus} accessibilityLiveRegion="polite"><ActivityIndicator size="small" color={colors.muted} /><Text style={styles.help}>Preparing audio…</Text></View>}
+    {audio.cachePhase === 'ready' && <View style={styles.cacheStatus}><Check size={14} color={colors.muted} /><Text style={styles.help}>Audio cached</Text></View>}
+    {audio.cachePhase === 'error' && <Pressable accessibilityRole="button" accessibilityLabel="Retry audio preparation" accessibilityHint={audio.cacheError} onPress={audio.retryCache} style={styles.cacheStatus}><RotateCw size={14} color={colors.muted} /><Text style={styles.help}>Audio unavailable · Retry</Text></Pressable>}
     {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
   </View>;
 }
@@ -198,5 +202,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   help: { color: colors.muted, fontSize: 13, lineHeight: 20 },
   loading: { position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: colors.background },
   audioStatus: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, backgroundColor: colors.raised },
+  cacheStatus: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, minHeight: 36 },
   error: { color: colors.error, paddingHorizontal: 16, paddingBottom: 10, fontSize: 12, lineHeight: 18 },
 });

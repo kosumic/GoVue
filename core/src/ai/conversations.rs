@@ -113,7 +113,7 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
     if bytes.len() > MAX_CHAT {
         return Err("Saved chat is too large.".into());
     }
-    let chat: Conversation =
+    let mut chat: Conversation =
         serde_json::from_slice(&bytes).map_err(|_| "This saved chat is unreadable.")?;
     if chat.id != id
         || !(valid_id(&chat.provider_id) || chat.provider_id.is_empty() && chat.messages.is_empty())
@@ -165,6 +165,34 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
         })
     {
         return Err("This saved chat is invalid.".into());
+    }
+    let source = chat
+        .transcript
+        .as_ref()
+        .map(|t| games::Source {
+            video_id: t.video_id.clone(),
+            title: t.title.clone(),
+            start: None,
+            track_id: Some(t.track_id.clone()),
+            language: Some(t.language.clone()),
+        })
+        .or_else(|| {
+            chat.video_id.as_ref().map(|id| games::Source {
+                video_id: id.clone(),
+                title: chat.title.clone(),
+                start: None,
+                track_id: None,
+                language: None,
+            })
+        });
+    for game in chat.messages.iter_mut().flat_map(|m| &mut m.games) {
+        if game.source.is_none() {
+            game.source = source.clone().map(|mut source| {
+                source.start = game.cues.iter().map(|c| c.start).min_by(f64::total_cmp);
+                source
+            });
+        }
+        practice::restore(root, game)?;
     }
     Ok(chat)
 }
@@ -544,8 +572,19 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     if reply.games.len() >= 3 {
         return Err("At most three games can be created in one reply.".into());
     }
-    let game = games::Game::create(definition, call_id, transcript.as_ref())?;
-    let result = json!({"gameId":game.id,"title":game.definition.title,"status":"created","message":"The playable card is in chat. Briefly invite the user to play; do not repeat its HTML or answers."});
+    let mut game = games::Game::create(definition, call_id, transcript.as_ref())?;
+    if game.source.is_none() {
+        game.source = chat.video_id.as_ref().map(|id| games::Source {
+            video_id: id.clone(),
+            title: chat.title.clone(),
+            start: None,
+            track_id: None,
+            language: None,
+        });
+    }
+    job.pending()?;
+    let game = practice::capture(root, &game)?;
+    let result = json!({"gameId":game.id,"title":game.definition.title,"status":"created","savedToPractice":true,"message":"The playable activity is in chat and saved in Practice in the sidebar. Briefly invite the user to play; do not repeat its HTML or answers."});
     reply.games.push(game);
     reply.blocks.clone_from(
         &job.activity
@@ -575,11 +614,16 @@ fn game_export(c: &Value, root: &Path) -> Result<Value> {
         .flat_map(|m| &m.games)
         .find(|g| g.id == c["gameId"])
         .ok_or("This game is no longer available.")?;
-    let source = chat
-        .transcript
+    let source = game
+        .source
         .as_ref()
-        .map(|reference| json!(reference))
-        .or_else(|| chat.video_id.as_ref().map(|id| json!({"videoId":id})));
+        .map(|source| json!(source))
+        .or_else(|| {
+            chat.transcript
+                .as_ref()
+                .map(|reference| json!(reference))
+                .or_else(|| chat.video_id.as_ref().map(|id| json!({"videoId":id})))
+        });
     // Export the original recipe and frozen captions, never play history or
     // conversation/provider identities. A reused game starts from its rules.
     let text = serde_json::to_string_pretty(&json!({
@@ -602,8 +646,10 @@ fn game_action(c: &Value, root: &Path) -> Result<Value> {
         .iter_mut()
         .find(|g| g.id == c["gameId"])
         .ok_or("This game is no longer available.")?;
-    let notify = game.apply(c)?;
-    let result = json!({"game":game,"notify":notify});
+    practice::capture(root, game)?;
+    let result = practice::apply(root, c)?;
+    *game = serde_json::from_value(result["game"].clone())
+        .map_err(|_| "Could not restore game progress.")?;
     chat.updated_at = now();
     save(root, &chat)?;
     Ok(result)
@@ -628,13 +674,22 @@ fn game_audio(c: &Value, root: &Path) -> Result<Value> {
             .find(|cue| cue.id == c["cueId"])
             .ok_or("This game cannot play that caption.")?
             .clone();
-        let video_id = chat
-            .video_id
-            .or_else(|| chat.transcript.map(|t| t.video_id))
+        let video_id = game
+            .source
+            .as_ref()
+            .map(|s| s.video_id.clone())
+            .or_else(|| {
+                chat.video_id
+                    .or_else(|| chat.transcript.map(|t| t.video_id))
+            })
             .ok_or("This game has no source video.")?;
         (video_id, cue)
     };
-    games::audio::prepare(root, &video_id, &cue, &c["catalog"])
+    if c["prefetch"] == true {
+        games::audio::prefetch(root, &video_id, &cue, &c["catalog"])
+    } else {
+        games::audio::prepare(root, &video_id, &cue, &c["catalog"])
+    }
 }
 
 fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
@@ -668,7 +723,11 @@ fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
         )??;
         (reference.video_id, cue)
     };
-    games::audio::prepare(root, &video_id, &cue, &c["catalog"])
+    if c["prefetch"] == true {
+        games::audio::prefetch(root, &video_id, &cue, &c["catalog"])
+    } else {
+        games::audio::prepare(root, &video_id, &cue, &c["catalog"])
+    }
 }
 
 #[allow(
@@ -1123,6 +1182,19 @@ fn speech_hints(c: &Value, root: &Path) -> Result<Value> {
 }
 
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
+    if string(&c, "op")?.starts_with("ai_practice_") {
+        if c["op"] == "ai_practice_list" {
+            let _guard = CHATS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for chat in list(&root)? {
+                for game in chat.messages.iter().flat_map(|m| &m.games) {
+                    practice::capture(&root, game)?;
+                }
+            }
+        }
+        return practice::dispatch(&c, &root);
+    }
     if c["op"] == "ai_chat_send" {
         return send(c, root);
     }
@@ -1238,6 +1310,11 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         }
         "ai_chat_delete" => {
             let id = string(&c, "chatId")?;
+            if let Ok(chat) = read(&root, id) {
+                for game in chat.messages.iter().flat_map(|message| &message.games) {
+                    practice::capture(&root, game)?;
+                }
+            }
             if let Ok(chat) = read(&root, id)
                 && let Some(task) = chat.active_task
                 && let Some(job) = jobs()

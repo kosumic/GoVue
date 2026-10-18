@@ -3,6 +3,9 @@ package io.github.kaminarios.govue.coremodule
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.functions.Queues
+import expo.modules.kotlin.functions.Coroutine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import expo.modules.kotlin.Promise
 import io.github.kaminarios.govue.core.execute
 import io.github.kaminarios.govue.core.aiExecute
@@ -253,15 +256,19 @@ class GoVueCoreModule : Module() {
       installAiPlatform(NativeAiPlatform(requireNotNull(appContext.reactContext)))
     }
     Function("dictation") { request: String -> dictationExecute(request) }
-    AsyncFunction("ai") { request: String ->
-      val context = requireNotNull(appContext.reactContext)
-      aiExecute(request, File(context.filesDir, "transcripts").path)
+    AsyncFunction("ai") Coroutine { request: String ->
+      withContext(Dispatchers.IO) {
+        val context = requireNotNull(appContext.reactContext)
+        aiExecute(request, File(context.filesDir, "transcripts").path)
+      }
     }
-    AsyncFunction("execute") { request: String ->
-      val context = requireNotNull(appContext.reactContext)
-      Trace.beginSection("GoVue core: native.execute")
-      try { execute(request, File(context.filesDir, "transcripts").path) }
-      finally { Trace.endSection() }
+    AsyncFunction("execute") Coroutine { request: String ->
+      withContext(Dispatchers.IO) {
+        val context = requireNotNull(appContext.reactContext)
+        Trace.beginSection("GoVue core: native.execute")
+        try { execute(request, File(context.filesDir, "transcripts").path) }
+        finally { Trace.endSection() }
+      }
     }
     Function("transcriptTrace") { requestId: String, stage: String, cookie: Int, begin: Boolean ->
       // Trace names contain only a generated request ID and an allowlisted

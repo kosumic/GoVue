@@ -164,6 +164,9 @@ pub(super) fn audio(command: &Value, root: &Path) -> Result<Value> {
     };
     // Reuse the lazy caption range cached for this video by games and the reader.
     // Every word in the caption shares the same fragments; no per-word download.
+    if command["prefetch"] == true {
+        return games::audio::prefetch(root, video_id, &cue, &command["catalog"]);
+    }
     let mut clip = games::audio::prepare(root, video_id, &cue, &command["catalog"])?;
     if clip["needsMedia"] == false {
         let offset = clip["start"]

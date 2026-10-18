@@ -83,3 +83,48 @@ fn chat_video_navigation_reuses_the_document_and_opens_missing_videos() {
         assert_eq!(ok(&root, json!({"op":"browser_state"})), before);
     }
 }
+
+#[test]
+fn practice_source_timestamps_are_validated_and_reuse_the_watch_tab() {
+    let root = format!(
+        "browser-practice-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let first = ok(&root, json!({"op":"browser_open","videoId":"abcdefghijk"}));
+    let source = ok(
+        &root,
+        json!({"op":"browser_open","videoId":"abcdefghijk","start":12.75}),
+    );
+    assert_eq!(source["activeId"], first["activeId"]);
+    assert_eq!(
+        source["tabs"].as_array().unwrap().len(),
+        first["tabs"].as_array().unwrap().len()
+    );
+    assert_eq!(
+        source["target"]["url"],
+        "https://m.youtube.com/watch?v=abcdefghijk&t=12s"
+    );
+    assert_eq!(source["target"]["load"], true);
+    let retained = ok(&root, json!({"op":"browser_open","videoId":"abcdefghijk"}));
+    assert_eq!(retained["target"]["url"], source["target"]["url"]);
+    assert_eq!(retained["target"]["load"], false);
+    let before = ok(&root, json!({"op":"browser_state"}));
+    for invalid in [
+        json!(-1),
+        json!(31_536_001),
+        json!("12&other=value"),
+        Value::Null,
+    ] {
+        assert_eq!(
+            call(
+                &root,
+                json!({"op":"browser_open","videoId":"abcdefghijk","start":invalid})
+            )["ok"],
+            false
+        );
+        assert_eq!(ok(&root, json!({"op":"browser_state"})), before);
+    }
+}

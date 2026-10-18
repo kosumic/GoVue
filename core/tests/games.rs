@@ -666,4 +666,149 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     assert_eq!(copied["cues"][0]["text"], "Spoken words from the video");
     assert_eq!(copied["cues"][0]["start"], 12.5);
     assert!(!text.contains("PRIVATE_SIGNED_AUDIO"));
+    practice_roundtrip(root, &chat, &reply["games"][0], &ranges);
+}
+
+fn practice_roundtrip(root: &Path, chat: &Value, game: &Value, ranges: &Ranges) {
+    let id = &game["id"];
+    let library = ok(root, json!({"op":"ai_practice_list"}));
+    let saved = library["games"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["id"] == *id)
+        .unwrap();
+    assert_eq!(saved["source"]["start"], 12.5);
+    let session = ok(root, json!({"op":"ai_practice_start","gameId":id}));
+    assert_eq!(session["game"]["id"], *id);
+    let review = json!({"op":"ai_practice_review","gameId":id,"revision":session["revision"],"eventId":"swipe-left","verdict":"forgot"});
+    let reviewed = ok(root, review.clone());
+    assert_eq!(reviewed["forgot"], 1);
+    assert_eq!(
+        reviewed["remaining"].as_u64().unwrap() + 1,
+        session["remaining"]
+    );
+    assert_eq!(
+        ok(root, review.clone()),
+        reviewed,
+        "a retried swipe cannot advance twice"
+    );
+    let mut stale = review;
+    stale["eventId"] = json!("stale-swipe");
+    assert_eq!(call(root, stale)["ok"], false);
+    assert_eq!(
+        ok(root, json!({"op":"ai_practice_session"})),
+        reviewed,
+        "opening again restores the same queue"
+    );
+    let undone = ok(
+        root,
+        json!({"op":"ai_practice_undo","revision":reviewed["revision"],"eventId":"undo-left"}),
+    );
+    assert_eq!(undone["game"]["id"], *id);
+    assert_eq!(undone["forgot"], 0);
+    let library = ok(root, json!({"op":"ai_practice_list"}));
+    assert!(
+        library["games"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["id"] == *id)
+            .unwrap()["verdict"]
+            .is_null()
+    );
+    let action = json!({"op":"ai_practice_action","gameId":id,"action":"choose","input":{"id":"b"},"eventId":"practice-choice","revision":game["revision"]});
+    let chosen = ok(root, action.clone());
+    assert_eq!(chosen["game"]["state"]["selected"], json!(["b"]));
+    assert_eq!(ok(root, action)["game"], chosen["game"]);
+    let refreshed = ok(root, json!({"op":"ai_chat_get","chatId":chat["id"]}));
+    assert_eq!(
+        refreshed["messages"][1]["games"][0], chosen["game"],
+        "chat and practice share authoritative progress"
+    );
+    let reset = ok(
+        root,
+        json!({"op":"ai_practice_reset","gameId":id,"revision":chosen["game"]["revision"]}),
+    );
+    assert_eq!(reset["game"]["state"]["selected"], json!([]));
+    let reviewed = ok(
+        root,
+        json!({"op":"ai_practice_review","gameId":id,"revision":undone["revision"],"eventId":"swipe-forgot-again","verdict":"forgot"}),
+    );
+    let forgotten = ok(root, json!({"op":"ai_practice_start","filter":"forgot"}));
+    assert_eq!(forgotten["total"], 1);
+    assert_eq!(forgotten["game"]["id"], *id);
+    let known = ok(
+        root,
+        json!({"op":"ai_practice_review","gameId":id,"revision":forgotten["revision"],"eventId":"swipe-right","verdict":"know"}),
+    );
+    assert!(known["game"].is_null());
+    assert_eq!(known["known"], 1);
+    assert_eq!(known["remaining"], 0);
+    ok(
+        root,
+        json!({"op":"ai_practice_undo","revision":known["revision"],"eventId":"undo-right"}),
+    );
+    assert_eq!(
+        ok(root, json!({"op":"ai_practice_start","filter":"forgot"}))["total"],
+        1,
+        "undo restores the previous forgotten rating"
+    );
+    assert_eq!(reviewed["forgot"], 1);
+    practice_survives_chat(root, chat, game, ranges);
+}
+
+fn practice_survives_chat(root: &Path, chat: &Value, game: &Value, ranges: &Ranges) {
+    let id = &game["id"];
+    ok(root, json!({"op":"ai_chat_delete","chatId":chat["id"]}));
+    assert_eq!(
+        call(root, json!({"op":"ai_chat_get","chatId":chat["id"]}))["ok"],
+        false
+    );
+    assert_eq!(
+        ok(root, json!({"op":"ai_practice_session"}))["game"]["source"],
+        game["source"]
+    );
+    let command = json!({"op":"ai_practice_audio","gameId":id,"cueId":"cue-0","prefetch":true});
+    for _ in 0..24 {
+        assert_eq!(
+            ok(root, command.clone()),
+            json!({"needsMedia":false}),
+            "cache-only preparation cannot allocate a playback route"
+        );
+    }
+    let mut command = command;
+    command["prefetch"] = json!(false);
+    let clip = ok(root, command);
+    assert!(ureq::get(clip["uri"].as_str().unwrap()).call().is_ok());
+    ok(
+        root,
+        json!({"op":"ai_game_audio_release","token":clip["token"]}),
+    );
+    assert_eq!(
+        ranges.0.lock().unwrap().len(),
+        3,
+        "saved games replay cached bytes after chat deletion"
+    );
+    let export = ok(root, json!({"op":"ai_practice_export","gameId":id}));
+    let copied: Value = serde_json::from_str(export["text"].as_str().unwrap()).unwrap();
+    assert_eq!(copied["source"], game["source"]);
+    assert_eq!(copied["cues"], game["cues"]);
+    let mut revision = ok(root, json!({"op":"ai_practice_session"}))["game"]["revision"]
+        .as_u64()
+        .unwrap();
+    for index in 0..250 {
+        let value = ok(
+            root,
+            json!({"op":"ai_practice_action","gameId":id,"action":"check","input":{},"eventId":format!("repeat-{index}"),"revision":revision}),
+        );
+        revision = value["game"]["revision"].as_u64().unwrap();
+        assert!(value["game"]["events"].as_array().unwrap().len() <= 200);
+    }
+    let current = ok(root, json!({"op":"ai_practice_session"}));
+    assert_eq!(current["game"]["revision"], revision);
+    assert_eq!(
+        current["game"]["state"]["round"], 250,
+        "repeated practice compacts history without exhausting a saved game"
+    );
 }

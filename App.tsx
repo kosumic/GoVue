@@ -199,7 +199,7 @@ function Browser() {
     }
     return next;
   }
-  const navigate = useCallback((target: string | { videoId: string }) => {
+  const navigate = useCallback((target: string | { videoId: string; start?: number }) => {
     sessionRef.current?.transcript.close();
     const sequence = ++navigationSequence.current;
     run(async () => {
@@ -753,8 +753,9 @@ function Browser() {
                 onClose={() => setAiVisible(false)}
                 transcript={session.transcript.data}
                 videoId={aiVideoId}
-                onOpenVideo={videoId => {
-                  navigate({ videoId });
+                onOpenVideo={(videoId, start) => {
+                  navigate({ videoId, ...(start !== undefined ? { start } : {}) });
+                  if (start !== undefined && media.playback?.videoId === videoId) run(() => media.seekTo(start));
                   session.setMini(false);
                   session.setLocked(false);
                   setAiVisible(false);

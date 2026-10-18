@@ -40,7 +40,7 @@ async function harness(videoId, restore = async id => transcript(id)) {
       builder.onResolve({ filter: /\/core\/transcripts$/ }, () => ({ path: 'mock-transcripts', external: true }));
       builder.onResolve({ filter: /\/ai\/useAi$/ }, () => ({ path: 'mock-ai', external: true }));
       builder.onResolve({ filter: /\/ai\/useGameAudio$/ }, () => ({ path: 'mock-audio', external: true }));
-      builder.onResolve({ filter: /\/(AiChat|AiProviders|AiModels|AiUsageSheet|AiReasoning|AiHistoryDrawer|IconButton|TranscriptPanel)$/ }, args => ({ path: `mock-component/${args.path.split('/').at(-1)}`, external: true }));
+      builder.onResolve({ filter: /\/(AiChat|AiProviders|AiModels|AiUsageSheet|AiReasoning|AiHistoryDrawer|GamePractice|IconButton|TranscriptPanel)$/ }, args => ({ path: `mock-component/${args.path.split('/').at(-1)}`, external: true }));
     } }],
   });
   const module = { exports: {} };

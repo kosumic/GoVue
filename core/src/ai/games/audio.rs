@@ -306,13 +306,42 @@ pub(in crate::ai) fn prepare(
     cue: &Cue,
     catalog: &Value,
 ) -> Result<Value> {
+    prepare_clip(root, video_id, cue, catalog, false)
+}
+pub(in crate::ai) fn prefetch(
+    root: &Path,
+    video_id: &str,
+    cue: &Cue,
+    catalog: &Value,
+) -> Result<Value> {
+    prepare_clip(root, video_id, cue, catalog, true)
+}
+fn prepared(directory: PathBuf, data: &mut Metadata, cache_only: bool) -> Result<Value> {
+    if !cache_only {
+        return register(directory, data);
+    }
+    data.used_at = now();
+    fs::write(
+        directory.join("clip.json"),
+        serde_json::to_vec(data).map_err(|_| "Could not encode audio cache metadata.")?,
+    )
+    .map_err(|_| "Could not update the audio cache.")?;
+    Ok(json!({"needsMedia":false}))
+}
+fn prepare_clip(
+    root: &Path,
+    video_id: &str,
+    cue: &Cue,
+    catalog: &Value,
+    cache_only: bool,
+) -> Result<Value> {
     let _build = BUILDS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let cache = root.join("ai/game-audio");
     let directory = cache.join(cache_key(video_id, cue));
     if let Some(mut data) = read_metadata(&directory) {
-        return register(directory, &mut data);
+        return prepared(directory, &mut data, cache_only);
     }
     if catalog.is_null() {
         return Ok(json!({"needsMedia":true,"videoId":video_id}));
@@ -406,7 +435,7 @@ pub(in crate::ai) fn prepare(
         Ok::<_, String>(data)
     })();
     match result {
-        Ok(mut data) => register(directory, &mut data),
+        Ok(mut data) => prepared(directory, &mut data, cache_only),
         Err(error) => {
             let _ = fs::remove_dir_all(directory);
             Err(error)

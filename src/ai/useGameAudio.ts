@@ -1,14 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { useVideoPlayer } from 'expo-video';
 import { aiRequest } from '../../modules/govue-core';
-import { extractMedia } from '../core/media';
-
-type Clip = { needsMedia: false; uri: string; token: string; start: number; end: number };
-type Missing = { needsMedia: true; videoId: string };
-type GameScope = { chatId: string; messageId: string; gameId: string };
-type TranscriptScope = { chatId: string; videoId: string; trackId: string };
-type WordScope = { videoId: string; trackId: string; segmentIndex: number; tokenIndex: number; word: string };
+import { captionAudioPreparation, requestCaptionAudio, type Clip, type CaptionScope, type GameScope, type TranscriptScope, type WordScope } from './captionAudio';
 
 // Games and the transcript reader share audio focus as well as Rust's clip cache.
 let stopFocusedAudio: (() => void) | null = null;
@@ -17,8 +11,8 @@ export function stopCaptionAudio() {
   stopFocusedAudio?.();
 }
 
-export function useGameAudio(scope: GameScope, beforePlay?: () => Promise<void> | void) {
-  return useCaptionAudio(scope, beforePlay);
+export function useGameAudio(scope: GameScope, beforePlay?: () => Promise<void> | void, cueIds: string[] = []) {
+  return useCaptionAudio(scope, beforePlay, cueIds);
 }
 
 export function useTranscriptAudio(scope: TranscriptScope, beforePlay?: () => Promise<void> | void) {
@@ -29,7 +23,7 @@ export function useWordAudio(scope: WordScope, beforePlay?: () => Promise<void> 
   return useCaptionAudio(scope, beforePlay);
 }
 
-function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforePlay?: () => Promise<void> | void) {
+function useCaptionAudio(scope: CaptionScope, beforePlay?: () => Promise<void> | void, cueIds: string[] = []) {
   const player = useVideoPlayer(null, player => {
     player.audioMixingMode = 'doNotMix';
     player.timeUpdateEventInterval = 0.05;
@@ -46,6 +40,11 @@ function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforeP
   const replacements = useRef(Promise.resolve());
   const focus = useRef<(() => void) | null>(null);
   const identity = JSON.stringify(scope);
+  const cueIdentity = JSON.stringify(cueIds);
+  const preparation = useMemo(() => captionAudioPreparation(scope), [identity]);
+  const [cachePhase, setCachePhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [cacheError, setCacheError] = useState('');
+  const [cacheRetry, setCacheRetry] = useState(0);
   function replace(source: { uri: string; contentType: 'hls' } | null) {
     const next = replacements.current.catch(() => {}).then(() => player.replaceAsync(source));
     replacements.current = next;
@@ -70,29 +69,17 @@ function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforeP
     extraction.current = controller;
     setPhase('loading');
     let clip: Clip | null = null;
-    const cancelled = () => !mounted.current || generation.current !== version || controller.signal.aborted;
+    const cancelled = () => !mounted.current || generation.current !== version;
     const cancellation = Error('Audio playback cancelled');
     const check = () => {
       if (cancelled()) throw cancellation;
     };
     try {
-      const command = { op: 'word' in scope ? 'ai_word_audio' : 'gameId' in scope ? 'ai_game_audio' : 'ai_chat_audio', ...scope, cueId };
-      let source = await aiRequest<Clip | Missing>(command);
-      if (!source.needsMedia) clip = source;
-      check();
-      if (source.needsMedia) {
-        const catalog = await extractMedia(source.videoId, controller.signal);
+      if ('gameId' in scope && cueIds.includes(cueId)) {
+        await preparation.prepare(cueId);
         check();
-        try { source = await aiRequest<Clip>({ ...command, catalog }); }
-        catch (error) {
-          check();
-          const fresh = await extractMedia(catalog.videoId, controller.signal, true);
-          check();
-          source = await aiRequest<Clip>({ ...command, catalog: fresh });
-        }
       }
-      // Retain the route before checking cancellation so even a late response is revoked.
-      if (!source.needsMedia) clip = source;
+      clip = await requestCaptionAudio(scope, cueId, controller.signal);
       check();
       if (!clip) throw Error('Caption audio could not be prepared.');
       await beforePlay?.();
@@ -139,8 +126,31 @@ function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforeP
   }
   useEffect(() => {
     mounted.current = true;
-    const subscription = AppState.addEventListener('change', state => { if (state !== 'active') stop(); });
-    return () => { mounted.current = false; stop(); subscription.remove(); };
-  }, [player, identity]);
-  return { play, stop, phase, error };
+    let cacheGeneration = 0;
+    async function preload() {
+      const version = ++cacheGeneration;
+      const ids: string[] = JSON.parse(cueIdentity);
+      if (!ids.length) { setCachePhase('idle'); setCacheError(''); return; }
+      setCachePhase('loading'); setCacheError('');
+      try {
+        for (const id of ids) {
+          if (!mounted.current || version !== cacheGeneration) return;
+          await preparation.prepare(id);
+        }
+        if (mounted.current && version === cacheGeneration) setCachePhase('ready');
+      } catch (reason) {
+        if (mounted.current && version === cacheGeneration) {
+          setCachePhase('error');
+          setCacheError(reason instanceof Error ? reason.message : 'Could not cache activity audio.');
+        }
+      }
+    }
+    if (AppState.currentState === 'active') void preload();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void preload();
+      else { ++cacheGeneration; preparation.cancel(); stop(); }
+    });
+    return () => { mounted.current = false; ++cacheGeneration; preparation.cancel(); stop(); subscription.remove(); };
+  }, [player, identity, preparation, cueIdentity, cacheRetry]);
+  return { play, stop, phase, error, cachePhase, cacheError, retryCache: () => setCacheRetry(value => value + 1) };
 }

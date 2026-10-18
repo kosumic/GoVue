@@ -163,6 +163,38 @@ fn shared_url(text: &str) -> Result<Value> {
     }
     Err("No supported YouTube link was found.".into())
 }
+fn open_address(browser: &Browser, command: &Value) -> Result<(String, String)> {
+    let Some(value) = command.get("videoId") else {
+        return address(string(command, "url")?);
+    };
+    let id = value
+        .as_str()
+        .filter(|id| crate::video_id(id))
+        .ok_or("Invalid video identity.")?;
+    if let Some(start) = command.get("start") {
+        let start = start
+            .as_f64()
+            .filter(|n| n.is_finite() && (0.0..=31_536_000.0).contains(n))
+            .ok_or("Invalid video timestamp.")?;
+        return address(&format!(
+            "https://m.youtube.com/watch?v={id}&t={}s",
+            start.floor()
+        ));
+    }
+    let retained = browser.tabs.iter().find(|tab| {
+        address(&tab.url).is_ok_and(|(_, kind)| matches!(kind.as_str(), "watch" | "shorts"))
+            && Url::parse(&tab.url)
+                .ok()
+                .and_then(|url| video(&url))
+                .as_deref()
+                == Some(id)
+    });
+    address(
+        &retained
+            .map(|tab| tab.url.clone())
+            .unwrap_or_else(|| format!("https://m.youtube.com/watch?v={id}")),
+    )
+}
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     if command["op"] == "browser_shared_url" {
         return shared_url(string(command, "text")?);
@@ -196,27 +228,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     match op {
         "browser_state" => {}
         "browser_open" => {
-            let (url, kind) = if command.get("videoId").is_some() {
-                let id = string(command, "videoId")?;
-                if !crate::video_id(id) {
-                    return Err("Invalid video identity.".into());
-                }
-                let retained = browser.tabs.iter().find(|tab| {
-                    address(&tab.url)
-                        .is_ok_and(|(_, kind)| matches!(kind.as_str(), "watch" | "shorts"))
-                        && Url::parse(&tab.url)
-                            .ok()
-                            .and_then(|url| video(&url))
-                            .as_deref()
-                            == Some(id)
-                });
-                let url = retained
-                    .map(|tab| tab.url.clone())
-                    .unwrap_or_else(|| format!("https://m.youtube.com/watch?v={id}"));
-                address(&url)?
-            } else {
-                address(string(command, "url")?)?
-            };
+            let (url, kind) = open_address(browser, command)?;
             if command["suspendWatch"] == true
                 && kind != "watch"
                 && browser
