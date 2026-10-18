@@ -47,6 +47,8 @@ updates:
         versions: ['> 15.15.4']
       - dependency-name: react-native-webview
         versions: ['> 13.16.1']
+      - dependency-name: typescript
+        versions: ['>= 6.1.0']
 
   # The root Cargo workspace includes core/ and tools/bindgen/.
   - package-ecosystem: cargo

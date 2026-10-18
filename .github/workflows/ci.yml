@@ -82,6 +82,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Nix supplies the Android SDK. Remove the runner's duplicate SDK and
+      # unused language runtimes before downloading the Nix toolchain.
+      - name: Free disk space for Android build
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/share/powershell /opt/ghc
+          df -h /
+
       - name: Install Nix
         uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
         with:
