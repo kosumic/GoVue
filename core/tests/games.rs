@@ -318,7 +318,11 @@ impl MediaHttp for Media {
         } else {
             (start..=end).map(|n| n.to_le_bytes()[0]).collect()
         };
-        MediaRangeReply { status: 206, body }
+        MediaRangeReply {
+            status: 206,
+            body,
+            location: None,
+        }
     }
 }
 

@@ -39,23 +39,43 @@ import io.github.kaminarios.govue.core.installCastPlatform
 
 private class NativeMediaHttp : MediaHttp {
   private val client = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS)
-    .readTimeout(12, TimeUnit.SECONDS).followRedirects(false).build()
+    .readTimeout(12, TimeUnit.SECONDS).callTimeout(18, TimeUnit.SECONDS).followRedirects(false).build()
   override fun fetchRange(url: String, userAgent: String, origin: String, method: String, start: ULong, end: ULong): MediaRangeReply {
     return try {
       val parsed = url.toHttpUrl().newBuilder().addQueryParameter("range", "$start-$end").build()
       val builder = Request.Builder().url(parsed).header("User-Agent",userAgent).header("Origin",origin).header("Referer","$origin/").header("Accept-Encoding","identity")
       if(method == "POST") builder.post(byteArrayOf(0x78,0).toRequestBody())
       val request = builder.build()
-      client.newCall(request).execute().use { response ->
+      val response = mediaTrace(if (method == "POST") "GoVue transport: POST headers" else "GoVue transport: GET headers") {
+        client.newCall(request).execute()
+      }
+      response.use {
+        mediaTrace("GoVue transport: HTTP ${response.code}") {}
+        mediaTrace(when (response.code) {
+          200, 206 -> "GoVue transport: accepted"
+          403 -> "GoVue transport: forbidden"
+          else -> "GoVue transport: rejected"
+        }) {}
+        val location = response.header("Location")?.takeIf { it.length <= 30000 }
+        if (response.code != 200 && response.code != 206)
+          return MediaRangeReply(response.code, byteArrayOf(), location)
         val buffer = ByteArray((end-start+2u).toInt())
         var count = 0
-        response.body?.byteStream()?.use { input ->
-          while(count < buffer.size) { val n = input.read(buffer,count,buffer.size-count); if(n<0) break; count+=n }
+        mediaTrace(if (buffer.size <= 65537) "GoVue transport: small body" else "GoVue transport: large body") {
+          response.body?.byteStream()?.use { input ->
+            while(count < buffer.size) { val n = input.read(buffer,count,buffer.size-count); if(n<0) break; count+=n }
+          }
         }
-        MediaRangeReply(response.code,buffer.copyOf(count))
+        MediaRangeReply(response.code,buffer.copyOf(count),location)
       }
-    } catch (_: Exception) { MediaRangeReply(0,byteArrayOf()) }
+    } catch (_: Exception) { MediaRangeReply(0,byteArrayOf(),null) }
   }
+}
+
+// Phase labels and HTTP status numbers only; addresses and headers stay private.
+private inline fun <T> mediaTrace(name: String, block: () -> T): T {
+  Trace.beginSection(name)
+  try { return block() } finally { Trace.endSection() }
 }
 
 class GoVueCoreModule : Module() {

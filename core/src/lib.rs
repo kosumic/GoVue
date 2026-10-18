@@ -42,6 +42,7 @@ pub use extraction::{
 pub struct MediaRangeReply {
     pub status: i32,
     pub body: Vec<u8>,
+    pub location: Option<String>,
 }
 
 #[uniffi::export(callback_interface)]

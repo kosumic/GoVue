@@ -25,11 +25,11 @@ internal class NativeExtractionHttp : ExtractionHttp {
       val body = java.io.ByteArrayOutputStream()
       response.body?.byteStream()?.use { input ->
         val buffer = ByteArray(16384)
-        while (true) {
-          val count = input.read(buffer, 0, minOf(buffer.size, limit + 1 - body.size()))
+        val cap = if (request.prefixOnly) limit else limit + 1
+        while (body.size() < cap) {
+          val count = input.read(buffer, 0, minOf(buffer.size, cap - body.size()))
           if (count <= 0) break
           body.write(buffer, 0, count)
-          if (body.size() > limit) break
         }
       }
       ExtractionReply(response.code, body.toByteArray(), response.headers.values("Set-Cookie").map { ExtractionHeader("Set-Cookie", it) })

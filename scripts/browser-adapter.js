@@ -26,6 +26,7 @@
   };
   window.Bridge = {
     getPreferences: () => JSON.stringify(preferences),
+    prepare: (url) => post('prepare', { url }),
     extension: () => post('settings'),
     download: () => post('library'),
     chat: () => post('chat'),

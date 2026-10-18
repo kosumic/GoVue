@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Animated,
   BackHandler,
   Image,
@@ -482,6 +483,22 @@ function Browser() {
         return;
       }
       if (id !== browserRef.current.activeId) return;
+      if (message.action === 'prepare' && typeof payload?.url === 'string') {
+        if (page || aiVisible || session.fullscreen || AppState.currentState !== 'active') return;
+        if (!(media.settings.backgroundPlayback || media.settings.adBlock || media.settings.autoPip)) return;
+        const work = browserWrites.current.catch(() => {}).then(() => coreRequest({
+          op: 'extract_prepare',
+          requestId: 'prepare:media',
+          id,
+          origin,
+          documentUrl: message.documentUrl,
+          generation: message.documentGeneration,
+          url: payload.url,
+          userAgent: browserIdentity.userAgent,
+        }));
+        browserWrites.current = work.then(() => {}, () => {});
+        return;
+      }
       if (
         message.action === 'transient' &&
         typeof payload?.kind === 'string' &&

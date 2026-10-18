@@ -21,6 +21,7 @@ use std::{
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 const CHUNK: u64 = 1_048_576;
+const INITIAL_CHUNK: u64 = 32_768;
 pub(crate) struct Source {
     url: String,
     length: u64,
@@ -28,6 +29,7 @@ pub(crate) struct Source {
     origin: String,
     mime: String,
     post: AtomicBool,
+    redirected: Mutex<Option<String>>,
 }
 impl Source {
     pub(crate) fn length(&self) -> u64 {
@@ -110,85 +112,110 @@ pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<V
     });
     let mut last = "Media range unavailable.".to_string();
     let mut post = source.post.load(Ordering::Relaxed);
-    for attempt in 0..3 {
+    let mut url = source
+        .redirected
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .unwrap_or_else(|| source.url.clone());
+    let mut redirects = 0;
+    let mut attempt = 0;
+    while attempt < 3 {
         note("upstreamStart", json!(start));
-        if let Some(backend) = HTTP.get() {
-            let reply = backend.fetch_range(
-                source.url.clone(),
+        let reply = if let Some(backend) = HTTP.get() {
+            backend.fetch_range(
+                url.clone(),
                 source.user_agent.clone(),
                 source.origin.clone(),
                 if post { "POST" } else { "GET" }.into(),
                 start,
                 end,
+            )
+        } else {
+            let address = format!(
+                "{url}{}range={start}-{end}",
+                if url.contains('?') { "&" } else { "?" }
             );
-            if matches!(reply.status, 200 | 206) && reply.body.len() as u64 == end - start + 1 {
-                note("received", json!(end + 1));
-                note("lastError", Value::Null);
-                source.post.store(post, Ordering::Relaxed);
-                return Ok(reply.body);
+            let request = agent
+                .request(if post { "POST" } else { "GET" }, &address)
+                .set("User-Agent", &source.user_agent)
+                .set("Accept-Encoding", "identity")
+                .set("Referer", &format!("{}/", source.origin))
+                .set("Origin", &source.origin);
+            match if post {
+                request.send_bytes(&[0x78, 0])
+            } else {
+                request.call()
+            } {
+                Ok(response) | Err(ureq::Error::Status(_, response)) => {
+                    let status = i32::from(response.status());
+                    let location = response.header("Location").map(str::to_owned);
+                    let mut bytes = Vec::with_capacity(
+                        usize::try_from(end - start + 1)
+                            .map_err(|_| io::Error::other("Media range is too large."))?,
+                    );
+                    response
+                        .into_reader()
+                        .take(CHUNK + 1)
+                        .read_to_end(&mut bytes)?;
+                    crate::MediaRangeReply {
+                        status,
+                        body: bytes,
+                        location,
+                    }
+                }
+                Err(ureq::Error::Transport(_)) => crate::MediaRangeReply {
+                    status: 0,
+                    body: Vec::new(),
+                    location: None,
+                },
             }
-            last = format!("Media HTTP {} ({} bytes).", reply.status, reply.body.len());
-            note("lastError", json!(last));
-            if reply.status == 403 {
-                post = true;
+        };
+        if matches!(reply.status, 301 | 302 | 303 | 307 | 308) {
+            let _span = crate::trace::Section::begin(c"GoVue transport: redirect");
+            redirects += 1;
+            let next = (redirects <= 4)
+                .then_some(reply.location.as_deref())
+                .flatten()
+                .filter(|location| {
+                    !location.is_empty()
+                        && location.len() <= 30_000
+                        && location.trim() == *location
+                        && !location.chars().any(char::is_control)
+                })
+                .and_then(|location| url::Url::parse(&url).ok()?.join(location).ok())
+                .and_then(|target| media_url(target.as_str()));
+            let Some(next) = next else {
+                note("lastError", json!("Invalid media redirect."));
+                return Err(io::Error::other("Invalid media redirect."));
+            };
+            if matches!(reply.status, 301..=303) {
+                post = false;
             }
-            thread::sleep(Duration::from_millis(150 * (attempt + 1)));
+            url = next;
             continue;
         }
-        let address = format!("{}&range={start}-{end}", source.url);
-        let request = agent
-            .request(if post { "POST" } else { "GET" }, &address)
-            .set("User-Agent", &source.user_agent)
-            .set("Accept-Encoding", "identity")
-            .set("Referer", &format!("{}/", source.origin))
-            .set("Origin", &source.origin);
-        match if post {
-            request.send_bytes(&[0x78, 0])
-        } else {
-            request.call()
-        } {
-            Ok(response) => {
-                let mut bytes = Vec::with_capacity(
-                    usize::try_from(end - start + 1)
-                        .map_err(|_| io::Error::other("Media range is too large."))?,
-                );
-                response
-                    .into_reader()
-                    .take(CHUNK + 1)
-                    .read_to_end(&mut bytes)?;
-                if bytes.len() as u64 == end - start + 1 {
-                    note("received", json!(end + 1));
-                    note("lastError", Value::Null);
-                    source.post.store(post, Ordering::Relaxed);
-                    return Ok(bytes);
-                }
-                last = "Incomplete media range.".into();
+        if matches!(reply.status, 200 | 206) && reply.body.len() as u64 == end - start + 1 {
+            note("received", json!(end + 1));
+            note("lastError", Value::Null);
+            source.post.store(post, Ordering::Relaxed);
+            if url != source.url {
+                *source
+                    .redirected
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
             }
-            Err(error) => {
-                last = match error {
-                    ureq::Error::Status(status, _) => {
-                        if status == 403 {
-                            post = true;
-                        }
-                        format!("Media HTTP {status}.")
-                    }
-                    ureq::Error::Transport(error) => {
-                        let detail = error.message().unwrap_or("");
-                        format!(
-                            "Media {:?}: {}",
-                            error.kind(),
-                            if detail.contains("://") {
-                                "connection failed"
-                            } else {
-                                detail
-                            }
-                        )
-                    }
-                };
-                note("lastError", json!(last));
-            }
+            return Ok(reply.body);
         }
-        thread::sleep(Duration::from_millis(150 * (attempt + 1)));
+        last = format!("Media HTTP {} ({} bytes).", reply.status, reply.body.len());
+        note("lastError", json!(last));
+        if reply.status == 403 {
+            post = true;
+        }
+        attempt += 1;
+        if attempt < 3 {
+            thread::sleep(Duration::from_millis(150 * attempt));
+        }
     }
     Err(io::Error::other(last))
 }
@@ -230,6 +257,7 @@ impl DownloadSource {
                 .unwrap_or("application/octet-stream")
                 .into(),
             post: AtomicBool::new(false),
+            redirected: Mutex::new(None),
         }))
     }
     pub(crate) fn bytes(&self, start: u64, end: u64) -> io::Result<Vec<u8>> {
@@ -245,6 +273,16 @@ struct Body {
     next: u64,
     end: u64,
     bytes: io::Cursor<Vec<u8>>,
+    chunk: u64,
+}
+impl Body {
+    fn fill(&mut self) -> io::Result<()> {
+        let end = (self.next + self.chunk - 1).min(self.end);
+        self.bytes = io::Cursor::new(range_bytes(&self.source, self.next, end)?);
+        self.next = end + 1;
+        self.chunk = (self.chunk * 2).min(CHUNK);
+        Ok(())
+    }
 }
 impl Read for Body {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
@@ -258,9 +296,7 @@ impl Read for Body {
         if self.next > self.end {
             return Ok(0);
         }
-        let end = (self.next + CHUNK - 1).min(self.end);
-        self.bytes = io::Cursor::new(range_bytes(&self.source, self.next, end)?);
-        self.next = end + 1;
+        self.fill()?;
         self.bytes.read(buffer)
     }
 }
@@ -381,13 +417,20 @@ fn serve(
             &format!("bytes {start}-{end}/{}", source.length),
         )?);
     }
-    let body = Body {
+    let mut body = Body {
         source,
         next: start,
         end,
         bytes: io::Cursor::new(Vec::new()),
+        chunk: INITIAL_CHUNK,
     };
     let head = request.method() == &Method::Head;
+    // Validate the first small range before promising a successful response.
+    // Later reads grow to the normal cap as the player consumes the stream.
+    if !head && body.fill().is_err() {
+        let _ = request.respond(Response::empty(StatusCode(502)));
+        return Ok(());
+    }
     let mut writer = request.into_writer();
     let status = if requested.is_some() {
         "206 Partial Content"
@@ -445,6 +488,7 @@ pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
         origin: origin.into(),
         mime: container(command).unwrap_or("video/mp4").into(),
         post: AtomicBool::new(false),
+        redirected: Mutex::new(None),
     }))
 }
 
@@ -762,7 +806,11 @@ mod tests {
             } else {
                 (start..=end).map(|n| n.to_le_bytes()[0]).collect()
             };
-            crate::MediaRangeReply { status: 206, body }
+            crate::MediaRangeReply {
+                status: 206,
+                body,
+                location: None,
+            }
         }
     }
 
