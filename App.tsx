@@ -851,6 +851,7 @@ function Browser() {
                       handle.view.current?.clearCache?.(true);
                   }}
                   onSettings={media.updateSettings}
+                  onCategoryChange={media.updateSponsorCategory}
                   onClose={() =>
                     setPage(page === 'data' || page === 'ai' ? 'settings' : null)
                   }

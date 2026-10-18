@@ -157,6 +157,8 @@ export type PlaybackSource = {
 
 export const mediaSettings = (settings?: Partial<MediaSettings>) =>
   coreRequest<MediaSettings>({ op: 'media_settings', settings });
+export const mediaSponsorCategory = (id: string, enabled: boolean) =>
+  coreRequest<MediaSettings>({ op: 'media_settings', category: { id, enabled } });
 export async function extractMedia(videoId: string, signal?: AbortSignal, fresh = false) {
   return applyMediaCapabilities(await extract<MediaCatalog>('media', videoId, { signal, fresh }));
 }

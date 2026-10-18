@@ -7,6 +7,7 @@ import {
   defaultMediaSettings,
   fetchSponsors,
   mediaSettings,
+  mediaSponsorCategory,
   playbackChoices,
   playbackSpeeds,
   preparePlayback,
@@ -113,6 +114,7 @@ export function useMediaBrowser(
   const replacements = useRef(Promise.resolve());
   const lastSkip = useRef({ key: '', at: 0 });
   const settingsWrites = useRef(Promise.resolve());
+  const categoryGeneration = useRef(0);
   const temporarySpeed = useRef<number | null>(null);
   const retryPlayer = useRef<() => Promise<void>>(async () => {});
   const recoveryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -450,6 +452,8 @@ export function useMediaBrowser(
       inject(mediaNativeScript(owner.videoId, true));
   }
   function updateSettings(changes: Partial<MediaSettings>) {
+    if (changes.categories !== undefined || changes.sponsorBlock !== undefined)
+      ++categoryGeneration.current;
     const next = { ...settingsRef.current, ...changes };
     settingsRef.current = next;
     setSettings(next);
@@ -465,6 +469,24 @@ export function useMediaBrowser(
         });
         Alert.alert('Could not save playback settings');
       });
+  }
+  function updateSponsorCategory(id: string, enabled: boolean) {
+    const generation = categoryGeneration.current;
+    settingsWrites.current = settingsWrites.current
+      .catch(() => {})
+      .then(async () => {
+        const saved = await mediaSponsorCategory(id, enabled);
+        if (generation !== categoryGeneration.current) return;
+        // Other controls may have optimistic edits waiting in this same queue.
+        const next = {
+          ...settingsRef.current,
+          categories: saved.categories,
+          sponsorBlock: saved.sponsorBlock,
+        };
+        settingsRef.current = next;
+        setSettings(next);
+      })
+      .catch(() => Alert.alert('Could not save SponsorBlock settings'));
   }
   async function setSpeed(speed: number) {
     if (!speeds.includes(speed)) return;
@@ -977,6 +999,7 @@ export function useMediaBrowser(
   return {
     settings,
     updateSettings,
+    updateSponsorCategory,
     playback,
     preparing,
     playerLayout,
