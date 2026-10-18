@@ -213,7 +213,9 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   workspace: { flex: 1 }, thread: { flex: 1 }, messages: { width: '100%', maxWidth: 800, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 24, paddingBottom: 24, gap: 28 }, emptyMessages: { flexGrow: 1 },
   message: { width: '100%' }, userMessage: { alignItems: 'flex-end' },
-  userBubble: { maxWidth: '88%', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 24, backgroundColor: colors.raised },
+  // Native Markdown can overmeasure an auto-width code block. Assign its width
+  // so Fabric accepts the measurement and the prompt stays visible.
+  userBubble: { width: '88%', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 24, backgroundColor: colors.raised },
   userActions: { flexDirection: 'row', alignSelf: 'flex-end' }, editing: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.action },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 32 }, muted: { fontSize: 13, color: colors.muted, lineHeight: 20 },
   messageAction: { minWidth: 44, minHeight: 44, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, actionText: { color: colors.muted, fontSize: 12 },
