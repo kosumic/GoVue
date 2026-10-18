@@ -692,6 +692,7 @@ function Browser() {
             hidden={session.fullscreen}
           />
           <View
+            collapsable={false}
             style={[s.workspace, (aiVisible || !!page) && s.clippedWorkspace]}
             onLayout={(e) => {
               setWorkspaceSize(e.nativeEvent.layout);
@@ -745,7 +746,8 @@ function Browser() {
                   }}
                 />
               ))}
-            <View pointerEvents="box-none" style={[s.overlays, transcriptVisible && s.transcriptOverlays]}>
+            {/* Keep the player and browser in stable native parents as clipping changes. */}
+            <View collapsable={false} pointerEvents="box-none" style={[s.overlays, transcriptVisible && s.transcriptOverlays]}>
               <AiSheet
                 keyboardVerticalOffset={session.fullscreen ? 0 : insets.top}
                 onBeforeGameAudio={media.pause}

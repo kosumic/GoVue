@@ -153,6 +153,9 @@ export const BrowserTab = forwardRef<
     };
     return (
       <View
+        // Parking changes opacity and touch policy. Keep the native parent so
+        // those changes do not reparent the WebView during an active gesture.
+        collapsable={false}
         pointerEvents={active ? 'auto' : 'none'}
         accessibilityElementsHidden={!active}
         importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
