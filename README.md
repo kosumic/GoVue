@@ -21,8 +21,23 @@ The player's Transcript and AI buttons appear before speed and quality. Transcri
 opens a searchable reader with language selection, playback following, and
 tap-to-seek captions. YouTube JSON3 word timings are preserved when available:
 the current word is highlighted, and tapping a word seeks to its start. Hold a
-word to save it with that timestamp. Captions without word timings use the line
-start; refresh an older cached transcript to fetch word timings.
+word to open a floating card near it and translate on device with
+`expo-translate-text`, then optionally save it with that timestamp. Words in a
+learning language translate into a language you know, preferring your native
+language. Words in a known language translate into
+all your learning languages, with a separate result for each. Languages outside
+your profile use a known language, or English when none is available.
+The card can generate a usage example with translations using your selected AI
+model, or explain the word's base form and grammar in its current caption, in
+your known/native language. Each example sentence and translation has a speaker
+button for text-to-speech in its own language using `expo-speech`. If the word
+has individual timestamps, Play word plays its original audio and stops at the
+word's end. It shares the reader and games' lazy video-caption audio cache;
+words in the same caption reuse its downloaded fragments.
+The first translation may download a language model. Android uses ML Kit; iOS
+requires iOS 18 or newer for translation. A native app rebuild is required after
+installing the module. Captions without word timings use the line start; refresh
+an older cached transcript to fetch word timings.
 The reader keeps original line breaks, reconstructs continuations within caption
 windows, and displays authored emphasis and Japanese pronunciation readings.
 Subtle dividers mark possible speaker changes when the caption track supplies

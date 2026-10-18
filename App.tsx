@@ -828,6 +828,7 @@ function Browser() {
                   onPauseAfterLine={remoteTranscript ? undefined : pauseAfterLine => media.updateSettings({ pauseAfterLine })}
                   onClose={session.transcript.close}
                   onExtract={session.transcript.extract}
+                  onBeforeWordAudio={() => media.pause()}
                   onSeek={seconds => run(async () => {
                     const videoId = session.transcript.data?.videoId;
                     if (!videoId || videoId !== mediaRef.current.playback?.videoId) return;

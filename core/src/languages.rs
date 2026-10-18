@@ -93,3 +93,51 @@ pub(super) fn settings(command: &Value, root: &str) -> Result<Value> {
     }
     Ok(value)
 }
+
+pub(super) fn translation_targets(root: &str, source: &str) -> Result<Vec<String>> {
+    let settings: LanguageSettings =
+        serde_json::from_value(settings(&serde_json::json!({}), root)?)
+            .map_err(|_| "Could not read your language settings.")?;
+    let matches_source = |entry: &Language| {
+        crate::language_catalog::translation_language(&entry.language)
+            .is_some_and(|(code, _)| code == source)
+    };
+    let from_known = settings.known.iter().any(matches_source);
+    let targets = if from_known {
+        &settings.learning
+    } else {
+        &settings.known
+    };
+    let candidates: Vec<_> = targets
+        .iter()
+        .filter(|entry| !matches_source(entry))
+        .collect();
+    if from_known {
+        if candidates.is_empty() {
+            return Err("Add a language you want to learn in Language settings.".into());
+        }
+        return Ok(candidates
+            .iter()
+            .map(|entry| entry.language.clone())
+            .collect());
+    }
+    Ok(vec![
+        candidates
+            .iter()
+            .find(|entry| entry.level == Level::Native)
+            .or(candidates.first())
+            .map_or_else(|| "English".into(), |entry| entry.language.clone()),
+    ])
+}
+
+pub(super) fn explanation_language(root: &str) -> Result<String> {
+    let settings: LanguageSettings =
+        serde_json::from_value(settings(&serde_json::json!({}), root)?)
+            .map_err(|_| "Could not read your language settings.")?;
+    Ok(settings
+        .known
+        .iter()
+        .find(|entry| entry.level == Level::Native)
+        .or(settings.known.first())
+        .map_or_else(|| "English".into(), |entry| entry.language.clone()))
+}

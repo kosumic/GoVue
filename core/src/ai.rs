@@ -26,6 +26,7 @@ mod games;
 mod tools;
 mod updates;
 mod usage;
+mod word_assistance;
 
 const AUTH: &str = "https://auth.openai.com";
 const RESOURCE: &str = "https://api.openai.com/v1";
@@ -1876,6 +1877,8 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         return catalog::dispatch(c, root);
     }
     match string(&c, "op")? {
+        "ai_word_assistance" => word_assistance::start(c, root),
+        "ai_word_audio" => word_assistance::audio(&c, &root),
         "ai_game_audio_release" => games::audio::release(string(&c, "token")?),
         "ai_chats"
         | "ai_chat_get"
