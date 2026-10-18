@@ -2,6 +2,7 @@
 //! Playlists and signed source addresses remain in the loopback proxy's memory.
 use super::{Result, media_url};
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 
 pub(crate) const SPEEDS: [f64; 10] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
@@ -98,10 +99,8 @@ fn codec_priority(stream: &Value) -> u8 {
         3
     } else if mime.contains("hvc1") || mime.contains("hev1") {
         2
-    } else if mime.contains("av01") {
-        1
     } else {
-        0
+        u8::from(mime.contains("av01"))
     }
 }
 
@@ -109,13 +108,13 @@ pub(super) fn choices(catalog: &Value) -> Result<Value> {
     Ok(json!(
         videos(catalog)?
             .iter()
-            .map(|s| {
+            .map(|s| -> Result<Value> {
                 let fps=s["fps"].as_u64().unwrap_or(0);
-                let mut choice=json!({"height":s["height"],"label":format!("{}p{}",s["height"].as_u64().unwrap(),if fps>30 {fps.to_string()}else{String::new()})});
+                let mut choice=json!({"height":s["height"],"label":format!("{}p{}",s["height"].as_u64().ok_or("Invalid video height.")?,if fps>30 {fps.to_string()}else{String::new()})});
                 if fps>0 {choice["fps"]=json!(fps);}
-                choice
+                Ok(choice)
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>>>()?
     ))
 }
 
@@ -183,11 +182,12 @@ pub(crate) fn segment_index(stream: &Value, data: &[u8]) -> Result<Vec<IndexedSe
         return Err(invalid());
     }
     let (first_offset, count_at) = if version == 0 {
-        (u32_at(at + 24)? as u64, at + 28)
+        (u64::from(u32_at(at + 24)?), at + 28)
     } else {
         (u64_at(at + 28)?, at + 36)
     };
-    let count = u32_at(count_at)? as u16 as usize;
+    let count_bytes = u32_at(count_at)?.to_be_bytes();
+    let count = usize::from(u16::from_be_bytes([count_bytes[2], count_bytes[3]]));
     if count == 0 || count > 50_000 || count_at + 4 + count * 12 != end {
         return Err(invalid());
     }
@@ -196,27 +196,31 @@ pub(crate) fn segment_index(stream: &Value, data: &[u8]) -> Result<Vec<IndexedSe
         .and_then(|n| n.checked_add(first_offset))
         .ok_or_else(invalid)?;
     let mut segments = Vec::new();
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "MP4 timeline ticks are converted to approximate playback seconds."
+    )]
     let mut time = if version == 0 {
-        u32_at(at + 20)? as f64
+        f64::from(u32_at(at + 20)?)
     } else {
         u64_at(at + 20)? as f64
-    } / timescale as f64;
+    } / f64::from(timescale);
     for i in 0..count {
         let entry = count_at + 4 + i * 12;
         let size = u32_at(entry)?;
-        let duration = u32_at(entry + 4)? as f64 / timescale as f64;
+        let duration = f64::from(u32_at(entry + 4)?) / f64::from(timescale);
         if size == 0 || size & 0x8000_0000 != 0 || duration <= 0.0 || duration > 3600.0 {
             return Err(invalid());
         }
         let next = offset
-            .checked_add(size as u64)
+            .checked_add(u64::from(size))
             .filter(|n| *n <= length)
             .ok_or_else(invalid)?;
         segments.push(IndexedSegment {
             start: time,
             duration,
             offset,
-            size: size as u64,
+            size: u64::from(size),
         });
         time += duration;
         offset = next;
@@ -232,10 +236,11 @@ pub(crate) fn playlist(stream: &Value, data: &[u8], uri: &str) -> Result<String>
     let mut target = 1.0f64;
     for segment in segment_index(stream, data)? {
         target = target.max(segment.duration.ceil());
-        segments.push_str(&format!(
+        let _ = write!(
+            segments,
             "#EXTINF:{:.6},\n#EXT-X-BYTERANGE:{}@{}\n{uri}\n",
             segment.duration, segment.size, segment.offset
-        ));
+        );
     }
     Ok(format!(
         "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{target:.0}\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"{uri}\",BYTERANGE=\"{}@{init_start}\"\n{segments}#EXT-X-ENDLIST\n",

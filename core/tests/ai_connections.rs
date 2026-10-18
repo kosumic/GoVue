@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Connection regressions after Android discovery/inference checks on a local endpoint.
 use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
@@ -148,6 +150,10 @@ fn last(b: &Backend) -> Value {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep the end-to-end fixture setup, actions, and assertions for this scenario together."
+)]
 fn connection_edits_preserve_identity_and_apply_to_all_request_paths() {
     let temp = Temp(std::env::temp_dir().join(format!(
             "govue-connections-{}-{}",

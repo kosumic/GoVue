@@ -23,3 +23,6 @@ tiny_http = "0.12"
 base64 = "0.22"
 getrandom = "0.2"
 jsonwebtoken = { version = "9.3", default-features = false }
+
+[lints]
+workspace = true

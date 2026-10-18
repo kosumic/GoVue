@@ -30,6 +30,10 @@ fn end(data: &Transcript, index: usize) -> f64 {
 // Merge the two already sorted tracks without moving a later cue ahead of an
 // earlier one. Neighboring cues may share a row when their time ranges overlap;
 // the first selected language wins ties only when timestamps are identical.
+#[allow(
+    clippy::float_cmp,
+    reason = "Cue timestamps are compared exactly to preserve identical-start tie ordering."
+)]
 fn rows(primary: &Transcript, comparison: Option<&Transcript>) -> Vec<Row> {
     let sources = [primary, comparison.unwrap_or(primary)];
     let lengths = [
@@ -40,14 +44,12 @@ fn rows(primary: &Transcript, comparison: Option<&Transcript>) -> Vec<Row> {
     let mut rows: Vec<Row> = Vec::with_capacity(lengths[0].max(lengths[1]));
     let mut previous_end = 0.0;
     while indices[0] < lengths[0] || indices[1] < lengths[1] {
-        let track = if indices[1] == lengths[1]
-            || (indices[0] < lengths[0]
-                && sources[0].segments[indices[0]].start <= sources[1].segments[indices[1]].start)
-        {
-            0
-        } else {
-            1
-        };
+        let track = usize::from(
+            !(indices[1] == lengths[1]
+                || (indices[0] < lengths[0]
+                    && sources[0].segments[indices[0]].start
+                        <= sources[1].segments[indices[1]].start)),
+        );
         let index = indices[track];
         let start = sources[track].segments[index].start;
         let line = Line { track, index };
@@ -116,12 +118,12 @@ pub(super) fn dispatch(
         None => None,
     };
     let mut rows = rows(primary, comparison.as_ref());
-    let sources = [Some(primary), comparison.as_ref()];
+    let sources = [primary, comparison.as_ref().unwrap_or(primary)];
     if op == "transcript_export" {
         let mut lines = Vec::new();
         for row in rows {
             for line in row.lines {
-                let source = sources[line.track].unwrap();
+                let source = sources[line.track];
                 let segment = &source.segments[line.index];
                 lines.push(format!(
                     "{}  [{}] {}",
@@ -147,7 +149,7 @@ pub(super) fn dispatch(
     if !query.is_empty() {
         rows.retain(|row| {
             row.lines.iter().any(|line| {
-                crate::captions::matches(&sources[line.track].unwrap().segments[line.index], &query)
+                crate::captions::matches(&sources[line.track].segments[line.index], &query)
             })
         });
     }

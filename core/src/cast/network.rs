@@ -28,7 +28,7 @@ impl Transport {
         for (_, socket) in self
             .peers
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .drain(..)
         {
             let _ = socket.shutdown(Shutdown::Both);
@@ -42,7 +42,7 @@ impl Transport {
             && self
                 .last_media
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(30))
     }
 }
@@ -75,8 +75,10 @@ pub fn start(
         // A VPN can forbid explicit network selection (EPERM). The listener
         // remains bound to this exact private Wi-Fi address; in that case let
         // Android's ordinary routing policy apply rather than bypassing it.
-        let _ =
-            super::platform()?.bind_wifi_socket(listener.as_raw_fd() as u32, address.to_string());
+        let _ = super::platform()?.bind_wifi_socket(
+            u32::try_from(listener.as_raw_fd()).map_err(|_| "Invalid Cast listener socket.")?,
+            address.to_string(),
+        );
     }
     listener
         .set_nonblocking(true)
@@ -113,7 +115,7 @@ pub fn start(
     let weak = Arc::downgrade(&state);
     let bundle = Arc::new(bundle);
     thread::spawn(move || {
-        let end = Instant::now() + Duration::from_secs(4 * 3600);
+        let end = Instant::now() + Duration::from_hours(4);
         loop {
             let Some(state) = weak
                 .upgrade()
@@ -141,7 +143,7 @@ pub fn start(
                         state
                             .peers
                             .lock()
-                            .unwrap_or_else(|e| e.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .push((id, copy));
                     }
                     let root = root.clone();
@@ -160,13 +162,13 @@ pub fn start(
                         state
                             .peers
                             .lock()
-                            .unwrap_or_else(|e| e.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .retain(|(n, _)| *n != id);
                         state.requests.fetch_sub(1, Ordering::SeqCst);
                     });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(100))
+                    thread::sleep(Duration::from_millis(100));
                 }
                 Err(_) => break,
             }
@@ -215,6 +217,10 @@ fn headers(
     }
     write!(socket, "\r\n")
 }
+#[allow(
+    clippy::too_many_lines,
+    reason = "All receiver routes share the same authenticated connection and response lifecycle."
+)]
 fn serve(
     mut socket: TcpStream,
     state: &Transport,
@@ -345,7 +351,10 @@ fn serve(
         );
     }
     if !head && (path == "manifest.mpd" || bundle.parts.contains_key(path)) {
-        *state.last_media.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+        *state
+            .last_media
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
     }
     match path {
         "player" if !receiver => {

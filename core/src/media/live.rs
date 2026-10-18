@@ -3,6 +3,11 @@
 use super::Result;
 use serde_json::{Value, json};
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "Frame rates are finite, bounded to 0..=240, and intentionally rounded to integers."
+)]
 fn tracks(command: &Value) -> Result<Vec<Value>> {
     let raw = command["tracks"]
         .as_array()

@@ -5,6 +5,7 @@ use crate::{
     transport::{self, Source},
 };
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 use std::{collections::HashMap, sync::Arc};
 
 pub struct Part {
@@ -63,7 +64,11 @@ fn index(stream: &Value, bytes: &[u8]) -> Result<SegmentIndex> {
     let box_end = at + u32at(at)? as usize;
     let scale = u32at(at + 16)?;
     let (time, offset, count_at) = match bytes.get(at + 8) {
-        Some(0) => (u32at(at + 20)? as u64, u32at(at + 24)? as u64, at + 28),
+        Some(0) => (
+            u64::from(u32at(at + 20)?),
+            u64::from(u32at(at + 24)?),
+            at + 28,
+        ),
         Some(1) => (u64at(at + 20)?, u64at(at + 28)?, at + 36),
         _ => return Err(invalid()),
     };
@@ -81,14 +86,14 @@ fn index(stream: &Value, bytes: &[u8]) -> Result<SegmentIndex> {
         let size = u32at(row)?;
         let duration = u32at(row + 4)?;
         if size == 0
-            || size & 0x80000000 != 0
+            || size & 0x8000_0000 != 0
             || duration == 0
-            || duration as f64 / scale as f64 > 3600.0
+            || f64::from(duration) / f64::from(scale) > 3600.0
         {
             return Err(invalid());
         }
         let next = offset
-            .checked_add(size as u64)
+            .checked_add(u64::from(size))
             .filter(|n| *n <= length)
             .ok_or_else(invalid)?;
         entries.push((offset, next - 1, duration));
@@ -104,7 +109,7 @@ pub fn build(command: &Value) -> Result<Bundle> {
     }
     let duration = catalog["duration"]
         .as_f64()
-        .filter(|n| n.is_finite() && *n > 0.0 && *n <= 604800.0)
+        .filter(|n| n.is_finite() && *n > 0.0 && *n <= 604_800.0)
         .ok_or("Missing Cast duration.")?;
     let mut compatible = catalog.clone();
     compatible["streams"] = json!(
@@ -177,7 +182,11 @@ pub fn build(command: &Value) -> Result<Bundle> {
             .as_u64()
             .unwrap_or(1)
             .clamp(1, 1_000_000_000);
-        manifest.push_str(&format!("<AdaptationSet id=\"{n}\" mimeType=\"{mime}\" contentType=\"{}\"><Representation id=\"{n}\" codecs=\"{codec}\" bandwidth=\"{bandwidth}\"",if n==0 {"video"}else{"audio"}));
+        let _ = write!(
+            manifest,
+            "<AdaptationSet id=\"{n}\" mimeType=\"{mime}\" contentType=\"{}\"><Representation id=\"{n}\" codecs=\"{codec}\" bandwidth=\"{bandwidth}\"",
+            if n == 0 { "video" } else { "audio" }
+        );
         for (field, attribute, max) in [
             ("width", "width", 15360),
             ("height", "height", 8640),
@@ -186,13 +195,16 @@ pub fn build(command: &Value) -> Result<Bundle> {
             if n == 0
                 && let Some(v) = stream[field].as_u64().filter(|v| *v > 0 && *v <= max)
             {
-                manifest.push_str(&format!(" {attribute}=\"{v}\""));
+                let _ = write!(manifest, " {attribute}=\"{v}\"");
             }
         }
         manifest.push('>');
         if n == 1 {
             let channels = stream["audioChannels"].as_u64().unwrap_or(2).clamp(1, 32);
-            manifest.push_str(&format!("<AudioChannelConfiguration schemeIdUri=\"urn:mpeg:dash:23003:3:audio_channel_configuration:2012\" value=\"{channels}\"/>"));
+            let _ = write!(
+                manifest,
+                "<AudioChannelConfiguration schemeIdUri=\"urn:mpeg:dash:23003:3:audio_channel_configuration:2012\" value=\"{channels}\"/>"
+            );
         }
         if let Ok((scale, time, entries)) = index(stream, &bytes) {
             let init = format!("init{n}.mp4");
@@ -204,16 +216,20 @@ pub fn build(command: &Value) -> Result<Bundle> {
                     end: init_end,
                 },
             );
-            manifest.push_str(&format!("<SegmentList timescale=\"{scale}\" presentationTimeOffset=\"{time}\"><Initialization sourceURL=\"{init}\"/><SegmentTimeline>"));
+            let _ = write!(
+                manifest,
+                "<SegmentList timescale=\"{scale}\" presentationTimeOffset=\"{time}\"><Initialization sourceURL=\"{init}\"/><SegmentTimeline>"
+            );
             for (i, (_, _, duration)) in entries.iter().enumerate() {
-                manifest.push_str(&format!(
+                let _ = write!(
+                    manifest,
                     "<S{} d=\"{duration}\"/>",
                     if i == 0 {
                         format!(" t=\"{time}\"")
                     } else {
                         String::new()
                     }
-                ));
+                );
             }
             manifest.push_str("</SegmentTimeline>");
             for (i, (start, end, _)) in entries.into_iter().enumerate() {
@@ -226,7 +242,7 @@ pub fn build(command: &Value) -> Result<Bundle> {
                         end,
                     },
                 );
-                manifest.push_str(&format!("<SegmentURL media=\"{name}\"/>"));
+                let _ = write!(manifest, "<SegmentURL media=\"{name}\"/>");
             }
             manifest.push_str("</SegmentList>");
         } else {
@@ -239,7 +255,10 @@ pub fn build(command: &Value) -> Result<Bundle> {
                     end: source.length() - 1,
                 },
             );
-            manifest.push_str(&format!("<BaseURL>{name}</BaseURL><SegmentBase indexRange=\"{index_start}-{index_end}\"><Initialization range=\"{init_start}-{init_end}\"/></SegmentBase>"));
+            let _ = write!(
+                manifest,
+                "<BaseURL>{name}</BaseURL><SegmentBase indexRange=\"{index_start}-{index_end}\"><Initialization range=\"{init_start}-{init_end}\"/></SegmentBase>"
+            );
         }
         manifest.push_str("</Representation></AdaptationSet>");
     }
@@ -267,7 +286,7 @@ mod tests {
         outside[24..28].copy_from_slice(&u32::MAX.to_be_bytes());
         assert!(index(&stream, &outside).is_err());
         let mut nested = bytes.clone();
-        nested[32..36].copy_from_slice(&0x80000001u32.to_be_bytes());
+        nested[32..36].copy_from_slice(&0x8000_0001_u32.to_be_bytes());
         assert!(index(&stream, &nested).is_err());
         bytes[16..20].copy_from_slice(&0u32.to_be_bytes());
         assert!(index(&stream, &bytes).is_err());

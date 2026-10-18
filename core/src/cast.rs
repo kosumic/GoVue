@@ -27,13 +27,13 @@ pub(super) fn available() -> bool {
 fn platform() -> Result<&'static dyn CastPlatform> {
     PLATFORM
         .get()
-        .map(|p| p.as_ref())
+        .map(std::convert::AsRef::as_ref)
         .ok_or("Casting is not available on this platform.".into())
 }
 fn random() -> Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes).map_err(|_| "Could not create a Cast session.")?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    Ok(crate::hex(&bytes))
 }
 
 struct View {
@@ -83,11 +83,20 @@ impl Session {
         .clamp(0.0, view.duration.max(view.position))
     }
     fn snapshot(&self) -> Value {
-        let view = self.view.lock().unwrap_or_else(|e| e.into_inner());
-        let transport = self.transport.lock().unwrap_or_else(|e| e.into_inner());
-        json!({"available":true,"id":self.id,"videoId":self.video_id,"device":self.name,"deviceId":if self.link {None}else{Some(format!("{}:{}",self.device["host"].as_str().unwrap_or(""),self.device["port"].as_u64().unwrap_or(0)))},"active":self.active(),"link":self.link,
+        let view = self
+            .view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transport = self
+            .transport
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let result = json!({"available":true,"id":self.id,"videoId":self.video_id,"device":self.name,"deviceId":if self.link {None}else{Some(format!("{}:{}",self.device["host"].as_str().unwrap_or(""),self.device["port"].as_u64().unwrap_or(0)))},"active":self.active(),"link":self.link,
             "phase":view.phase,"error":view.error,"position":Self::position(&view),"duration":view.duration,"speed":view.speed,"acknowledged":view.acknowledged,"linkConnected":self.link&&transport.as_ref().is_some_and(|t|t.connected()),
-            "url":if self.link&&self.active(){transport.as_ref().map(|t|format!("{}player",t.base))}else{None}})
+            "url":if self.link&&self.active(){transport.as_ref().map(|t|format!("{}player",t.base))}else{None}});
+        drop(transport);
+        drop(view);
+        result
     }
     fn finish(&self, error: Option<&'static str>) {
         if !self.alive.swap(false, Ordering::SeqCst) {
@@ -96,7 +105,7 @@ impl Session {
         if let Some(transport) = self
             .transport
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
         {
             transport.close();
@@ -104,28 +113,34 @@ impl Session {
         let socket = self
             .socket
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         if let Ok(p) = platform()
             && !socket.is_empty()
         {
             p.close(socket);
         }
-        let mut view = self.view.lock().unwrap_or_else(|e| e.into_inner());
+        let mut view = self
+            .view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         view.position = Self::position(&view);
         view.sampled = Instant::now();
         view.phase = if error.is_some() { "error" } else { "closed" };
         view.error = error;
     }
     fn send(&self, destination: &str, namespace: &str, payload: Value) -> Result<()> {
-        let _write = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        let _write = self
+            .writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !self.active() {
             return Err("The Cast session has ended.".into());
         }
         let socket = self
             .socket
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         if !socket.is_empty()
             && platform()?.write(socket, protocol::encode(destination, namespace, &payload))
@@ -137,7 +152,10 @@ impl Session {
     }
     fn request(&self, destination: &str, namespace: &str, mut payload: Value) -> Result<u64> {
         let id = {
-            let mut view = self.view.lock().unwrap_or_else(|e| e.into_inner());
+            let mut view = self
+                .view
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             view.request += 1;
             view.request
         };
@@ -149,7 +167,7 @@ impl Session {
         let app = self
             .view
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .app_session
             .clone();
         if !app.is_empty() {
@@ -167,7 +185,10 @@ impl Session {
         }
         let action = string(command, "action")?;
         {
-            let mut view = self.view.lock().unwrap_or_else(|e| e.into_inner());
+            let mut view = self
+                .view
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if view.phase == "ended" && matches!(action, "play" | "seek") {
                 let position = if action == "play" {
                     0.0
@@ -192,13 +213,16 @@ impl Session {
                 let media = self
                     .metadata
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone();
                 return self.send(&destination,MEDIA,json!({"type":"LOAD","requestId":id,"media":media,"autoplay":true,"currentTime":position}));
             }
         }
         let (destination, mut message) = {
-            let mut view = self.view.lock().unwrap_or_else(|e| e.into_inner());
+            let mut view = self
+                .view
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let media = view.media_session.ok_or("The receiver is still loading.")?;
             let mut message = match action {
                 "play" => json!({"type":"PLAY"}),
@@ -237,7 +261,10 @@ fn idle() -> Value {
     json!({"available":available(),"active":false,"id":null,"phase":"closed","acknowledged":false})
 }
 fn current() -> Option<Arc<Session>> {
-    CURRENT.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    CURRENT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 fn stop_all() {
     if let Some(session) = current() {
@@ -251,12 +278,16 @@ pub(super) fn dispatch(command: &Value) -> Result<Value> {
     match command["op"].as_str().unwrap_or("") {
         "cast_status" => Ok(current().map_or_else(idle, |s| s.snapshot())),
         "cast_stop_all" => {
-            let _change = CHANGE.lock().unwrap_or_else(|e| e.into_inner());
+            let _change = CHANGE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             stop_all();
             Ok(idle())
         }
         "cast_stop" => {
-            let _change = CHANGE.lock().unwrap_or_else(|e| e.into_inner());
+            let _change = CHANGE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(session) =
                 current().filter(|s| Some(s.id.as_str()) == command["id"].as_str())
             {
@@ -267,7 +298,9 @@ pub(super) fn dispatch(command: &Value) -> Result<Value> {
             }
         }
         "cast_sync" => {
-            let _change = CHANGE.lock().unwrap_or_else(|e| e.into_inner());
+            let _change = CHANGE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if current().is_some_and(|s| {
                 s.active() && Some(s.video_id.as_str()) != command["videoId"].as_str()
             }) {
@@ -296,7 +329,9 @@ pub(super) fn dispatch(command: &Value) -> Result<Value> {
     }
 }
 fn start(command: &Value) -> Result<Value> {
-    let _change = CHANGE.lock().unwrap_or_else(|e| e.into_inner());
+    let _change = CHANGE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if command["op"] == "cast_replace"
         && !current().is_some_and(|s| s.active() && Some(s.id.as_str()) == command["id"].as_str())
     {
@@ -323,8 +358,9 @@ fn start(command: &Value) -> Result<Value> {
         }
         let port = command["device"]["port"]
             .as_u64()
-            .filter(|p| (1..=65535).contains(p))
-            .ok_or("Invalid Cast receiver port.")? as u16;
+            .and_then(|port| u16::try_from(port).ok())
+            .filter(|port| *port > 0)
+            .ok_or("Invalid Cast receiver port.")?;
         Some((receiver, port))
     };
     let id = random()?;
@@ -383,7 +419,9 @@ fn start(command: &Value) -> Result<Value> {
             waiting: now,
         }),
     });
-    *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(session.clone());
+    *CURRENT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session.clone());
     let work = session.clone();
     let command = command.clone();
     thread::spawn(move || {
@@ -413,7 +451,7 @@ fn start(command: &Value) -> Result<Value> {
                 break;
             }
             let network_changed = platform().is_ok_and(|p| p.wifi_address() != session.address);
-            let ended = session.created.elapsed() > Duration::from_secs(4 * 3600);
+            let ended = session.created.elapsed() > Duration::from_hours(4);
             if network_changed || ended {
                 session.finish(Some(if network_changed {
                     "Wi-Fi changed. Start a new Cast session."
@@ -424,7 +462,10 @@ fn start(command: &Value) -> Result<Value> {
             }
             if !session.link {
                 let (timeout, poll, destination) = {
-                    let mut v = session.view.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut v = session
+                        .view
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let timeout = if matches!(v.phase, "connecting" | "loading") {
                         v.waiting.elapsed() > Duration::from_secs(20)
                     } else {
@@ -464,7 +505,9 @@ fn start(command: &Value) -> Result<Value> {
         while weak.upgrade().is_some_and(|s| s.active()) {
             thread::sleep(Duration::from_secs(1));
         }
-        let _change = CHANGE.lock().unwrap_or_else(|e| e.into_inner());
+        let _change = CHANGE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !current().is_some_and(|s| s.active())
             && let Ok(p) = platform()
         {
@@ -473,6 +516,11 @@ fn start(command: &Value) -> Result<Value> {
     });
     Ok(session.snapshot())
 }
+#[allow(
+    clippy::float_cmp,
+    clippy::too_many_lines,
+    reason = "The receiver connection lifecycle stays together; an exact playback rate of 1.0 means its default."
+)]
 fn run(
     session: &Session,
     command: &Value,
@@ -485,7 +533,10 @@ fn run(
         return Ok(());
     }
     let position = {
-        let mut view = session.view.lock().unwrap_or_else(|e| e.into_inner());
+        let mut view = session
+            .view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         view.duration = bundle.duration;
         view.position = view.position.min(bundle.duration);
         view.position
@@ -493,7 +544,10 @@ fn run(
     // DeviceAuth must succeed before any media routes are opened for a receiver.
     if let Some((address, port)) = receiver {
         {
-            let mut view = session.view.lock().unwrap_or_else(|e| e.into_inner());
+            let mut view = session
+                .view
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             view.phase = "connecting";
             view.waiting = Instant::now();
         }
@@ -501,7 +555,11 @@ fn run(
         if socket.is_empty() {
             return Err("Cast authentication failed.".into());
         }
-        *session.socket.lock().unwrap_or_else(|e| e.into_inner()) = socket.clone();
+        (*session
+            .socket
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+        .clone_from(&socket);
         if !session.active() {
             platform()?.close(socket);
             return Ok(());
@@ -513,7 +571,10 @@ fn run(
         .collect::<String>();
     let transport = network::start(ip, receiver.map(|r| r.0), bundle, &title, position)?;
     {
-        let mut current = session.transport.lock().unwrap_or_else(|e| e.into_inner());
+        let mut current = session
+            .transport
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !session.active() {
             transport.close();
             return Ok(());
@@ -521,11 +582,18 @@ fn run(
         *current = Some(transport.clone());
     }
     if session.link {
-        session.view.lock().unwrap_or_else(|e| e.into_inner()).phase = "shared";
+        session
+            .view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .phase = "shared";
         return Ok(());
     }
     let metadata = json!({"contentId":transport.media,"streamType":"BUFFERED","contentType":transport.mime,"metadata":{"metadataType":0,"title":title,"subtitle":clean(command["catalog"]["author"].as_str().unwrap_or("")).chars().take(300).collect::<String>()}});
-    *session.metadata.lock().unwrap_or_else(|e| e.into_inner()) = metadata.clone();
+    *session
+        .metadata
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = metadata.clone();
     session.send(
         "receiver-0",
         CONNECTION,
@@ -535,7 +603,7 @@ fn run(
     let socket = session
         .socket
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
     while session.active() {
         let frame = platform()?.read(socket.clone());
@@ -549,7 +617,10 @@ fn run(
         if !matches!(message.destination.as_str(), SENDER | "*") {
             continue;
         }
-        let mut view = session.view.lock().unwrap_or_else(|e| e.into_inner());
+        let mut view = session
+            .view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if message.source != "receiver-0" && message.source != view.transport_id {
             continue;
         }
@@ -633,7 +704,7 @@ fn run(
                 }
                 let media = status["mediaSessionId"]
                     .as_u64()
-                    .filter(|n| *n <= i32::MAX as u64)
+                    .filter(|n| i32::try_from(*n).is_ok())
                     .ok_or("Missing Cast media session.")?;
                 if view.media_session.is_some_and(|n| n != media)
                     && content != Some(transport.media.as_str())

@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use govue_core::{ai_execute, execute};
 use serde_json::{Value, json};
 use std::{

@@ -3,6 +3,7 @@
 use crate::{Result, clean, media, string, video_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 mod publication;
 mod store;
 mod transfer;
@@ -330,6 +331,10 @@ fn plan(catalog: &Value, config: &Config) -> Result<Value> {
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep each operation and its shared state validation and persistence in one dispatcher."
+)]
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     match string(command, "op")? {
         "downloads_export_name" => {
@@ -373,8 +378,8 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         | "downloads_event"
         | "downloads_remove"
         | "downloads_restore"
-        | "downloads_clear_history" => store::dispatch(command, root),
-        "downloads_publication_plan"
+        | "downloads_clear_history"
+        | "downloads_publication_plan"
         | "downloads_publication_check"
         | "downloads_publication_target"
         | "downloads_publication_verified" => store::dispatch(command, root),
@@ -387,10 +392,10 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         "maxConnections"
                             if value.as_u64().is_some_and(|n| (1..=16).contains(&n)) =>
                         {
-                            settings[key] = value.clone()
+                            settings[key] = value.clone();
                         }
                         "defaultQuality" if value.as_u64().is_some_and(|n| n <= 8640) => {
-                            settings[key] = value.clone()
+                            settings[key] = value.clone();
                         }
                         "lastConfig" => {
                             let mut config = Config::parse(value)?;
@@ -451,6 +456,11 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 string(command, "videoId")?,
                 string(command, "trackId")?,
             )?;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "Subtitle timestamps intentionally round nonnegative seconds to saturating integer milliseconds."
+            )]
             let stamp = |seconds: f64| {
                 let ms = (seconds.max(0.0) * 1000.0).round() as u64;
                 format!(
@@ -470,13 +480,14 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         .get(i + 1)
                         .map_or(cue.start + 3.0, |n| n.start)
                 };
-                result.push_str(&format!(
+                let _ = write!(
+                    result,
                     "{}\n{} --> {}\n{}\n\n",
                     i + 1,
                     stamp(cue.start),
                     stamp(end),
                     cue.text
-                ));
+                );
             }
             Ok(json!(result))
         }

@@ -26,7 +26,7 @@ pub(crate) fn plan(command: &Value) -> Result<Value> {
             | Event::InlineMath(value)
             | Event::DisplayMath(value) => text.push_str(&value),
             Event::SoftBreak | Event::HardBreak | Event::Rule | Event::InlineHtml(_) => {
-                text.push(' ')
+                text.push(' ');
             }
             Event::End(
                 TagEnd::Paragraph

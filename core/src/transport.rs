@@ -7,6 +7,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::{
     collections::HashMap,
     io::{self, Read, Write},
@@ -86,18 +87,18 @@ fn note(key: &str, value: Value) {
     STATUS
         .get_or_init(|| Mutex::new(json!({})))
         .lock()
-        .unwrap_or_else(|e| e.into_inner())[key] = value;
+        .unwrap_or_else(std::sync::PoisonError::into_inner)[key] = value;
 }
 pub(super) fn status() -> Value {
     STATUS
         .get_or_init(|| Mutex::new(json!({})))
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()
 }
 
-fn header(name: &str, value: &str) -> Header {
-    Header::from_bytes(name, value).unwrap()
+pub(crate) fn header(name: &str, value: &str) -> Result<Header> {
+    Header::from_bytes(name, value).map_err(|()| "Invalid HTTP response header.".into())
 }
 pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<Vec<u8>> {
     let agent = AGENT.get_or_init(|| {
@@ -147,7 +148,10 @@ pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<V
             request.call()
         } {
             Ok(response) => {
-                let mut bytes = Vec::with_capacity((end - start + 1) as usize);
+                let mut bytes = Vec::with_capacity(
+                    usize::try_from(end - start + 1)
+                        .map_err(|_| io::Error::other("Media range is too large."))?,
+                );
                 response
                     .into_reader()
                     .take(CHUNK + 1)
@@ -265,14 +269,14 @@ fn serve(
     request: tiny_http::Request,
     sources: &Mutex<HashMap<String, Arc<Source>>>,
     playlists: &Mutex<HashMap<String, Arc<Playlist>>>,
-) {
+) -> Result<()> {
     note(
         "requests",
         json!(REQUESTS.fetch_add(1, Ordering::Relaxed) + 1),
     );
     if request.method() != &Method::Get && request.method() != &Method::Head {
         let _ = request.respond(Response::empty(StatusCode(405)));
-        return;
+        return Ok(());
     }
     let path = request.url().trim_start_matches('/');
     if let Some(key) = path
@@ -281,12 +285,12 @@ fn serve(
     {
         let playlist = playlists
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(key)
             .cloned();
         let Some(playlist) = playlist else {
             let _ = request.respond(Response::empty(StatusCode(404)));
-            return;
+            return Ok(());
         };
         let response = match playlist.text() {
             Ok(text) => Response::from_string(text)
@@ -297,13 +301,13 @@ fn serve(
                     } else {
                         "application/vnd.apple.mpegurl"
                     },
-                ))
-                .with_header(header("Cache-Control", "no-store")),
+                )?)
+                .with_header(header("Cache-Control", "no-store")?),
             Err(_) => Response::from_string("Media playlist unavailable.")
                 .with_status_code(StatusCode(502)),
         };
         let _ = request.respond(response);
-        return;
+        return Ok(());
     }
     let key = request
         .url()
@@ -313,16 +317,16 @@ fn serve(
         .unwrap_or("");
     let source = sources
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(key)
         .cloned();
     let Some(source) = source else {
         let _ = request.respond(Response::empty(StatusCode(404)));
-        return;
+        return Ok(());
     };
     if request.method() != &Method::Get && request.method() != &Method::Head {
         let _ = request.respond(Response::empty(StatusCode(405)));
-        return;
+        return Ok(());
     }
     let requested = request
         .headers()
@@ -356,27 +360,26 @@ fn serve(
             }
         });
     if requested.is_some()
-        && (bounds.is_none()
-            || bounds.is_some_and(|(start, end)| start > end || start >= source.length))
+        && bounds.is_none_or(|(start, end)| start > end || start >= source.length)
     {
         let _ = request.respond(Response::empty(StatusCode(416)).with_header(header(
             "Content-Range",
             &format!("bytes */{}", source.length),
-        )));
-        return;
+        )?));
+        return Ok(());
     }
     let (start, end) = bounds.unwrap_or((0, source.length - 1));
     let mut headers = vec![
-        header("Content-Type", &source.mime),
-        header("Accept-Ranges", "bytes"),
-        header("Cache-Control", "no-store"),
-        header("Connection", "close"),
+        header("Content-Type", &source.mime)?,
+        header("Accept-Ranges", "bytes")?,
+        header("Cache-Control", "no-store")?,
+        header("Connection", "close")?,
     ];
     if requested.is_some() {
         headers.push(header(
             "Content-Range",
             &format!("bytes {start}-{end}/{}", source.length),
-        ));
+        )?);
     }
     let body = Body {
         source,
@@ -398,20 +401,21 @@ fn serve(
     )
     .is_err()
     {
-        return;
+        return Ok(());
     }
     for field in headers {
         if write!(writer, "{field}\r\n").is_err() {
-            return;
+            return Ok(());
         }
     }
     if write!(writer, "\r\n").and_then(|_| writer.flush()).is_err() {
-        return;
+        return Ok(());
     }
     if !head {
         let _ = io::copy(&mut { body }, &mut writer);
     }
     let _ = writer.flush();
+    Ok(())
 }
 
 pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
@@ -473,13 +477,15 @@ fn server() -> Result<&'static Proxy> {
                 let sources = source_copy.clone();
                 let playlists = playlist_copy.clone();
                 thread::spawn(move || {
-                    serve(request, &sources, &playlists);
+                    let _ = serve(request, &sources, &playlists);
                     CLIENTS.fetch_sub(1, Ordering::SeqCst);
                 });
             }
         });
     }
-    Ok(PROXY.get().unwrap())
+    PROXY
+        .get()
+        .ok_or_else(|| "Media transport is unavailable.".into())
 }
 
 fn token(url: &str) -> String {
@@ -493,11 +499,15 @@ pub(super) fn proxy(command: &Value) -> Result<Value> {
     let source = source(command)?;
     let server = server()?;
     let token = token(&source.url);
-    let mut sources = server.sources.lock().unwrap_or_else(|e| e.into_inner());
+    let mut sources = server
+        .sources
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if sources.len() >= 32 {
         return Err("Too many active media streams. Close the player and try again.".into());
     }
     sources.insert(token.clone(), source);
+    drop(sources);
     Ok(json!(format!(
         "http://127.0.0.1:{}/{}.{}",
         server.port,
@@ -600,13 +610,21 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
             files.push((key, file_source(stream)?));
         }
         let text = dash::manifest(catalog["duration"].as_f64().unwrap_or(0.0), &tracks)?;
-        let mut sources = server.sources.lock().unwrap_or_else(|e| e.into_inner());
-        let mut playlists = server.playlists.lock().unwrap_or_else(|e| e.into_inner());
+        let mut sources = server
+            .sources
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut playlists = server
+            .playlists
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if sources.len() + files.len() > 96 || playlists.len() >= 100 {
             return Err("Too many active media streams. Close the player and try again.".into());
         }
         sources.extend(files);
+        drop(sources);
         playlists.insert(root.clone(), Arc::new(Playlist::Dash(text)));
+        drop(playlists);
         return Ok(
             json!({"uri":format!("http://127.0.0.1:{}/{root}.mpd",server.port),"contentType":"dash","qualityHeight":requested,"qualityFps":selected["fps"].as_u64().unwrap_or(0)}),
         );
@@ -659,16 +677,29 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
         let resolution = width
             .map(|w| format!(",RESOLUTION={w}x{}", stream["height"]))
             .unwrap_or_default();
-        master.push_str(&format!("#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},CODECS=\"{},{}\",AUDIO=\"audio\"{resolution}\n{uri}\n", playback::codecs(stream)?, playback::codecs(audio)?));
+        let _ = write!(
+            master,
+            "#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},CODECS=\"{},{}\",AUDIO=\"audio\"{resolution}\n{uri}\n",
+            playback::codecs(stream)?,
+            playback::codecs(audio)?
+        );
     }
     lists.push((root.clone(), Arc::new(Playlist::Master(master))));
-    let mut sources = server.sources.lock().unwrap_or_else(|e| e.into_inner());
-    let mut playlists = server.playlists.lock().unwrap_or_else(|e| e.into_inner());
+    let mut sources = server
+        .sources
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut playlists = server
+        .playlists
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if sources.len() + files.len() > 96 || playlists.len() + lists.len() > 100 {
         return Err("Too many active media streams. Close the player and try again.".into());
     }
     sources.extend(files);
+    drop(sources);
     playlists.extend(lists);
+    drop(playlists);
     Ok(
         json!({"uri":format!("http://127.0.0.1:{}/{root}.m3u8",server.port),"contentType":"hls","qualityHeight":requested,"qualityFps":selected["fps"].as_u64().unwrap_or(0)}),
     )
@@ -696,12 +727,12 @@ pub(super) fn release(command: &Value) -> Result<Value> {
             server
                 .sources
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .retain(|name, _| name != key && !name.starts_with(&prefix));
             server
                 .playlists
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .retain(|name, _| name != key && !name.starts_with(&prefix));
         }
     }
@@ -729,7 +760,7 @@ mod tests {
             let body = if (start, end) == (100, 155) {
                 index(0)
             } else {
-                (start..=end).map(|n| n as u8).collect()
+                (start..=end).map(|n| n.to_le_bytes()[0]).collect()
             };
             crate::MediaRangeReply { status: 206, body }
         }
@@ -773,7 +804,11 @@ mod tests {
             .join(
                 playlist
                     .lines()
-                    .find(|line| line.ends_with(".mp4"))
+                    .find(|line| {
+                        std::path::Path::new(line)
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("mp4"))
+                    })
                     .unwrap(),
             )
             .unwrap();

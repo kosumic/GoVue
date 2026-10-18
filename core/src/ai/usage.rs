@@ -28,6 +28,10 @@ pub(super) fn valid(value: &Value) -> bool {
 }
 
 /// Derived display data; kept out of the persisted provider accounting fields.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "Token counts are bounded by MAX_COUNT and converted only for display ratios."
+)]
 pub(super) fn details(value: &Value) -> Value {
     let input = count(&value["inputTokens"]);
     let output = count(&value["outputTokens"]);
@@ -174,7 +178,7 @@ impl Counter {
         if let Some(reasoning) = self.reasoning {
             value["reasoningTokens"] = json!(reasoning);
         }
-        if value.as_object().unwrap().is_empty() {
+        if value.as_object().is_none_or(serde_json::Map::is_empty) {
             Value::Null
         } else {
             value
@@ -254,6 +258,10 @@ impl Stats {
         Ok(())
     }
 
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "Aggregated usage ratios and averages are approximate display values."
+    )]
     fn value(&self) -> Value {
         let mut value = json!({});
         for field in FIELDS {
@@ -336,7 +344,10 @@ pub(super) fn report(turns: &[Turn], cfg: &Config) -> Result<Value> {
                 "id":id,"label":model["providerLabel"],"models":[]
             })
         });
-        group["models"].as_array_mut().unwrap().push(model);
+        group["models"]
+            .as_array_mut()
+            .ok_or("Invalid usage model group.")?
+            .push(model);
     }
     Ok(json!({"stats":total.value(),"providers":providers.into_values().collect::<Vec<_>>()}))
 }

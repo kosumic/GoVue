@@ -119,7 +119,7 @@ pub(super) fn valid(blocks: &[Block]) -> bool {
                 Block::Text { content, .. } | Block::Reasoning { content, .. } => {
                     Some(content.len())
                 }
-                _ => None,
+                Block::Tool { .. } => None,
             })
             .sum::<usize>()
             <= MAX_OUTPUT * 2
@@ -130,10 +130,13 @@ pub(super) fn settle(blocks: &mut [Block], status: Status) {
     }
 }
 fn milliseconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
 }
 
 #[derive(Default)]

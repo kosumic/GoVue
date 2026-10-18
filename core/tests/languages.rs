@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use govue_core::execute;
 use serde_json::{Value, json};
 use std::{
@@ -97,7 +99,7 @@ fn invalid_language_updates_never_replace_the_saved_lists() {
         json!([]),
     ];
     for name in [
-        "".to_string(),
+        String::new(),
         " \t\n ".into(),
         "x".repeat(81),
         "bad\0name".into(),

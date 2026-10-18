@@ -125,7 +125,7 @@ impl Stream {
                 {
                     match v["delta"]["type"].as_str().unwrap_or_default() {
                         "input_json_delta" => {
-                            append(block, "arguments", &v["delta"]["partial_json"])?
+                            append(block, "arguments", &v["delta"]["partial_json"])?;
                         }
                         "text_delta" => append(block, "text", &v["delta"]["text"])?,
                         "thinking_delta" => append(block, "thinking", &v["delta"]["thinking"])?,
@@ -189,7 +189,7 @@ impl Stream {
             // arguments or encrypted reasoning a second time.
             self.responses[position]
                 .as_object_mut()
-                .unwrap()
+                .ok_or("Invalid response output item.")?
                 .extend(fields.clone());
             position
         } else {
@@ -221,8 +221,7 @@ impl Stream {
                     if item["type"] == "tool_use" {
                         let arguments = item
                             .as_object_mut()
-                            .unwrap()
-                            .remove("arguments")
+                            .and_then(|fields| fields.remove("arguments"))
                             .unwrap_or(json!(""));
                         if let Some(raw) = arguments.as_str().filter(|s| !s.is_empty()) {
                             item["input"] = serde_json::from_str(raw).unwrap_or(Value::Null);
@@ -284,10 +283,9 @@ pub(super) fn install(body: &mut Value, protocol: &str) {
         }
         "gemini" => {
             let mut parameters = tool["parameters"].clone();
-            parameters
-                .as_object_mut()
-                .unwrap()
-                .remove("additionalProperties");
+            if let Some(fields) = parameters.as_object_mut() {
+                fields.remove("additionalProperties");
+            }
             json!([{"functionDeclarations":[{"name":tool["name"],"description":tool["description"],"parameters":parameters}]}])
         }
         _ => json!([{"type":"function","function":tool}]),

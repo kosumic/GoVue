@@ -6,6 +6,10 @@ use std::sync::Mutex;
 
 static WRITES: Mutex<()> = Mutex::new(());
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep each operation and its shared state validation and persistence in one dispatcher."
+)]
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let _guard = WRITES.lock().map_err(|_| "Download storage is busy.")?;
     let mut entries = history(&json!({"entries":media::read(root,"downloads.json",json!([]))}))?
@@ -32,10 +36,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             let mut batch_bytes = [0u8; 8];
             getrandom::getrandom(&mut batch_bytes)
                 .map_err(|_| "Could not create download identity.")?;
-            let batch = batch_bytes
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>();
+            let batch = crate::hex(&batch_bytes);
             for (index, item) in items.iter().enumerate() {
                 let id = format!("{batch}-{index}");
                 if command["replace"] != true
@@ -75,7 +76,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 {
                     super::publication::invalidate(entry)?;
                     entry["state"] = json!("resolving");
-                    entry.as_object_mut().unwrap().remove("error");
+                    entry
+                        .as_object_mut()
+                        .ok_or("Invalid download entry.")?
+                        .remove("error");
                     claimed.push(entry["id"].clone());
                 }
             }
@@ -94,7 +98,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     {
                         entry["state"] = json!("complete");
                         entry["received"] = entry["total"].clone();
-                        entry.as_object_mut().unwrap().remove("error");
+                        entry
+                            .as_object_mut()
+                            .ok_or("Invalid download entry.")?
+                            .remove("error");
                     } else {
                         entry["state"] = json!("paused");
                         entry["error"] =
@@ -219,7 +226,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         "pause"
                             if matches!(state.as_str(), "queued" | "resolving" | "downloading") =>
                         {
-                            entry["state"] = json!("paused")
+                            entry["state"] = json!("paused");
                         }
                         "resume" if state == "paused" => {
                             entry["state"] = json!(if command["retained"] == true {
@@ -227,7 +234,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                             } else {
                                 "queued"
                             });
-                            entry.as_object_mut().unwrap().remove("error");
+                            entry
+                                .as_object_mut()
+                                .ok_or("Invalid download entry.")?
+                                .remove("error");
                         }
                         "retry"
                             if matches!(
@@ -237,14 +247,20 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         {
                             entry["state"] = json!("queued");
                             entry["received"] = json!(0);
-                            entry.as_object_mut().unwrap().remove("error");
+                            entry
+                                .as_object_mut()
+                                .ok_or("Invalid download entry.")?
+                                .remove("error");
                         }
                         "cancel" if !matches!(state.as_str(), "complete" | "cancelled") => {
                             entry["state"] = json!("cancelled");
-                            entry.as_object_mut().unwrap().remove("error");
+                            entry
+                                .as_object_mut()
+                                .ok_or("Invalid download entry.")?
+                                .remove("error");
                         }
                         "combining" if state == "downloading" => {
-                            entry["state"] = json!("combining")
+                            entry["state"] = json!("combining");
                         }
                         "complete" if matches!(state.as_str(), "downloading" | "combining") => {
                             if command["publicationRequired"] == true
@@ -258,7 +274,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                             }
                             entry["state"] = json!("complete");
                             entry["received"] = entry["total"].clone();
-                            entry.as_object_mut().unwrap().remove("error");
+                            entry
+                                .as_object_mut()
+                                .ok_or("Invalid download entry.")?
+                                .remove("error");
                         }
                         "failed"
                             if !matches!(state.as_str(), "cancelled" | "paused" | "complete") =>

@@ -3,10 +3,10 @@
 use super::*;
 use crate::{
     media::{container, playback},
-    transport::DownloadSource,
+    transport::{DownloadSource, header},
 };
 use std::io::Read;
-use tiny_http::{Header, Method, Response, Server, StatusCode};
+use tiny_http::{Method, Response, Server, StatusCode};
 
 const MAX_CLIP: u64 = 12_000_000;
 const MAX_CACHE: u64 = 64_000_000;
@@ -30,9 +30,6 @@ struct ClipServer {
     port: u16,
     clips: Arc<Mutex<HashMap<String, Arc<Clip>>>>,
 }
-fn header(name: &str, value: &str) -> Header {
-    Header::from_bytes(name, value).unwrap()
-}
 fn server() -> Result<&'static ClipServer> {
     SERVER
         .get_or_init(|| {
@@ -45,7 +42,7 @@ fn server() -> Result<&'static ClipServer> {
                 .port();
             let clips = Arc::new(Mutex::new(HashMap::<String, Arc<Clip>>::new()));
             let worker = clips.clone();
-            thread::spawn(move || {
+            thread::spawn(move || -> Result<()> {
                 for request in server.incoming_requests() {
                     if !matches!(request.method(), Method::Get | Method::Head) {
                         let _ = request.respond(Response::empty(StatusCode(405)));
@@ -60,7 +57,7 @@ fn server() -> Result<&'static ClipServer> {
                         .then(|| {
                             worker
                                 .lock()
-                                .unwrap_or_else(|e| e.into_inner())
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
                                 .get(route[0])
                                 .cloned()
                         })
@@ -119,18 +116,19 @@ fn server() -> Result<&'static ClipServer> {
                     let head = request.method() == &Method::Head;
                     let mut response = Response::from_data(if head { Vec::new() } else { data })
                         .with_status_code(StatusCode(status))
-                        .with_header(header("Content-Type", mime))
-                        .with_header(header("Cache-Control", "no-store"))
-                        .with_header(header("Accept-Ranges", "bytes"))
-                        .with_header(header("Content-Length", &data_length.to_string()));
+                        .with_header(header("Content-Type", mime)?)
+                        .with_header(header("Cache-Control", "no-store")?)
+                        .with_header(header("Accept-Ranges", "bytes")?)
+                        .with_header(header("Content-Length", &data_length.to_string())?);
                     if let Some((a, b)) = range {
                         response.add_header(header(
                             "Content-Range",
                             &format!("bytes {a}-{b}/{length}"),
-                        ));
+                        )?);
                     }
                     let _ = request.respond(response);
                 }
+                Ok(())
             });
             Ok(ClipServer { port, clips })
         })
@@ -146,7 +144,7 @@ pub(in crate::ai) fn release(token: &str) -> Result<Value> {
         server
             .clips
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(token);
     }
     Ok(Value::Null)
@@ -204,7 +202,10 @@ fn cache_key(video_id: &str, cue: &Cue) -> String {
 fn register(directory: PathBuf, data: &mut Metadata) -> Result<Value> {
     let server = server()?;
     let token = random()?;
-    let mut clips = server.clips.lock().unwrap_or_else(|e| e.into_inner());
+    let mut clips = server
+        .clips
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if clips.len() >= 16 {
         return Err("Too many game audio sessions are active.".into());
     }
@@ -213,7 +214,7 @@ fn register(directory: PathBuf, data: &mut Metadata) -> Result<Value> {
         "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{target:.0}\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n"
     );
     for (i, duration) in data.durations.iter().enumerate() {
-        manifest.push_str(&format!("#EXTINF:{duration:.6},\nsegment-{i}.m4s\n"));
+        let _ = write!(manifest, "#EXTINF:{duration:.6},\nsegment-{i}.m4s\n");
     }
     manifest.push_str("#EXT-X-ENDLIST\n");
     data.used_at = now();
@@ -228,6 +229,7 @@ fn register(directory: PathBuf, data: &mut Metadata) -> Result<Value> {
             manifest,
         }),
     );
+    drop(clips);
     Ok(
         json!({"uri":format!("http://127.0.0.1:{}/{token}/index.m3u8",server.port),"token":token,"start":data.start,"end":data.end,"needsMedia":false}),
     )
@@ -237,7 +239,7 @@ fn evict(root: &Path, protected: &Path) -> Result<()> {
         server
             .clips
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .values()
             .map(|c| c.directory.clone())
             .collect::<Vec<_>>()
@@ -304,7 +306,9 @@ pub(in crate::ai) fn prepare(
     cue: &Cue,
     catalog: &Value,
 ) -> Result<Value> {
-    let _build = BUILDS.lock().unwrap_or_else(|e| e.into_inner());
+    let _build = BUILDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let cache = root.join("ai/game-audio");
     let directory = cache.join(cache_key(video_id, cue));
     if let Some(mut data) = read_metadata(&directory) {
@@ -352,7 +356,7 @@ pub(in crate::ai) fn prepare(
         .filter(|s| s.start < cue.start + cue.duration && s.start + s.duration > cue.start)
         .collect::<Vec<_>>();
     let first = segments.first().ok_or("No audio covers this caption.")?;
-    let last = segments.last().unwrap();
+    let last = segments.last().ok_or("Missing audio segments.")?;
     if segments.len() > 64
         || first.start > cue.start
         || last.start + last.duration + 0.01 < cue.start + cue.duration

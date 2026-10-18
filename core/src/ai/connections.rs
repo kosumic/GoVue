@@ -12,12 +12,14 @@ pub(super) fn validate(p: &mut Provider) -> Result<()> {
         p.auth = if catalog::oauth(p) { "oauth" } else { "key" }.into();
     }
     let choices = catalog::choices();
-    if !choices
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|c| c["kind"] == p.kind && c["auth"].as_array().unwrap().iter().any(|v| v == &p.auth))
-    {
+    if !choices.as_array().into_iter().flatten().any(|c| {
+        c["kind"] == p.kind
+            && c["auth"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|v| v == &p.auth)
+    }) {
         return Err("This provider does not support that authentication method.".into());
     }
     p.custom_user_agent = p.custom_user_agent.trim().into();
@@ -108,7 +110,9 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
     }
     // Interrupt refresh/login work before waiting for its session lock.
     {
-        let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(old) = config(root)?.providers.iter().find(|v| v.id == p.id) {
             if old.kind != p.kind {
                 return Err("Add a separate connection to change its provider type.".into());
@@ -119,8 +123,12 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
         }
     }
     let lock = session(&p.id);
-    let _session = lock.lock().unwrap_or_else(|e| e.into_inner());
-    let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _session = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut cfg = config(root)?;
     let old = cfg.providers.iter().find(|v| v.id == p.id).cloned();
     let auth_changed = old
@@ -131,7 +139,7 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
             return Err("Add a separate connection to change its provider type.".into());
         }
         if c["provider"].get("models").is_none() {
-            p.models = old.models.clone();
+            p.models.clone_from(&old.models);
         }
         if changed(old, &p) || (old.enabled && !p.enabled) || key.is_some() {
             cancel_owner(&p.id);

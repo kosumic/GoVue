@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use govue_core::execute;
 use serde_json::{Value, json};
 use std::{
@@ -45,7 +47,7 @@ impl Drop for Store {
 #[test]
 fn preserves_timing_layout_formatting_confidence_and_boundaries_across_disk_restore() {
     let store = Store::new();
-    let source = json!({"baseUrl":"never-persist-signed-url","pens":[{"bAttr":1,"fcForeColor":1122867,"unknownSecret":"never-persist"},{"iAttr":1,"uAttr":1}],
+    let source = json!({"baseUrl":"never-persist-signed-url","pens":[{"bAttr":1,"fcForeColor":1_122_867,"unknownSecret":"never-persist"},{"iAttr":1,"uAttr":1}],
         "wsWinStyles":[{"mhModeHint":2,"pdPrintDir":1}],"wpWinPositions":[{"apPoint":7,"avVerPos":100}],
         "events":[{"id":7,"tStartMs":0,"dDurationMs":10000,"wsWinStyleId":0,"wpWinPosId":0},
         {"wWinId":7,"tStartMs":1000,"dDurationMs":3000,"segs":[

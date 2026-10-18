@@ -5,6 +5,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::{
     collections::HashMap,
     fs,
@@ -72,7 +73,7 @@ pub fn install_ai_platform(platform: Box<dyn AiPlatform>) {
 fn platform() -> Result<&'static dyn AiPlatform> {
     PLATFORM
         .get()
-        .map(|p| p.as_ref())
+        .map(std::convert::AsRef::as_ref)
         .ok_or("AI platform is not available in this build.".into())
 }
 fn now() -> u64 {
@@ -90,7 +91,7 @@ fn session(id: &str) -> Arc<Mutex<()>> {
     SESSIONS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .entry(id.into())
         .or_default()
         .clone()
@@ -209,7 +210,7 @@ fn validate_provider(p: &mut Provider) -> Result<()> {
         p.base_url = catalog::default_base(&p.kind).unwrap_or_default().into();
     }
     p.base_url = catalog::validate_url(&p.base_url)?;
-    let u = Url::parse(&p.base_url).unwrap();
+    let u = Url::parse(&p.base_url).map_err(|_| "Invalid provider endpoint.")?;
     if u.query().is_some() && (!p.azure || u.query_pairs().any(|(k, _)| k != "api-version")) {
         return Err("Only Azure endpoints may contain an api-version query.".into());
     }
@@ -245,7 +246,9 @@ fn validate_provider(p: &mut Provider) -> Result<()> {
     Ok(())
 }
 fn provider(root: &Path, id: &str) -> Result<Provider> {
-    let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let cfg = config(root)?;
     if let Some(g) = cfg.groups.iter().find(|g| g.id == id) {
         return Ok(catalog::group_provider(g));
@@ -323,10 +326,12 @@ impl Job {
         let blocks = json!(
             self.activity
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .blocks
         );
-        self.state.lock().unwrap_or_else(|e| e.into_inner())["blocks"] = blocks;
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)["blocks"] = blocks;
     }
     fn pending(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Relaxed) {
@@ -340,7 +345,7 @@ impl Job {
             &mut self
                 .activity
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .blocks,
             if self.cancelled.load(Ordering::Relaxed) {
                 activity::Status::Stopped
@@ -351,7 +356,10 @@ impl Job {
             },
         );
         self.publish_activity();
-        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.cancelled.load(Ordering::Relaxed) {
             s["status"] = json!("cancelled");
             return;
@@ -372,14 +380,26 @@ fn jobs() -> &'static Mutex<HashMap<String, Arc<Job>>> {
     JOBS.get_or_init(Default::default)
 }
 fn new_job(owner: &str) -> Result<Arc<Job>> {
-    let mut all = jobs().lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = jobs()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // Finished tasks are disposable; active tasks are never silently evicted.
     if all.len() >= 16 {
-        all.retain(|_, j| j.state.lock().unwrap_or_else(|e| e.into_inner())["status"] == "running");
+        all.retain(|_, j| {
+            j.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)["status"]
+                == "running"
+        });
     }
     if all
         .values()
-        .filter(|j| j.state.lock().unwrap_or_else(|e| e.into_inner())["status"] == "running")
+        .filter(|j| {
+            j.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)["status"]
+                == "running"
+        })
         .count()
         >= 8
     {
@@ -396,15 +416,20 @@ fn new_job(owner: &str) -> Result<Arc<Job>> {
         last_status: AtomicI32::new(0),
     });
     all.insert(job.id.clone(), job.clone());
+    drop(all);
     Ok(job)
 }
 fn cancel_owner(id: &str) {
     for job in jobs()
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .values()
         .filter(|j| {
-            j.owner == id || j.state.lock().unwrap_or_else(|e| e.into_inner())["providerId"] == id
+            j.owner == id
+                || j.state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)["providerId"]
+                    == id
         })
     {
         job.cancelled.store(true, Ordering::Relaxed);
@@ -430,21 +455,31 @@ impl AiResponse {
         self.job.as_ref().is_some_and(|j| j.pending().is_err())
     }
     pub fn start(&self, status: i32) {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).status = status;
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .status = status;
     }
     pub fn push(&self, bytes: Vec<u8>) -> bool {
         if self.job.as_ref().is_some_and(|j| j.pending().is_err()) {
             return false;
         }
-        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         s.total += bytes.len();
         let result = if s.total > 20_000_000 {
             Err("Provider response is too large.".into())
-        } else if (200..300).contains(&s.status) && s.stream.is_some() {
-            s.stream.as_mut().unwrap().push(&bytes).map(|_| {
+        } else if (200..300).contains(&s.status)
+            && let Some(parser) = s.stream.as_mut()
+        {
+            parser.push(&bytes).map(|_| {
                 if let Some(job) = &self.job {
-                    let parser = s.stream.as_ref().unwrap();
-                    let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut state = job
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     state["text"] = json!(format!(
                         "{}{}",
                         state["textPrefix"].as_str().unwrap_or_default(),
@@ -459,7 +494,7 @@ impl AiResponse {
                     state["blocks"] = json!(
                         job.activity
                             .lock()
-                            .unwrap_or_else(|e| e.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .blocks
                     );
                 }
@@ -472,12 +507,16 @@ impl AiResponse {
         };
         if let Err(e) = result {
             s.error = Some(e);
+            drop(s);
             return false;
         }
         true
     }
     pub fn failed(&self) {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).error =
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .error =
             Some("Could not reach the provider. Check your connection and try again.".into());
     }
 }
@@ -531,7 +570,10 @@ fn http_impl(
     if let Some(j) = job {
         j.pending()?;
     }
-    let s = response.state.lock().unwrap_or_else(|e| e.into_inner());
+    let s = response
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(j) = job {
         j.last_status.store(s.status, Ordering::Relaxed);
     }
@@ -763,7 +805,7 @@ impl Sse {
                                 .unwrap_or_else(|| format!("call-{}", gemini_offset + index));
                             job.activity
                                 .lock()
-                                .unwrap_or_else(|e| e.into_inner())
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
                                 .prepare(&id, call["name"].as_str().unwrap_or_default())?;
                         }
                     }
@@ -782,7 +824,10 @@ impl Sse {
         };
         self.output(false, delta)?;
         if let Some(job) = &self.job {
-            let mut tape = job.activity.lock().unwrap_or_else(|e| e.into_inner());
+            let mut tape = job
+                .activity
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for (id, name) in self.tools.call_headers(&self.kind) {
                 tape.prepare(&id, &name)?;
             }
@@ -797,7 +842,8 @@ impl Sse {
         }
         self.usage = self.counter.value(&self.kind);
         if let (Some(first), Some(last)) = (self.first_output, self.last_output) {
-            let ms = last.saturating_duration_since(first).as_millis() as u64;
+            let ms = u64::try_from(last.saturating_duration_since(first).as_millis())
+                .unwrap_or(u64::MAX);
             if ms > 0 && self.usage["outputTokens"].as_u64().is_some_and(|n| n > 0) {
                 self.usage["streamMs"] = json!(ms.min(usage::MAX_COUNT));
             }
@@ -808,7 +854,7 @@ impl Sse {
         if let Some(job) = &self.job {
             job.activity
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .output(reasoning, delta)?;
         }
         if reasoning {
@@ -879,7 +925,9 @@ fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<String> {
         return accounts::credential(root, p, job);
     }
     let guard = session(&p.id);
-    let _g = guard.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = guard
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     connections::check_current(root, p, job)?;
     let mut s = read_secret(&p.id)?;
     if p.kind != "chatgpt" {
@@ -1089,7 +1137,9 @@ fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value> {
     if rows.is_empty() {
         return Err("No accessible text models were returned. Saved models have been kept.".into());
     }
-    let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     job.pending()?;
     let mut cfg = config(root)?;
     job.pending()?;
@@ -1110,14 +1160,16 @@ fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value> {
                 existing.max_output_tokens = model.max_output_tokens;
             }
             if existing.reasoning_efforts.is_empty() {
-                existing.reasoning_efforts = model.reasoning_efforts.clone();
+                existing
+                    .reasoning_efforts
+                    .clone_from(&model.reasoning_efforts);
             }
         } else if saved.models.len() < 512 {
             saved.models.push(model.clone());
         }
     }
     if saved.model.is_empty() {
-        saved.model = rows[0].id.clone();
+        saved.model.clone_from(&rows[0].id);
     }
     save(root, &cfg)?;
     Ok(json!({"models":rows}))
@@ -1148,7 +1200,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
             if !provider.models.iter().any(|e| e.id == m.model) {
                 return None;
             }
-            provider.model = m.model.clone();
+            provider.model.clone_from(&m.model);
             Some(provider)
         })
         .collect::<Vec<_>>();
@@ -1163,11 +1215,12 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
         let mut all = TURNS
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let next = all.entry(group.id.clone()).or_default();
         let count = candidates.len();
         candidates.rotate_left(*next % count);
         *next = next.wrapping_add(1);
+        drop(all);
     }
     let mut error = "No model in this group could answer.".to_owned();
     for candidate in candidates {
@@ -1181,7 +1234,10 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
             Ok(value) => return Ok(value),
             Err(e) => {
                 let status = job.last_status.load(Ordering::Relaxed);
-                let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut state = job
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if !state["text"].as_str().unwrap_or_default().is_empty()
                     || state["gameCommitted"] == true
                     || job.pending().is_err()
@@ -1196,18 +1252,25 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
                 state["blocks"] = json!([]);
                 job.activity
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .blocks
                     .clear();
                 state["usage"] = Value::Null;
+                drop(state);
                 error = e;
             }
         }
     }
     Err(error)
 }
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep provider-specific request construction and correlated response handling in one pipeline."
+)]
 fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
-    job.state.lock().unwrap_or_else(|e| e.into_inner())["providerId"] = json!(p.id);
+    job.state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)["providerId"] = json!(p.id);
     job.pending()?;
     let base = connections::effective_base(p)?;
     if p.model.is_empty() {
@@ -1225,22 +1288,24 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         }
         let _g = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let transcript = crate::load(
             root.to_str().ok_or("Invalid transcript storage path.")?,
             id,
             string(c, "trackId")?,
         )?;
-        context.push_str(&format!(
+        let _ = write!(
+            context,
             "Video title: {}\nCaption language: {}\n<transcript>\n",
             transcript.title, transcript.language
-        ));
+        );
         for (index, line) in transcript.segments.iter().enumerate() {
-            context.push_str(&format!(
-                "cue-{index} {} {}\n",
+            let _ = writeln!(
+                context,
+                "cue-{index} {} {}",
                 crate::timestamp(line.start),
                 line.text
-            ));
+            );
             if context.len() > 180_000 {
                 return Err(
                     "This transcript is too long. Ask without attaching it or use a shorter video."
@@ -1269,7 +1334,9 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         context.push_str("\n</game_activity>\n");
     }
     {
-        let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let agent_md = config(root)?.agent_md;
         if !agent_md.trim().is_empty() {
             instructions.push_str("\n\nAdditional instructions from the user's AGENT.md:\n");
@@ -1386,7 +1453,9 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         return Err("Invalid reasoning effort.".into());
     }
     let reasoning = catalog::reasoning(&model, requested_reasoning);
-    job.state.lock().unwrap_or_else(|e| e.into_inner())["reasoningEffort"] = json!(reasoning);
+    job.state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)["reasoningEffort"] = json!(reasoning);
     let max_output = model.max_output_tokens;
     match protocol {
         "responses" => {
@@ -1397,7 +1466,9 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
                 body["reasoning"] = json!({"effort":reasoning,"summary":"auto"});
             }
             if p.kind == "codex" {
-                body.as_object_mut().unwrap().remove("max_output_tokens");
+                body.as_object_mut()
+                    .ok_or("Invalid provider request.")?
+                    .remove("max_output_tokens");
             }
         }
         "anthropic" => {
@@ -1497,7 +1568,10 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         }
     }
     {
-        let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = job
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state["model"] = json!(p.model);
         state["providerLabel"] = json!(p.label);
         state["modelName"] = json!(model.name);
@@ -1549,7 +1623,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             let name = string(call, "name")?;
             job.activity
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .running(call_id, name)?;
             job.publish_activity();
             let result = if call["name"] != "create_interactive_game" {
@@ -1558,7 +1632,10 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
                 conversations::create_game(job, call)
             };
             {
-                let mut tape = job.activity.lock().unwrap_or_else(|e| e.into_inner());
+                let mut tape = job
+                    .activity
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if job.cancelled.load(Ordering::Relaxed) {
                     activity::settle(&mut tape.blocks, activity::Status::Stopped);
                 } else {
@@ -1569,7 +1646,10 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             results.push(json!({"id":call["id"],"providerId":call["providerId"],"name":call["name"],"output":result.unwrap_or_else(|error| json!({"error":error}))}));
         }
         tools::continue_with(&mut body, protocol, &response, results)?;
-        let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = job
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state["textPrefix"] = json!(format!(
             "{}{}",
             state["text"].as_str().unwrap_or_default(),
@@ -1671,16 +1751,20 @@ fn callback(url: &str, expected: &str, client: Option<&str>) -> Result<(String, 
     Ok((code, issued))
 }
 fn login(root: PathBuf, p: Provider) -> Result<Value> {
-    use tiny_http::{Header, Method, Response, Server};
+    use tiny_http::{Method, Response, Server};
     if p.kind != "chatgpt" {
         return Err("Account login is only available for ChatGPT.".into());
     }
     let guard = session(&p.id);
-    let _g = guard.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = guard
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     cancel_owner(&p.id);
     let saved = read_secret(&p.id)?;
     let host_lock = session("host");
-    let host_guard = host_lock.lock().unwrap_or_else(|e| e.into_inner());
+    let host_guard = host_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let host = read_secret("host")?;
     let host_id = if let Some(id) = host["id"].as_str() {
         id.to_owned()
@@ -1703,7 +1787,8 @@ fn login(root: PathBuf, p: Provider) -> Result<Value> {
     let verifier = random()?;
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let client = saved["client_id"].as_str().map(str::to_owned);
-    let mut url = Url::parse(&format!("{AUTH}/api/accounts/authorize")).unwrap();
+    let mut url = Url::parse(&format!("{AUTH}/api/accounts/authorize"))
+        .map_err(|_| "Invalid account authorization endpoint.")?;
     {
         let mut q = url.query_pairs_mut();
         q.append_pair(
@@ -1761,10 +1846,8 @@ fn login(root: PathBuf, p: Provider) -> Result<Value> {
                 if accepted || correlated {
                     let _ = request.respond(
                         Response::empty(302)
-                            .with_header(
-                                Header::from_bytes("Location", browser_return.as_bytes()).unwrap(),
-                            )
-                            .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap()),
+                            .with_header(crate::transport::header("Location", &browser_return)?)
+                            .with_header(crate::transport::header("Cache-Control", "no-store")?),
                     );
                 } else {
                     let _ = request.respond(
@@ -1786,7 +1869,10 @@ fn login(root: PathBuf, p: Provider) -> Result<Value> {
                         continue;
                     }
                 };
-                worker.state.lock().unwrap_or_else(|e| e.into_inner())["message"] =
+                worker
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)["message"] =
                     json!("Return to GoVue to finish signing in.");
                 while !FOREGROUND.load(Ordering::Relaxed) {
                     worker.pending()?;
@@ -1796,7 +1882,9 @@ fn login(root: PathBuf, p: Provider) -> Result<Value> {
                     thread::sleep(Duration::from_millis(200));
                 }
                 let lock = session(&p.id);
-                let _lock = lock.lock().unwrap_or_else(|e| e.into_inner());
+                let _lock = lock
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 // Save the registration before exchange so a failed exchange can reauthorize it.
                 let mut previous = saved.clone();
                 previous["client_id"] = json!(issued);
@@ -1839,7 +1927,7 @@ fn uuid() -> Result<String> {
     getrandom::getrandom(&mut b).map_err(|_| "Secure random generator unavailable.")?;
     b[6] = (b[6] & 15) | 64;
     b[8] = (b[8] & 63) | 128;
-    let h = b.iter().map(|v| format!("{v:02x}")).collect::<String>();
+    let h = crate::hex(&b);
     Ok(format!(
         "{}-{}-{}-{}-{}",
         &h[..8],
@@ -1852,7 +1940,9 @@ fn uuid() -> Result<String> {
 
 fn disconnect(root: &Path, p: &Provider, remove: bool, job: &Arc<Job>) -> Result<Value> {
     let lock = session(&p.id);
-    let _g = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (s, readable) = match read_secret(&p.id) {
         Ok(s) => (s, true),
         Err(_) => (json!({}), false),
@@ -1905,7 +1995,9 @@ fn disconnect(root: &Path, p: &Provider, remove: bool, job: &Arc<Job>) -> Result
     };
     write_secret(&p.id, &remaining)?;
     if remove {
-        let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut c = config(root)?;
         c.providers.retain(|v| v.id != p.id);
         for g in &mut c.groups {
@@ -1951,7 +2043,9 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             Ok(Value::Null)
         }
         "ai_config" => {
-            let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _g = CONFIG_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             public_config(&root)
         }
         "ai_settings" => {
@@ -1961,7 +2055,9 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                     "Enter AGENT.md text of up to 16,000 bytes without null characters.".into(),
                 );
             }
-            let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _g = CONFIG_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut cfg = config(&root)?;
             cfg.agent_md = agent_md.into();
             save(&root, &cfg)?;
@@ -1975,7 +2071,9 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         }
         "ai_select" => {
             let id = string(&c, "id")?;
-            let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _g = CONFIG_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut cfg = config(&root)?;
             if let Some(p) = cfg.providers.iter_mut().find(|p| p.id == id) {
                 if !p.enabled {
@@ -2027,33 +2125,49 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             let id = string(&c, "taskId")?;
             let job = jobs()
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get(id)
                 .cloned()
                 .ok_or("AI request is no longer available.")?;
             if c["op"] == "ai_chat_poll" {
-                let mut cursor = job.updates.lock().unwrap_or_else(|e| e.into_inner());
-                let state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut cursor = job
+                    .updates
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let state = job
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 return Ok(cursor.poll(&state, usage::count(&c["afterRevision"])));
             }
             if c["op"] == "ai_poll" {
-                return Ok(job.state.lock().unwrap_or_else(|e| e.into_inner()).clone());
+                return Ok(job
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone());
             }
             job.cancelled.store(true, Ordering::Relaxed);
             activity::settle(
                 &mut job
                     .activity
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .blocks,
                 activity::Status::Stopped,
             );
             conversations::interrupt(&job)?;
             job.publish_activity();
             if c["op"] == "ai_cancel" {
-                job.state.lock().unwrap_or_else(|e| e.into_inner())["status"] = json!("cancelled");
+                job.state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)["status"] =
+                    json!("cancelled");
             } else {
-                jobs().lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+                jobs()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(id);
             }
             Ok(Value::Null)
         }

@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Regressions for generated cards, streamed tools, durable actions and lazy clips.
 use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, MediaHttp, MediaRangeReply, ai_execute,
@@ -307,13 +309,17 @@ impl MediaHttp for Media {
             }
             data
         } else {
-            (start..=end).map(|n| n as u8).collect()
+            (start..=end).map(|n| n.to_le_bytes()[0]).collect()
         };
         MediaRangeReply { status: 206, body }
     }
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep the end-to-end fixture setup, actions, and assertions for this scenario together."
+)]
 fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     let backend = Arc::new(Backend::default());
     install_ai_platform(Box::new(Platform(backend.clone())));
@@ -573,7 +579,7 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     assert_eq!(ok(root, transcript_audio.clone())["needsMedia"], true);
     assert_eq!(ok(root, command.clone())["needsMedia"], true);
     assert!(ranges.0.lock().unwrap().is_empty());
-    command["catalog"] = json!({"videoId":video,"origin":"https://m.youtube.com","live":false,"streams":[{"itag":140,"kind":"audio","mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","audioOriginal":true,"bitrate":128000,"bytes":1000,"url":"https://r1.googlevideo.com/audio?sig=PRIVATE_SIGNED_AUDIO","initRange":{"start":0,"end":99},"indexRange":{"start":100,"end":155}}]});
+    command["catalog"] = json!({"videoId":video,"origin":"https://m.youtube.com","live":false,"streams":[{"itag":140,"kind":"audio","mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","audioOriginal":true,"bitrate":128_000,"bytes":1000,"url":"https://r1.googlevideo.com/audio?sig=PRIVATE_SIGNED_AUDIO","initRange":{"start":0,"end":99},"indexRange":{"start":100,"end":155}}]});
     let clip = ok(root, command.clone());
     assert_eq!(clip["start"], 2.5);
     assert_eq!(clip["end"], 4.5);

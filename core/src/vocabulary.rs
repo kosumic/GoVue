@@ -372,10 +372,13 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 title: data.title,
                 start,
                 context: segment.text.clone(),
-                saved_at: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|_| "Could not read the device clock.")?
-                    .as_millis() as u64,
+                saved_at: u64::try_from(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|_| "Could not read the device clock.")?
+                        .as_millis(),
+                )
+                .map_err(|_| "Device clock is out of range.")?,
             };
             words.insert(0, entry);
             write(root, &words)?;

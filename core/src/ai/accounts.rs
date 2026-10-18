@@ -188,7 +188,9 @@ fn pause(job: &Arc<Job>, delay: Duration, deadline: Instant) -> Result<()> {
 }
 fn save_tokens(root: &Path, p: &Provider, job: &Arc<Job>, data: Value) -> Result<Value> {
     let lock = session(&p.id);
-    let _g = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     job.pending()?;
     connections::check_current(root, p, job)?;
     let previous = read_secret(&p.id)?;
@@ -237,17 +239,12 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
         return Ok(json!({"taskId":job.id}));
     }
     // Bind before opening the browser; PKCE and callback correlation stay in Rust.
-    let server = match tiny_http::Server::http(("127.0.0.1", s.port)) {
-        Ok(server) => server,
-        Err(_) => {
-            jobs()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&job.id);
-            return Err(
-                "The account callback port is in use. Close another sign-in and retry.".into(),
-            );
-        }
+    let Ok(server) = tiny_http::Server::http(("127.0.0.1", s.port)) else {
+        jobs()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&job.id);
+        return Err("The account callback port is in use. Close another sign-in and retry.".into());
     };
     let state = random()?;
     let verifier = random()?;
@@ -317,7 +314,10 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                     }
                 }
             }
-            worker.state.lock().unwrap_or_else(|e| e.into_inner())["login"] =
+            worker
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)["login"] =
                 json!({"url":url.as_str(),"returnUrl":browser_return,"mode":"browser"});
             loop {
                 worker.pending()?;
@@ -345,18 +345,13 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                     let _ = request.respond(tiny_http::Response::empty(400));
                     continue;
                 }
-                let u = parsed.unwrap();
+                let u = parsed.map_err(|_| "Invalid account callback address.")?;
                 let fields: Vec<_> = u.query_pairs().into_owned().collect();
                 let codes: Vec<_> = fields.iter().filter(|(k, _)| k == "code").collect();
                 let _ = request.respond(
                     tiny_http::Response::empty(302)
-                        .with_header(
-                            tiny_http::Header::from_bytes("Location", browser_return.as_bytes())
-                                .unwrap(),
-                        )
-                        .with_header(
-                            tiny_http::Header::from_bytes("Cache-Control", "no-store").unwrap(),
-                        ),
+                        .with_header(crate::transport::header("Location", &browser_return)?)
+                        .with_header(crate::transport::header("Cache-Control", "no-store")?),
                 );
                 if fields.iter().any(|(k, _)| k == "error") {
                     return Err("Account sign-in was declined.".into());
@@ -366,7 +361,10 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                         "Account callback did not contain one valid authorization code.".into(),
                     );
                 }
-                worker.state.lock().unwrap_or_else(|e| e.into_inner())["message"] =
+                worker
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)["message"] =
                     json!("Return to GoVue to finish signing in.");
                 wait_foreground(&worker, deadline)?;
                 let mut body = json!({"grant_type":"authorization_code","client_id":s.client,"code":codes[0].1,"redirect_uri":redirect,"code_verifier":verifier});
@@ -450,7 +448,13 @@ fn verify_oidc(
         return Err("Unexpected account issuer.".into());
     }
     let jwks = string(&meta, "jwks_uri")?;
-    trusted(jwks, Url::parse(issuer).unwrap().host_str().unwrap())?;
+    let issuer_url = Url::parse(issuer).map_err(|_| "Invalid account issuer.")?;
+    trusted(
+        jwks,
+        issuer_url
+            .host_str()
+            .ok_or("Missing account issuer host.")?,
+    )?;
     let keys: JwkSet = serde_json::from_value(checked(raw(jwks, None, false, vec![], job)?)?)
         .map_err(|_| "Invalid account signing keys.")?;
     let head = decode_header(token).map_err(|_| "Invalid account identity.")?;
@@ -510,7 +514,9 @@ fn device_login(root: &Path, p: &Provider, s: &Spec, job: &Arc<Job>) -> Result<V
     let deadline = Instant::now()
         + Duration::from_secs(data["expires_in"].as_u64().unwrap_or(600).clamp(1, 1800));
     let mut interval = data["interval"].as_u64().unwrap_or(5).clamp(1, 60);
-    job.state.lock().unwrap_or_else(|e| e.into_inner())["login"] =
+    job.state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)["login"] =
         json!({"url":verify,"userCode":code,"mode":"device"});
     loop {
         pause(job, Duration::from_secs(interval), deadline)?;
@@ -541,7 +547,9 @@ fn device_login(root: &Path, p: &Provider, s: &Spec, job: &Arc<Job>) -> Result<V
 }
 pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<String> {
     let lock = session(&p.id);
-    let _g = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     connections::check_current(root, p, job)?;
     let mut s = read_secret(&p.id)?;
     if !catalog::oauth(p) || p.kind == "openrouter" {

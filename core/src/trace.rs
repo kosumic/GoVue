@@ -13,6 +13,8 @@ unsafe extern "C" {
 pub struct Section {
     #[cfg(target_os = "android")]
     active: bool,
+    #[cfg(target_os = "android")]
+    thread: std::marker::PhantomData<*mut ()>,
 }
 
 impl Section {
@@ -20,11 +22,16 @@ impl Section {
         #[cfg(target_os = "android")]
         {
             // Static NUL-terminated labels have no page content or media URLs.
+            // SAFETY: The Android NDK tracing query has no preconditions.
             let active = unsafe { ATrace_isEnabled() };
             if active {
+                // SAFETY: The static CStr is a valid NUL-terminated label for this call.
                 unsafe { ATrace_beginSection(name.as_ptr()) };
             }
-            Self { active }
+            Self {
+                active,
+                thread: std::marker::PhantomData,
+            }
         }
         #[cfg(not(target_os = "android"))]
         {
@@ -38,6 +45,7 @@ impl Drop for Section {
     fn drop(&mut self) {
         #[cfg(target_os = "android")]
         if self.active {
+            // SAFETY: This guard began a section and cannot move to another thread.
             unsafe { ATrace_endSection() };
         }
     }

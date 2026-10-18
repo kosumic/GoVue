@@ -23,6 +23,12 @@ struct Session {
     deadline: f64,
 }
 static SESSIONS: OnceLock<Mutex<HashMap<String, Session>>> = OnceLock::new();
+#[allow(
+    clippy::float_cmp,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "Zero-length highlights require exact endpoint equality; nonnegative countdowns are bounded by the validated video duration."
+)]
 pub(crate) fn control(command: &Value, root: &str) -> Result<Value> {
     let video = string(command, "videoId")?;
     if !video_id(video) {
@@ -54,7 +60,7 @@ pub(crate) fn control(command: &Value, root: &str) -> Result<Value> {
                     || !s.end.is_finite()
                     || s.start < 0.0
                     || s.end < s.start
-                    || s.end > 604800.0
+                    || s.end > 604_800.0
             })
         {
             return Err("Invalid SponsorBlock segment range.".into());
@@ -145,11 +151,8 @@ pub(crate) fn control(command: &Value, root: &str) -> Result<Value> {
                 .min_by(|a, b| a.start.total_cmp(&b.start))
                 .cloned();
             if command["countdown"] != false
-                && upcoming
-                    .as_ref()
-                    .is_some_and(|s| !session.suppressed.contains(s))
+                && let Some(s) = upcoming.filter(|s| !session.suppressed.contains(s))
             {
-                let s = upcoming.unwrap();
                 session.deadline = s.start;
                 countdown = Some((s.start - position).ceil().max(0.0) as u32);
                 target = Some(s.end);
@@ -166,7 +169,9 @@ pub(crate) fn control(command: &Value, root: &str) -> Result<Value> {
             }
         }
     }
-    Ok(
+    let result = Ok(
         json!({"countdown":countdown,"chip":chip,"highlight":is_highlight,"target":target,"seek":seek,"category":session.pending.as_ref().map(|s|&s.category)}),
-    )
+    );
+    drop(sessions);
+    result
 }

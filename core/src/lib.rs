@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::{
     collections::VecDeque,
     fs,
@@ -267,12 +268,13 @@ fn remember(path: PathBuf, data: &Transcript) {
     let mut docs = DOCUMENTS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     docs.retain(|(p, _)| p != &path);
     docs.push_back((path, data.clone()));
     while docs.len() > 3 {
         docs.pop_front();
     }
+    drop(docs);
 }
 
 fn save(root: &str, data: &Transcript) -> Result<()> {
@@ -320,7 +322,7 @@ fn load(root: &str, id: &str, track: &str) -> Result<Transcript> {
         let docs = DOCUMENTS
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((_, data)) = docs.iter().find(|(p, _)| p == &path) {
             return Ok(data.clone());
         }
@@ -355,7 +357,7 @@ fn with_transcript<T>(
         let docs = DOCUMENTS
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((_, data)) = docs.iter().find(|(p, _)| p == &path) {
             return Ok(read(data));
         }
@@ -369,6 +371,11 @@ fn string<'a>(value: &'a Value, field: &str) -> Result<&'a str> {
         .ok_or_else(|| format!("Missing {field}."))
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "Display timestamps intentionally floor nonnegative seconds and saturate out-of-range values."
+)]
 fn timestamp(seconds: f64) -> String {
     let seconds = seconds.max(0.0).floor() as u64;
     if seconds >= 3600 {
@@ -528,7 +535,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         let docs = DOCUMENTS
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((_, data)) = docs.iter().find(|(p, _)| p == &path) {
             return transcript_playback::step(data, &command);
         }
@@ -582,7 +589,9 @@ pub fn execute(request: String, storage_path: String) -> String {
     let _span = trace::Section::begin(c"GoVue core: execute");
     let _guard = {
         let _span = trace::Section::begin(c"GoVue core: lock_wait");
-        REQUEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        REQUEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     };
     match dispatch(&request, &storage_path) {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
@@ -598,4 +607,13 @@ pub fn dictation_execute(request: String) -> String {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
         Err(error) => json!({"ok":false,"error":error}).to_string(),
     }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
 }

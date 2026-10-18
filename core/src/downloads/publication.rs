@@ -137,8 +137,14 @@ pub(super) fn dispatch(entry: &mut Value, command: &Value) -> Result<Value> {
             }
             artifact["publishedUri"] = json!(address);
             artifact["published"] = json!(false);
-            artifact.as_object_mut().unwrap().remove("publishedBytes");
-            artifact.as_object_mut().unwrap().remove("publishedSha256");
+            artifact
+                .as_object_mut()
+                .ok_or("Invalid download artifact.")?
+                .remove("publishedBytes");
+            artifact
+                .as_object_mut()
+                .ok_or("Invalid download artifact.")?
+                .remove("publishedSha256");
         }
         "downloads_publication_verified" => {
             if artifact["publishedUri"] != address {

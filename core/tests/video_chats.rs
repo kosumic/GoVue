@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Regressions after the Pixel video chat opened empty with its transcript attached.
 use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, execute, install_ai_platform,
@@ -104,6 +106,10 @@ fn wait(root: &Path, started: &Value) {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep the end-to-end fixture setup, actions, and assertions for this scenario together."
+)]
 fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
     let backend = Arc::new(Backend::default());
     install_ai_platform(Box::new(Platform(backend.clone())));

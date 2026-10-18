@@ -24,8 +24,10 @@ pub(super) fn control(command: &Value, root: &str) -> Result<Value> {
     let enabled = active && settings["autoPip"] == true && !remote;
     let playing = command["playing"] == true;
     let background = settings["backgroundPlayback"] == true;
-    let mut mode = MODE.lock().unwrap_or_else(|e| e.into_inner());
-    mode.video = id.to_owned();
+    let mut mode = MODE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    id.clone_into(&mut mode.video);
     if !active {
         mode.audio_only = false;
     }
@@ -71,8 +73,10 @@ pub(super) fn control(command: &Value, root: &str) -> Result<Value> {
         actions.push(json!({"id":"toggle","label":if playing {"Pause"}else{"Play"},"icon":if playing {"pause"}else{"play"},"enabled":true}));
         actions.push(json!({"id":"next","label":"Next","icon":"next","enabled":queue["hasNext"]}));
     }
-    Ok(
+    let result = Ok(
         json!({"videoId":mode.video,"available":enabled,"autoEnter":enabled&&playing&&!mode.audio_only,
         "audioOnly":mode.audio_only,"actions":actions,"perform":perform}),
-    )
+    );
+    drop(mode);
+    result
 }
