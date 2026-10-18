@@ -463,6 +463,77 @@ fn bilingual_selection_enforces_two_distinct_tracks_and_keeps_the_last_one() {
 }
 
 #[test]
+fn caption_choices_keep_the_source_and_separate_supplied_and_machine_translations() {
+    for (original, label, default_audio) in [
+        (Some(true), "Spanish audio", "en.4"),
+        (None, "Spanish (original)", "en.4"),
+        (None, "Spanish audio", "es.4"),
+    ] {
+        let store = Store::new();
+        let mut response = reply();
+        response["transcript"]["tracks"] = json!([
+            {"id":".en","label":"English","language":"en","automatic":false,"translatable":true},
+            {"id":".es","label":"Spanish","language":"es","automatic":false},
+            {"id":"a.es","label":"Spanish auto","language":"es","automatic":true},
+            {"id":"a.fr","label":"French auto","language":"fr","automatic":true},
+            {"id":"translate:es:.en","label":"Spanish translated from English","language":"es","automatic":false,"translatedFrom":".en"}
+        ]);
+        let mut source_audio = json!({"id":"es.4","label":label,"captionTrackIds":[".es","a.es"],"defaultCaptionTrackId":".es"});
+        if let Some(original) = original {
+            source_audio["original"] = json!(original);
+        }
+        response["transcript"]["trackMetadata"] = json!({
+            "translationLanguages":[{"code":"es","label":"Spanish"}],
+            "audioTracks":[
+                {"id":"en.4","label":"English audio","captionTrackIds":[".en"],"defaultCaptionTrackId":".en"},
+                source_audio
+            ],
+            "defaultAudioTrackId":default_audio
+        });
+        store.value(accept(response.clone()));
+        let read = operation("transcript_reader");
+        let choices = store.value(read.clone())["trackChoices"].clone();
+        let ids = |group: &str| -> Vec<&str> {
+            choices[group]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|track| track["id"].as_str().unwrap())
+                .collect()
+        };
+        assert_eq!(ids("sourceTracks"), [".es", "a.es"]);
+        assert_eq!(ids("captionTracks"), [".en"]);
+        assert_eq!(ids("translations"), ["a.fr", "translate:es:.en"]);
+        let mut search = read;
+        search["query"] = json!("no matching caption text");
+        assert_eq!(store.value(search)["trackChoices"], choices);
+        response["transcript"]["trackId"] = json!("a.fr");
+        response["transcript"]["language"] = json!("French auto");
+        store.value(accept(response));
+        assert_eq!(
+            store.value(json!({"op":"transcript_reader","videoId":VIDEO,"trackId":"a.fr"}))["trackChoices"],
+            choices,
+            "Changing the selected caption must not turn it into the source language"
+        );
+    }
+}
+
+#[test]
+fn legacy_captions_without_audio_metadata_keep_a_source_and_group_other_languages() {
+    let store = Store::new();
+    bilingual(
+        &store,
+        json!([{"start":0,"duration":1,"text":"Hello"}]),
+        json!([{"start":0,"duration":1,"text":"こんにちは"}]),
+    );
+    let choices = store.value(operation("transcript_reader"))["trackChoices"].clone();
+    assert_eq!(choices["sourceTracks"][0]["id"], ".en");
+    assert_eq!(choices["sourceTracks"].as_array().unwrap().len(), 1);
+    assert_eq!(choices["captionTracks"].as_array().unwrap().len(), 2);
+    assert!(choices["translations"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn full_storage_does_not_prevent_search_or_export_of_current_transcript() {
     let store = Store::new();
     let blocked = store.path.join("file-not-directory");

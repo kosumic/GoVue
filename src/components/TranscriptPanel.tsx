@@ -41,7 +41,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   const [searchVisible, setSearchVisible] = useState(false);
   const [copied, setCopied] = useState(false);
   const [wordFeedback, setWordFeedback] = useState('');
-  const [translationsVisible, setTranslationsVisible] = useState(false);
+  const [languageMenu, setLanguageMenu] = useState<'captions' | 'machine' | null>(null);
   const [wordSelection, setWordSelection] = useState<(WordSelection & { anchor?: { x: number; y: number } }) | null>(null);
   const savingWord = useRef(false);
   const activeData = useRef([data, comparison]);
@@ -50,7 +50,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
     activeData.current = [data, comparison];
     setWordFeedback('');
     setCopied(false);
-    setTranslationsVisible(false);
+    setLanguageMenu(null);
     setWordSelection(null);
     return () => { activeData.current = []; };
   }, [data, comparison]);
@@ -79,11 +79,13 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   const sources = [data, comparison];
   const selectedTracks = trackIds ?? [data?.trackId ?? ''];
   const selectionKey = selectedTracks.join('\0');
+  const choices = matches?.data === data ? matches?.reader.trackChoices : null;
   const tracks = data ? [
     ...selectedTracks.flatMap(id => data.tracks.filter(track => track.id === id)),
-    ...data.tracks.filter(track => !selectedTracks.includes(track.id) && !track.translatedFrom),
+    ...(choices?.sourceTracks ?? []).filter(track => !selectedTracks.includes(track.id)),
   ] : [];
-  const translations = data?.tracks.filter(track => !!track.translatedFrom) ?? [];
+  const captions = choices?.captionTracks ?? [];
+  const translations = choices?.translations ?? [];
   useEffect(() => { trackList.current?.scrollTo({ x: 0, animated: true }); }, [selectionKey]);
   const activeIndices = sources.map(source => currentSegmentIndex(source?.segments ?? [], position));
   const rowIndices = useMemo(() => {
@@ -187,18 +189,21 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
             {tracks.map(track => {
               const selected = selectedTracks.includes(track.id);
               const disabled = !selected && selectedTracks.length >= 2;
-              return <Pressable key={track.id} accessibilityRole="checkbox" accessibilityLabel={track.label + (track.automatic ? ' · Auto' : '')} accessibilityState={{ checked: selected, disabled }}
+              return <Pressable key={track.id} accessibilityRole="checkbox" accessibilityLabel={track.label + (track.automatic && !track.translatedFrom ? ' · Auto' : '')} accessibilityState={{ checked: selected, disabled }}
                 disabled={disabled} onPress={() => onSelectTrack(track.id)} style={[styles.track, selected && styles.selectedTrack, disabled && styles.disabledTrack]}>
                 <Text style={[styles.trackText, selected && styles.selectedText]}>{selected ? `${selectedTracks.indexOf(track.id) + 1} · ` : ''}{track.label}{track.automatic && !track.translatedFrom ? ' · Auto' : ''}</Text>
               </Pressable>;
             })}
-            {!!translations.length && <Pressable accessibilityRole="button" accessibilityLabel="Translate captions" onPress={() => setTranslationsVisible(true)} style={styles.track}>
-              <Text style={styles.trackText}>Translate…</Text>
+            {!!captions.length && <Pressable accessibilityRole="button" accessibilityLabel="Caption translations" onPress={() => setLanguageMenu('captions')} style={styles.track}>
+              <Text style={styles.trackText}>Translations…</Text>
+            </Pressable>}
+            {!!translations.length && <Pressable accessibilityRole="button" accessibilityLabel="Machine translations" onPress={() => setLanguageMenu('machine')} style={styles.track}>
+              <Text style={styles.trackText}>Auto-translate…</Text>
             </Pressable>}
           </ScrollView>
-          <TranscriptTranslations visible={translationsVisible} tracks={translations} selected={selectedTracks} onSelect={onSelectTrack} onClose={() => setTranslationsVisible(false)} />
+          <TranscriptTranslations visible={languageMenu !== null} kind={languageMenu ?? 'machine'} tracks={languageMenu === 'captions' ? captions : translations} selected={selectedTracks} onSelect={onSelectTrack} onClose={() => setLanguageMenu(null)} />
         </>}
-        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={[styles.trackText, styles.comparisonMessage]}>{translations.some(track => track.id === selectedTracks[1]) ? 'Loading YouTube translation…' : 'Loading comparison…'}</Text></View>}
+        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={[styles.trackText, styles.comparisonMessage]}>{data?.tracks.some(track => track.id === selectedTracks[1] && !!track.translatedFrom) ? 'Loading YouTube translation…' : 'Loading comparison…'}</Text></View>}
         {!!comparisonError && <View style={styles.comparisonStatus}><Text accessibilityRole="alert" style={styles.comparisonError}>{comparisonError}</Text>
           {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()}><Text style={styles.selectedText}>Retry</Text></Pressable>}</View>}
         {searchVisible && <View style={styles.search}><Search size={16} color={colors.muted} /><TextInput autoFocus accessibilityLabel="Search transcript" placeholder="Find in transcript" placeholderTextColor={colors.muted}

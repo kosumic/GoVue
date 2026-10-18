@@ -14,7 +14,7 @@ export type Transcript = {
   segments: Segment[];
   trackMetadata?: {
     translationLanguages: { code: string; label: string }[];
-    audioTracks: { id: string; label: string; captionTrackIds: string[]; defaultCaptionTrackId: string | null; captionsInitialState: string | null; hasDefaultTrack: boolean | null; visibility: string | null }[];
+    audioTracks: { id: string; label: string; original?: boolean; captionTrackIds: string[]; defaultCaptionTrackId: string | null; captionsInitialState: string | null; hasDefaultTrack: boolean | null; visibility: string | null }[];
     defaultAudioTrackId: string | null;
   };
   captionMetadata?: {

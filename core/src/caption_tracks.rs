@@ -15,6 +15,8 @@ pub(crate) struct Language {
 pub(crate) struct Audio {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub original: bool,
     pub caption_track_ids: Vec<String>,
     pub default_caption_track_id: Option<String>,
     pub captions_initial_state: Option<String>,
@@ -91,17 +93,22 @@ pub(crate) fn extract_for_source(
         .enumerate()
         .map(|(index, raw)| {
             let id = short(&raw["audioTrackId"]).unwrap_or_else(|| format!("index:{index}"));
-            let label = data["streamingData"]["adaptiveFormats"]
+            let audio = data["streamingData"]["adaptiveFormats"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .find(|format| format["audioTrack"]["id"] == id)
-                .map(|format| text(&format["audioTrack"]["displayName"]))
+                .map(|format| &format["audioTrack"]);
+            let label = audio
+                .map(|audio| text(&audio["displayName"]))
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| id.clone());
+            let original = audio.is_some_and(|audio| audio["isOriginal"] == true)
+                || label.to_lowercase().contains("original");
             Audio {
                 id,
                 label,
+                original,
                 caption_track_ids: raw["captionTrackIndices"]
                     .as_array()
                     .into_iter()
@@ -210,6 +217,73 @@ pub(crate) fn default_track<'a>(tracks: &'a [Track], metadata: &Metadata) -> Opt
         .or_else(|| tracks.iter().find(|track| track.translated_from.is_none()))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Choices<'a> {
+    source_tracks: Vec<&'a Track>,
+    caption_tracks: Vec<&'a Track>,
+    translations: Vec<&'a Track>,
+}
+
+pub(crate) fn choices(data: &Transcript) -> Choices<'_> {
+    let native = |track: &&Track| track.translated_from.is_none();
+    let audio_source = |audio: &Audio| {
+        audio
+            .default_caption_track_id
+            .as_ref()
+            .and_then(|id| {
+                data.tracks
+                    .iter()
+                    .filter(native)
+                    .find(|track| track.id == *id)
+            })
+            .or_else(|| {
+                data.tracks
+                    .iter()
+                    .filter(native)
+                    .find(|track| audio.caption_track_ids.contains(&track.id))
+            })
+    };
+    let source = data.track_metadata.as_ref().and_then(|metadata| {
+        metadata
+            .audio_tracks
+            .iter()
+            // Older cached metadata still has the audio display name.
+            .filter(|audio| audio.original || audio.label.to_lowercase().contains("original"))
+            .find_map(audio_source)
+            .or_else(|| {
+                metadata
+                    .audio_tracks
+                    .iter()
+                    .find(|audio| Some(&audio.id) == metadata.default_audio_track_id.as_ref())
+                    .and_then(audio_source)
+            })
+    });
+    let source = source.or_else(|| data.tracks.iter().find(native));
+    let mut choices = Choices {
+        source_tracks: Vec::new(),
+        caption_tracks: Vec::new(),
+        translations: Vec::new(),
+    };
+    for track in &data.tracks {
+        let source_language = source.is_some_and(|source| {
+            source.id == track.id
+                || (!source.language.is_empty()
+                    && source.language.eq_ignore_ascii_case(&track.language))
+        });
+        if track.translated_from.is_some() {
+            choices.translations.push(track);
+        } else if source_language {
+            choices.source_tracks.push(track);
+        } else if track.automatic {
+            choices.translations.push(track);
+        } else {
+            choices.caption_tracks.push(track);
+        }
+    }
+    choices
+}
+
 pub(crate) fn matches_audio(data: &Transcript, audio: &str) -> bool {
     audio.is_empty()
         || data
@@ -311,7 +385,10 @@ mod tests {
                 {"languageCode":"es","languageName":{"simpleText":"Spanish"}},
                 {"languageCode":"fr&pot=bad","languageName":{"simpleText":"Invalid"}},
                 {"languageCode":"ja","languageName":{"simpleText":"Japanese"}}]
-        }},"streamingData":{"adaptiveFormats":[{"audioTrack":{"id":"ja.4","displayName":"Japanese audio"}}]}});
+        }},"streamingData":{"adaptiveFormats":[
+            {"audioTrack":{"id":"en.4","displayName":"English audio","isOriginal":true}},
+            {"audioTrack":{"id":"ja.4","displayName":"Japanese audio"}}
+        ]}});
         let (tracks, metadata) = extract(&player, "ja.4");
         assert_eq!(default_track(&tracks, &metadata).unwrap().id, ".ja");
         let translated = tracks.iter().find(|t| t.id == "translate:es:.ja").unwrap();
@@ -322,6 +399,8 @@ mod tests {
             "native Spanish remains independently selectable"
         );
         assert_eq!(metadata.translation_languages.len(), 2);
+        assert!(metadata.audio_tracks[0].original);
+        assert!(!metadata.audio_tracks[1].original);
         assert_eq!(metadata.audio_tracks[1].label, "Japanese audio");
         let serialized = json!({"tracks":tracks,"metadata":metadata}).to_string();
         assert!(!serialized.contains("never-persist"));
