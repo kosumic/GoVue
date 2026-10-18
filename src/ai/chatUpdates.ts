@@ -1,8 +1,10 @@
-import type { ChatMessage } from './useChats';
+import type { ChatMessage, QueuedMessage } from './useChats';
 
 export type ChatProgress = {
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   text: string;
+  replyId?: string;
+  pendingMessages?: QueuedMessage[];
 } & Pick<ChatMessage, 'games' | 'blocks' | 'error' | 'reasoning' | 'reasoningEffort' | 'usage' | 'usageDetails' | 'model' | 'providerLabel'>;
 type ArrayDelta<T> = { length: number; upserts: { index: number; value: T }[] };
 type StringDelta = { append: string } | { replace: string };

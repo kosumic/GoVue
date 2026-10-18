@@ -84,6 +84,13 @@ Reasoning changes made during a response apply to the next message. Each respons
 has a regenerate button beside its copy action. Regenerating an earlier response
 replaces that response and all later messages using its original prompt.
 
+You can send another message while the assistant is working. It appears in a
+queue and steers the current work after the next batch of tool results, before
+the model continues. If the assistant finishes without a tool call, queued
+messages are delivered then. Messages queued together are combined in order.
+Stop remains available beside Send. Stopping or a failed request keeps undelivered
+messages visible; tap one to send it when the assistant is idle.
+
 For playable learning activities, ask the assistant to create a game. Game
 interfaces can use selected captions and original audio, with progress saved by
 Rust. See [interactive chat games](interactive-games.md) for the runtime contract

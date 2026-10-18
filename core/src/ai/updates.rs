@@ -12,6 +12,8 @@ const FIELDS: &[&str] = &[
     "reasoningEffort",
     "model",
     "providerLabel",
+    "replyId",
+    "pendingMessages",
 ];
 
 #[derive(Default)]

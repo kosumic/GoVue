@@ -23,6 +23,7 @@ struct Backend {
     secrets: Mutex<HashMap<String, String>>,
     gate: Mutex<Option<mpsc::Receiver<()>>>,
     mode: AtomicU8,
+    requests: Mutex<Vec<Value>>,
 }
 struct Platform(Arc<Backend>);
 fn push(response: &AiResponse, value: Value) {
@@ -58,6 +59,7 @@ impl AiPlatform for Platform {
     }
     fn request(&self, request: AiHttpRequest, response: Arc<AiResponse>) {
         let body: Value = serde_json::from_str(&request.body).unwrap();
+        self.0.requests.lock().unwrap().push(body.clone());
         let protocol = if request.url.ends_with("/responses") {
             "responses"
         } else if request.url.ends_with("/messages") {
@@ -91,6 +93,17 @@ impl AiPlatform for Platform {
             return;
         }
         response.start(200);
+        if mode == 4 {
+            push(
+                &response,
+                json!({"choices":[{"delta":{"content":"Text-only reply."},"finish_reason":"stop"}]}),
+            );
+            if let Some(gate) = self.0.gate.lock().unwrap().take() {
+                let _ = gate.recv();
+            }
+            response.push(b"data: [DONE]\n\n".to_vec());
+            return;
+        }
         if continued {
             match protocol {
                 "responses" => {
@@ -141,6 +154,7 @@ impl AiPlatform for Platform {
             args["html"] = json!("");
         }
         let raw = args.to_string();
+        let before = if mode == 3 { "" } else { "Before tool." };
         match protocol {
             "responses" => {
                 push(
@@ -149,7 +163,7 @@ impl AiPlatform for Platform {
                 );
                 push(
                     &response,
-                    json!({"type":"response.output_text.delta","delta":"Before tool."}),
+                    json!({"type":"response.output_text.delta","delta":before}),
                 );
                 push(
                     &response,
@@ -183,7 +197,7 @@ impl AiPlatform for Platform {
                 );
                 push(
                     &response,
-                    json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Before tool."}}),
+                    json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":before}}),
                 );
                 push(
                     &response,
@@ -197,7 +211,7 @@ impl AiPlatform for Platform {
             "gemini" => {
                 push(
                     &response,
-                    json!({"candidates":[{"content":{"parts":[{"thought":true,"text":"Plan 你好."},{"text":"Before tool."},{"functionCall":{"name":"create_interactive_game","args":args},"thoughtSignature":"OPAQUE_SIGNATURE"}]}}]}),
+                    json!({"candidates":[{"content":{"parts":[{"thought":true,"text":"Plan 你好."},{"text":before},{"functionCall":{"name":"create_interactive_game","args":args},"thoughtSignature":"OPAQUE_SIGNATURE"}]}}]}),
                 );
             }
             _ => {
@@ -205,10 +219,7 @@ impl AiPlatform for Platform {
                     &response,
                     json!({"choices":[{"delta":{"reasoning_content":"Plan 你好.","reasoning_details":[{"type":"reasoning.encrypted","data":"OPAQUE_SIGNATURE"}]}}]}),
                 );
-                push(
-                    &response,
-                    json!({"choices":[{"delta":{"content":"Before tool."}}]}),
-                );
+                push(&response, json!({"choices":[{"delta":{"content":before}}]}));
                 push(
                     &response,
                     json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"create_interactive_game","arguments":raw}}]}}]}),
@@ -295,6 +306,140 @@ fn saved(root: &Path, started: &Value) -> Value {
     )
 }
 
+fn text_only_steering(root: &Path, backend: &Backend) {
+    backend.mode.store(4, Ordering::SeqCst);
+    let id = provider(root, "chat");
+    let (release, gate) = mpsc::channel();
+    *backend.gate.lock().unwrap() = Some(gate);
+    let started = ok(
+        root,
+        json!({"op":"ai_chat_send","id":id,"prompt":"A question"}),
+    );
+    poll(root, &started["taskId"], |s| {
+        s["text"] == "Text-only reply."
+    });
+    ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":started["conversation"]["id"],"prompt":"A follow-up"}),
+    );
+    release.send(()).unwrap();
+    assert_eq!(
+        poll(root, &started["taskId"], |s| s["status"] != "running")["status"],
+        "completed"
+    );
+    let chat = saved(root, &started);
+    assert_eq!(chat["messages"].as_array().unwrap().len(), 4);
+    assert_eq!(chat["messages"][2]["content"], "A follow-up");
+    assert_eq!(chat["messages"][3]["content"], "Text-only reply.");
+    assert!(chat.get("pendingMessages").is_none());
+    backend.mode.store(0, Ordering::SeqCst);
+}
+
+fn queued_steering(root: &Path, backend: &Backend) {
+    let prompt = "Use Spanish.\n\nKeep it short.";
+    // A tool-only segment must also survive normalized history and provider replay.
+    backend.mode.store(3, Ordering::SeqCst);
+    for protocol in ["chat", "responses", "anthropic", "gemini"] {
+        backend.requests.lock().unwrap().clear();
+        let id = provider(root, protocol);
+        let (release, gate) = mpsc::channel();
+        *backend.gate.lock().unwrap() = Some(gate);
+        let started = ok(
+            root,
+            json!({"op":"ai_chat_send","id":id,"prompt":"Create an exercise"}),
+        );
+        poll(root, &started["taskId"], |s| {
+            s["blocks"].as_array().is_some_and(|b| {
+                b.iter()
+                    .any(|b| b["kind"] == "tool" && b["status"] == "preparing")
+            })
+        });
+        for content in ["Use Spanish.", "Keep it short."] {
+            let queued = ok(
+                root,
+                json!({"op":"ai_chat_send","chatId":started["conversation"]["id"],"prompt":content}),
+            );
+            assert_eq!(queued["taskId"], started["taskId"]);
+            assert_eq!(
+                queued["conversation"]["messages"].as_array().unwrap().len(),
+                2
+            );
+        }
+        let pending = saved(root, &started);
+        assert_eq!(pending["pendingMessages"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            backend.requests.lock().unwrap().len(),
+            1,
+            "queueing cannot start another model request"
+        );
+        let projected = ok(
+            root,
+            json!({"op":"ai_chat_poll","taskId":started["taskId"]}),
+        );
+        assert_eq!(
+            projected["state"]["pendingMessages"],
+            pending["pendingMessages"]
+        );
+        release.send(()).unwrap();
+        let done = poll(root, &started["taskId"], |s| s["status"] != "running");
+        assert_eq!(done["status"], "completed", "{protocol}: {done}");
+        let chat = saved(root, &started);
+        assert_eq!(chat["messages"].as_array().unwrap().len(), 4);
+        assert_eq!(chat["messages"][1]["content"], "");
+        assert_eq!(chat["messages"][1]["status"], "completed");
+        assert_eq!(chat["messages"][1]["games"].as_array().unwrap().len(), 1);
+        assert_eq!(chat["messages"][2]["content"], prompt);
+        assert_eq!(chat["messages"][3]["content"], "Play now.");
+        assert_eq!(done["replyId"], chat["messages"][3]["id"]);
+        assert_eq!(done["pendingMessages"], json!([]));
+        assert!(chat["messages"][3].get("games").is_none());
+        assert!(!chat.to_string().contains("OPAQUE_SIGNATURE"));
+        {
+            let requests = backend.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            let field = match protocol {
+                "responses" => "input",
+                "gemini" => "contents",
+                _ => "messages",
+            };
+            let last = requests[1][field]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone();
+            drop(requests);
+            assert_eq!(last["role"], "user");
+            match protocol {
+                "anthropic" => {
+                    assert_eq!(last["content"][0]["type"], "tool_result");
+                    assert_eq!(
+                        last["content"].as_array().unwrap().last().unwrap()["text"],
+                        prompt
+                    );
+                }
+                "gemini" => {
+                    assert!(last["parts"][0]["functionResponse"].is_object());
+                    assert_eq!(
+                        last["parts"].as_array().unwrap().last().unwrap()["text"],
+                        prompt
+                    );
+                }
+                _ => assert_eq!(last["content"], prompt),
+            }
+        }
+        let next = ok(
+            root,
+            json!({"op":"ai_chat_send","chatId":chat["id"],"prompt":"Another question"}),
+        );
+        assert_eq!(
+            poll(root, &next["taskId"], |s| s["status"] != "running")["status"],
+            "completed"
+        );
+    }
+    backend.mode.store(0, Ordering::SeqCst);
+}
+
 #[test]
 fn ordered_activity_streams_and_persists_across_protocols_failures_and_cancellation() {
     let backend = Arc::new(Backend::default());
@@ -354,6 +499,8 @@ fn ordered_activity_streams_and_persists_across_protocols_failures_and_cancellat
         assert!(!chat.to_string().contains("OPAQUE_SIGNATURE"));
         last = started;
     }
+    queued_steering(root, &backend);
+    text_only_steering(root, &backend);
     let id = provider(root, "chat");
     for mode in [1, 2] {
         backend.mode.store(mode, Ordering::SeqCst);
@@ -389,7 +536,15 @@ fn ordered_activity_streams_and_persists_across_protocols_failures_and_cancellat
     poll(root, &started["taskId"], |s| {
         s["blocks"][2]["status"] == "preparing"
     });
-    ok(root, json!({"op":"ai_cancel","taskId":started["taskId"]}));
+    ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":started["conversation"]["id"],"prompt":"Keep this instruction"}),
+    );
+    let cancelled = ok(root, json!({"op":"ai_cancel","taskId":started["taskId"]}));
+    assert_eq!(
+        cancelled["conversation"]["pendingMessages"][0]["content"],
+        "Keep this instruction"
+    );
     let stopped = saved(root, &started);
     assert_eq!(stopped["messages"][1]["status"], "stopped");
     assert_eq!(stopped["messages"][1]["blocks"][2]["status"], "stopped");
@@ -398,6 +553,16 @@ fn ordered_activity_streams_and_persists_across_protocols_failures_and_cancellat
         "stopped"
     );
     release.send(()).unwrap();
+    let queued = &stopped["pendingMessages"][0];
+    let resent = ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":stopped["id"],"prompt":queued["content"],"queuedMessageId":queued["id"]}),
+    );
+    assert_eq!(
+        poll(root, &resent["taskId"], |s| s["status"] != "running")["status"],
+        "completed"
+    );
+    assert!(saved(root, &resent).get("pendingMessages").is_none());
 
     // Chats saved before activity existed still load; orphaned pending tools stop on recovery.
     let mut chat = saved(root, &last);
