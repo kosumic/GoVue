@@ -12,6 +12,7 @@ import { isWebUrl } from './address';
 import {
   BROWSER_BRIDGE,
   BROWSER_BOOTSTRAP,
+  browserInsetsScript,
   browserPreferencesScript,
 } from '../youtube/browserBridge';
 import { YOUTUBE_BRIDGE } from '../youtube/pageScripts';
@@ -39,6 +40,7 @@ export const BrowserTab = forwardRef<
     userAgent?: string;
     width: number;
     height: number;
+    bottomInset?: number;
     settings: MediaSettings;
     onMessage: (id: number, event: WebViewMessageEvent) => void;
     onUrl: (id: number, url: string, back: boolean) => void;
@@ -54,6 +56,7 @@ export const BrowserTab = forwardRef<
       userAgent,
       width,
       height,
+      bottomInset = 0,
       settings,
       onMessage,
       onUrl,
@@ -82,7 +85,9 @@ export const BrowserTab = forwardRef<
       '\n' +
       BROWSER_BRIDGE +
       '\n' +
-      browserPreferencesScript(settings);
+      browserPreferencesScript(settings) +
+      '\n' +
+      browserInsetsScript(bottomInset);
     const documentScripts = () =>
       scripts +
       `\nwindow.__lingoplayBrowser?.setDocumentGeneration(${JSON.stringify(documentGeneration.current)});true;`;
@@ -127,9 +132,11 @@ export const BrowserTab = forwardRef<
       inject(
         mediaSettingsScript(settings) +
           '\n' +
-          browserPreferencesScript(settings),
+          browserPreferencesScript(settings) +
+          '\n' +
+          browserInsetsScript(bottomInset),
       );
-    }, [settings]);
+    }, [settings, bottomInset]);
     useEffect(() => {
       inject(
         `window.dispatchEvent(new CustomEvent('tabVisibilityChanged',{detail:{active:${active}}}));${active ? '' : "document.querySelectorAll('video,audio').forEach(v=>v.pause());"}true;`,
@@ -149,7 +156,7 @@ export const BrowserTab = forwardRef<
         pointerEvents={active ? 'auto' : 'none'}
         accessibilityElementsHidden={!active}
         importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
-        style={[s.tab, { width, height }, !active && s.parked]}
+        style={[s.tab, { width, height: height + bottomInset }, !active && s.parked]}
       >
         {renderer.mounted && (
           <WebView
@@ -238,7 +245,7 @@ export const BrowserTab = forwardRef<
         )}
         {active && loading && <View pointerEvents="none" style={s.progress} />}
         {active && !!error && (
-          <View style={s.browserError}>
+          <View style={[s.browserError, { bottom: bottomInset }]}>
             <Text style={s.errorText}>{error}</Text>
             <Pressable
               accessibilityRole="button"

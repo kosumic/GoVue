@@ -58,6 +58,11 @@
     lastTransient = '';
   });
   window.__lingoplayBrowser = {
+    setBottomInset(bottom) {
+      if (!Number.isFinite(bottom) || bottom < 0 || bottom > 200) return;
+      document.documentElement.style.setProperty('--lingoplay-bottom-inset', `${bottom}px`);
+      document.documentElement.toggleAttribute('data-lingoplay-bottom-inset', bottom > 0);
+    },
     setDocumentGeneration(value) {
       if (!Number.isSafeInteger(value) || value <= documentGeneration) return;
       documentGeneration = value;
