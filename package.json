@@ -14,6 +14,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
+    "preview:mockups": "node scripts/generate-readme-phone-mockups.ts",
     "page:build": "node scripts/build-page.ts",
     "postinstall": "node scripts/patch-video.ts && node scripts/patch-translate.ts && npm run page:build",
     "start": "expo start --dev-client --scheme govue --host lan",
