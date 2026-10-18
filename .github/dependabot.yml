@@ -1,0 +1,91 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    cooldown:
+      default-days: 1
+    open-pull-requests-limit: 8
+    schedule:
+      interval: daily
+    groups:
+      expo-patches:
+        patterns:
+          - expo
+          - 'expo-*'
+          - babel-preset-expo
+        update-types:
+          - patch
+      npm-patches:
+        patterns:
+          - '*'
+        exclude-patterns:
+          - expo
+          - 'expo-*'
+          - babel-preset-expo
+        update-types:
+          - patch
+    ignore:
+      # Upgrade the Expo SDK deliberately; keep SDK patch updates grouped above.
+      - dependency-name: expo
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: 'expo-*'
+        versions: ['>= 58.0.0']
+      - dependency-name: babel-preset-expo
+        versions: ['>= 58.0.0']
+      # Expo SDK 57 owns these versions. Refresh these bounds with
+      # `npx expo install --fix` when upgrading the SDK.
+      - dependency-name: react
+        versions: ['> 19.2.3']
+      - dependency-name: react-test-renderer
+        versions: ['> 19.2.3']
+      - dependency-name: react-native
+        versions: ['> 0.86.3']
+      - dependency-name: react-native-safe-area-context
+        versions: ['>= 5.8.0']
+      - dependency-name: react-native-svg
+        versions: ['> 15.15.4']
+      - dependency-name: react-native-webview
+        versions: ['> 13.16.1']
+
+  # The root Cargo workspace includes core/ and tools/bindgen/.
+  - package-ecosystem: cargo
+    directory: /
+    cooldown:
+      default-days: 1
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      cargo-minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+
+  # The app's android/ and ios/ projects are generated and ignored.
+  # Maintain the local Expo module's checked-in native dependencies instead.
+  - package-ecosystem: gradle
+    directory: /modules/lingoplay-core/android
+    cooldown:
+      default-days: 1
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      gradle-dependencies:
+        patterns:
+          - '*'
+
+  - package-ecosystem: github-actions
+    directory: /
+    cooldown:
+      default-days: 1
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns:
+          - '*'
