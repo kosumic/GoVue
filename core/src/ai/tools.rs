@@ -7,16 +7,16 @@ pub(super) fn merge_usage(prefix: &Value, next: &Value) -> Value {
         return next.clone();
     }
     if next.is_null() {
-        return prefix.clone();
+        return json!({});
     }
-    let mut result = prefix.clone();
+    let mut result = json!({});
     if let Some(fields) = next.as_object() {
         for (key, value) in fields {
             if key == "latestContextTokens" {
                 result[key] = value.clone();
             } else if let Some(n) = value
                 .as_u64()
-                .and_then(|n| n.checked_add(result[key].as_u64().unwrap_or(0)))
+                .and_then(|n| prefix[key].as_u64().and_then(|old| n.checked_add(old)))
                 .filter(|n| *n <= usage::MAX_COUNT)
             {
                 result[key] = json!(n);
@@ -316,17 +316,28 @@ pub(super) fn continue_with(
         .ok_or("Invalid tool continuation.")?;
     match protocol {
         "responses" => {
-            rows.extend(
-                response["tools"]["continuation"]
-                    .as_array()
-                    .ok_or("Missing response items.")?
-                    .clone(),
-            );
+            let items = response["tools"]["continuation"]
+                .as_array()
+                .ok_or("Missing response items.")?;
+            rows.extend(items.clone());
+            if !response["text"].as_str().unwrap_or_default().is_empty()
+                && !items
+                    .iter()
+                    .any(|item| item["type"] == "message" || item["role"] == "assistant")
+            {
+                rows.push(json!({"role":"assistant","content":response["text"]}));
+            }
             rows.extend(results.iter().map(|r| json!({"type":"function_call_output","call_id":r["id"],"output":r["output"].to_string()})));
         }
         "anthropic" => {
-            rows.push(response["tools"]["continuation"].clone());
-            rows.push(json!({"role":"user","content":results.iter().map(|r|json!({"type":"tool_result","tool_use_id":r["id"],"content":r["output"].to_string(),"is_error":r["output"]["error"].is_string()})).collect::<Vec<_>>()}));
+            let mut assistant = response["tools"]["continuation"].clone();
+            if assistant["content"].as_array().is_some_and(Vec::is_empty) {
+                assistant["content"] = json!([{"type":"text","text":response["text"]}]);
+            }
+            rows.push(assistant);
+            if !results.is_empty() {
+                rows.push(json!({"role":"user","content":results.iter().map(|r|json!({"type":"tool_result","tool_use_id":r["id"],"content":r["output"].to_string(),"is_error":r["output"]["error"].is_string()})).collect::<Vec<_>>()}));
+            }
         }
         "gemini" => {
             rows.push(response["tools"]["continuation"].clone());
@@ -340,7 +351,9 @@ pub(super) fn continue_with(
                     json!({"functionResponse":response})
                 })
                 .collect::<Vec<_>>();
-            rows.push(json!({"role":"user","parts":parts}));
+            if !parts.is_empty() {
+                rows.push(json!({"role":"user","parts":parts}));
+            }
         }
         _ => {
             rows.push(response["tools"]["continuation"].clone());

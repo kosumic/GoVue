@@ -16,10 +16,18 @@ struct TranscriptRef {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct PreparedInput {
+    pub content: String,
+    pub transcript: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Message {
     id: String,
     role: String,
     content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prepared_input: Option<PreparedInput>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     games: Vec<games::Game>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -73,6 +81,7 @@ struct Conversation {
 fn presentation(chat: &Conversation) -> Result<Value> {
     let mut value = serde_json::to_value(chat).map_err(|_| "Could not open this chat.")?;
     for message in value["messages"].as_array_mut().unwrap() {
+        message.as_object_mut().unwrap().remove("preparedInput");
         message["usageDetails"] = usage::details(&message["usage"]);
     }
     Ok(value)
@@ -120,6 +129,14 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
                     "completed" | "streaming" | "failed" | "stopped"
                 )
                 || m.content.len() > MAX_OUTPUT
+                || m.prepared_input.as_ref().is_some_and(|input| {
+                    m.role != "user"
+                        || input.content.len() > 480_000
+                        || input.content.trim().is_empty()
+                        || input.transcript.as_ref().is_some_and(|hash| {
+                            hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit())
+                        })
+                })
                 || m.games.len() > 3
                 || m.games.iter().any(|game| !game.validate())
                 || !activity::valid(&m.blocks)
@@ -364,6 +381,24 @@ pub(super) fn history(value: &Value) -> Result<Vec<Value>> {
         result.push(json!({"role":role,"content":content}));
     }
     Ok(result)
+}
+pub(super) fn record_input(job: &Job, input: PreparedInput) -> Result<()> {
+    let Some((root, id)) = job.conversation.get() else {
+        return Ok(());
+    };
+    let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+    job.pending()?;
+    let mut chat = read(root, id)?;
+    if chat.active_task.as_deref() != Some(&job.id) {
+        return Err("This response is no longer active.".into());
+    }
+    let index = chat
+        .messages
+        .len()
+        .checked_sub(2)
+        .ok_or("Missing chat prompt.")?;
+    chat.messages[index].prepared_input = Some(input);
+    save(root, &chat)
 }
 fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Result<Value> {
     let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
@@ -748,11 +783,26 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         .filter(|pair| pair[1].status == "completed")
         .flat_map(|pair| {
             pair.iter()
-                .map(|m| json!({"role":m.role,"content":if m.games.is_empty() { m.content.clone() } else { format!("{}\n[Interactive games: {}]", m.content, m.games.iter().map(|g| g.definition.title.as_str()).collect::<Vec<_>>().join(", ")) }}))
+                .map(|m| json!({"role":m.role,"content":m.prepared_input.as_ref().map(|input| input.content.as_str()).unwrap_or(&m.content)}))
         })
         .collect::<Vec<_>>();
     history(&json!(history_rows))?;
     let mut wire = json!({"prompt":prompt,"history":history_rows,"intent":c["intent"],"includeTranscript":chat.transcript.is_some()});
+    let previous = chat
+        .messages
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .rfind(|pair| pair[1].status == "completed");
+    if let Some(previous) = previous {
+        wire["historyTail"] = json!(previous[1].id);
+        wire["lastTranscript"] = json!(
+            previous[0]
+                .prepared_input
+                .as_ref()
+                .and_then(|input| input.transcript.as_deref())
+        );
+    }
     wire["reasoningEffort"] = json!(chat.reasoning_effort);
     let mut recent_games = chat
         .messages
@@ -805,6 +855,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         },
         role: "user".into(),
         content: prompt,
+        prepared_input: None,
         games: Vec::new(),
         blocks: Vec::new(),
         status: "completed".into(),
@@ -825,6 +876,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         id: random()?,
         role: "assistant".into(),
         content: String::new(),
+        prepared_input: None,
         games: Vec::new(),
         blocks: Vec::new(),
         status: "streaming".into(),
@@ -842,6 +894,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         max_output_tokens: None,
     });
     chat.updated_at = now();
+    wire["replyId"] = json!(chat.messages.last().unwrap().id);
     let job = new_job(&p.id)?;
     let _ = job.conversation.set((root.clone(), chat.id.clone()));
     chat.active_task = Some(job.id.clone());
@@ -1067,6 +1120,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             {
                 job.cancelled.store(true, Ordering::Relaxed);
             }
+            replay::forget_chat(&root, id);
             match fs::remove_file(path(&root, id)?) {
                 Ok(()) => Ok(Value::Null),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),

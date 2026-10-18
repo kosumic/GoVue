@@ -163,7 +163,11 @@ fn usage_survives_provider_changes_normalizes_protocols_and_preserves_legacy_his
         assert_eq!(reply["usage"]["cacheReadTokens"], 40);
         assert_eq!(
             reply["usage"]["cacheCreationTokens"],
-            if protocol == "anthropic" { 30 } else { 0 }
+            json!(if protocol == "anthropic" {
+                Some(30)
+            } else {
+                None
+            })
         );
         assert_eq!(
             reply["usage"]["uncachedInputTokens"],
