@@ -744,6 +744,7 @@ function Browser() {
                 />
               ))}
             <AiSheet
+              keyboardVerticalOffset={session.fullscreen ? 0 : insets.top}
               onBeforeGameAudio={media.pause}
               visible={aiVisible}
               onClose={() => setAiVisible(false)}

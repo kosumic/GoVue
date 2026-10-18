@@ -37,7 +37,7 @@ function Button({ title, onPress, disabled = false }: { title: string; onPress: 
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, disabled && styles.disabled]}><Text style={styles.buttonText}>{title}</Text></Pressable>;
 }
 
-export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, browserControl, onBeforeGameAudio }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; onOpenVideo?: (videoId: string) => void; browserControl?: ReactNode; onBeforeGameAudio?: () => Promise<void> | void }) {
+export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, browserControl, onBeforeGameAudio, keyboardVerticalOffset }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; onOpenVideo?: (videoId: string) => void; browserControl?: ReactNode; onBeforeGameAudio?: () => Promise<void> | void; keyboardVerticalOffset: number }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const [chatVideoId, setChatVideoId] = useState(videoId);
@@ -154,7 +154,8 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   // Share the app window so the mounted VideoView can float above chat and
   // enter system PiP without a full-screen dialog covering either surface.
   return <View style={styles.overlay}>
-      <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      {/* Keyboard coordinates include the safe area above this app-window overlay. */}
+      <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={keyboardVerticalOffset}>
         <View style={styles.safe} accessibilityElementsHidden={historyVisible || transcriptVisible} importantForAccessibility={historyVisible || transcriptVisible ? 'no-hide-descendants' : 'auto'}>
         <View style={styles.heading}>
           {page === 'chat' ? <IconButton icon={Menu} label="Open conversations" onPress={() => { Keyboard.dismiss(); void chats.refresh().catch(() => {}); setHistoryVisible(true); }} /> : <IconButton icon={ChevronLeft} label="Back to chat" onPress={() => { ai.stop(); showPage('chat'); }} />}
