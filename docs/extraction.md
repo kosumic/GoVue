@@ -25,11 +25,18 @@ and token strings correlated with the active extraction task. It never loads a
 YouTube document. Player signature code must continue to use PlayerRuntime;
 the token renderer is not a general player-code evaluator.
 
+On iOS, WebKit reports the local HTML's YouTube base URL as its initial
+navigation. The renderer permits that first top-level local load, then rejects
+subsequent HTTPS navigation, including navigation to the same base URL. A
+replacement renderer gets a fresh initial-load allowance.
+
 The Pixel verification extracted 11 streams and two caption tracks from the
 public video `jNQXAC9IVRw`, played it through Expo Video, downloaded a 309,288-byte
 audio file using the Rust transfer engine, and parsed six English caption lines.
-The download probe used a separate temporary store. iOS live verification has
-not been performed for this change.
+The download probe used a separate temporary store. An iPad mini live check
+also extracted six English caption lines from that video after fixing the
+verification renderer's initial local navigation. iOS playback and downloads
+were not covered by that transcript check.
 
 Player responses and signed catalogs remain in a bounded memory cache for 90
 seconds (three videos). Only normalized transcripts enter the existing native
