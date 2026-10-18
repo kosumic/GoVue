@@ -17,6 +17,7 @@ export function TokenRuntime() {
   const current = useRef(renderer);
   current.current = renderer;
   const ready = useRef(false);
+  const initialLoad = useRef(true);
   const jobs = useRef(new Map<string, Job>());
   const [generation, setGeneration] = useState(0);
   const key = (requestId: string, taskId: number) => `${requestId}/${taskId}`;
@@ -37,6 +38,7 @@ export function TokenRuntime() {
   };
   const restart = () => {
     fail();
+    initialLoad.current = true;
     if (Platform.OS === 'android') current.current.retire();
     setGeneration(value => value + 1);
   };
@@ -73,13 +75,23 @@ export function TokenRuntime() {
       javaScriptEnabled domStorageEnabled={false} cacheEnabled={false} sharedCookiesEnabled={false}
       thirdPartyCookiesEnabled={false} allowFileAccess={false} allowFileAccessFromFileURLs={false}
       allowUniversalAccessFromFileURLs={false} mixedContentMode="never" setSupportMultipleWindows={false}
-      onShouldStartLoadWithRequest={request => request.url === 'about:blank'}
+      onShouldStartLoadWithRequest={request => {
+        if (request.url === 'about:blank') return true;
+        // WKWebView reports loadHTMLString's base URL for its initial local
+        // document. Permit that one load, then reject every HTTPS navigation.
+        if (Platform.OS === 'ios' && initialLoad.current && request.isTopFrame &&
+          request.navigationType === 'other' && request.url === `${source.baseUrl}/`) {
+          initialLoad.current = false;
+          return true;
+        }
+        return false;
+      }}
       onRenderProcessGone={recover} onContentProcessDidTerminate={recover}
       onMessage={event => {
         if (!renderer.isCurrent() || event.nativeEvent.data.length > 2_100_000) return;
         try {
           const reply = JSON.parse(event.nativeEvent.data);
-          if (reply.ready === true) { ready.current = true; for (const job of jobs.current.values()) dispatch(job); return; }
+          if (reply.ready === true) { initialLoad.current = false; ready.current = true; for (const job of jobs.current.values()) dispatch(job); return; }
           const identity = key(reply.requestId, reply.taskId);
           const job = jobs.current.get(identity);
           if (!job) return;

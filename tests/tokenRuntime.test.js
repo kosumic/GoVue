@@ -8,7 +8,7 @@ import { build } from 'esbuild';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const require = createRequire(import.meta.url);
 
-test('token renderer isolates challenges and rejects interrupted, stale and cancelled work', async t => {
+async function harness(t, os = 'android') {
   let engine;
   const WebView = forwardRef((props,ref) => {
     const handle=useRef({injections:[],injectJavaScript(code){this.injections.push(code);}});
@@ -16,7 +16,7 @@ test('token renderer isolates challenges and rejects interrupted, stale and canc
     return createElement('WebView',{...props,handle:handle.current});
   });
   const edges={
-    'react-native':{Platform:{OS:'android'},View:'View',StyleSheet:{create:value=>value}},
+    'react-native':{Platform:{OS:os},View:'View',StyleSheet:{create:value=>value}},
     'react-native-webview':WebView,
     'extraction-edge':{registerTokenRuntime:value=>{engine=value;return()=>{engine=null;};}},
   };
@@ -27,6 +27,11 @@ test('token renderer isolates challenges and rejects interrupted, stale and canc
   let root;
   await act(()=>{root=create(createElement(module.exports.TokenRuntime));});
   t.after(async()=>{await act(()=>root.unmount());});
+  return {root, engine};
+}
+
+test('token renderer isolates challenges and rejects interrupted, stale and cancelled work', async t => {
+  const {root,engine}=await harness(t);
   const old=root.root.findByType('WebView').props;
   assert.match(old.source.html,/connect-src 'none'/);
   assert.match(old.source.html,/default-src 'none'/);
@@ -57,4 +62,30 @@ test('token renderer isolates challenges and rejects interrupted, stale and canc
   await act(()=>engine.release('cancelled'));
   await cancellation;
   await act(()=>send(fresh,{requestId:'cancelled',taskId:3,value:'late'}));
+});
+
+for (const os of ['android', 'ios']) test(`${os} token renderer permits only its local document and blocks later HTTPS navigation`, async t => {
+  const {root}=await harness(t,os);
+  const initial={url:'https://www.youtube.com/',navigationType:'other',isTopFrame:true};
+  const view=()=>root.root.findByType('WebView').props;
+  for(const request of [
+    {...initial,isTopFrame:false},
+    {...initial,navigationType:'click'},
+    {...initial,url:'https://www.youtube.com/watch?v=abcdefghijk'},
+    {...initial,url:'https://www.youtube.com/?proof=private'},
+    {...initial,url:'https://www.youtube.com.evil.test/'},
+    {...initial,url:'http://www.youtube.com/'},
+  ]) assert.equal(view().onShouldStartLoadWithRequest(request),false);
+  assert.equal(view().onShouldStartLoadWithRequest({url:'about:blank'}),true);
+  assert.equal(view().onShouldStartLoadWithRequest(initial),os==='ios','WebKit reports the base URL for its local HTML load');
+  assert.equal(view().onShouldStartLoadWithRequest(initial),false,'the base origin is not a network-navigation exception');
+
+  await act(()=>view().onContentProcessDidTerminate());
+  assert.equal(view().onShouldStartLoadWithRequest(initial),os==='ios','a replacement document gets its own initial load');
+  await act(()=>view().onMessage({nativeEvent:{data:JSON.stringify({ready:true})}}));
+  assert.equal(view().onShouldStartLoadWithRequest(initial),false);
+
+  await act(()=>view().onContentProcessDidTerminate());
+  await act(()=>view().onMessage({nativeEvent:{data:JSON.stringify({ready:true})}}));
+  assert.equal(view().onShouldStartLoadWithRequest(initial),false,'a ready document cannot claim another initial load');
 });
