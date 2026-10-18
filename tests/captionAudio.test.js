@@ -86,10 +86,10 @@ test('switching lines discards and revokes a late clip without interrupting the 
   const old = deferred();
   const env = await harness(t, command => command.cueId === 'cue-0' ? old.promise : clip('new'));
   let first, second;
-  await act(() => { first = env.transcript().play('cue-0').catch(error => error); });
+  await act(() => { first = env.transcript().play('cue-0'); });
   await act(() => { second = env.transcript().play('cue-1'); });
   assert.equal(env.transcript().phase, 'playing');
-  await act(async () => { old.resolve(clip('old')); assert.match((await first).message, /stopped/); });
+  await act(async () => { old.resolve(clip('old')); assert.equal(await first, undefined); });
   assert.equal(env.players[0].playing, true);
   assert.equal(env.players[0].sources.some(source => source?.uri.includes('/old/')), false);
   assert.ok(env.calls.some(c => c.op === 'ai_game_audio_release' && c.token === 'old'));
@@ -99,15 +99,17 @@ test('switching lines discards and revokes a late clip without interrupting the 
 test('games and transcript lines share audio focus, and backgrounding cancels playback', async t => {
   const env = await harness(t);
   let transcript, game;
-  await act(() => { transcript = env.transcript().play('cue-0').catch(error => error); });
-  await act(() => { game = env.game().play('cue-1').catch(error => error); });
-  assert.match((await transcript).message, /stopped/);
+  await act(() => { transcript = env.transcript().play('cue-0'); });
+  await act(() => { game = env.game().play('cue-1'); });
+  assert.equal(await transcript, undefined);
+  assert.equal(env.transcript().error, '');
   assert.equal(env.players[0].playing, false);
   assert.equal(env.players[1].playing, true);
   assert.equal(env.transcript().phase, 'idle');
   await act(async () => { for (const listener of env.apps) listener('background'); await game; });
   assert.equal(env.players[1].playing, false);
   assert.equal(env.game().phase, 'idle');
+  assert.equal(env.game().error, '');
   assert.equal(env.calls.filter(c => c.op === 'ai_game_audio_release').length, 2);
 });
 
@@ -115,12 +117,12 @@ test('closing the reader cancels extraction and releases a clip returned after u
   const pending = deferred();
   const env = await harness(t, command => command.catalog ? pending.promise : { needsMedia: true, videoId: scope.videoId });
   let playing;
-  await act(() => { playing = env.transcript().play('cue-0').catch(error => error); });
+  await act(() => { playing = env.transcript().play('cue-0'); });
   assert.equal(env.extractions.length, 1);
   await env.unmount();
   assert.equal(env.extractions[0].signal.aborted, true);
   pending.resolve(clip('late'));
-  assert.match((await playing).message, /stopped/);
+  assert.equal(await playing, undefined);
   assert.equal(env.players[0].sources.length, 0);
   assert.ok(env.calls.some(c => c.op === 'ai_game_audio_release' && c.token === 'late'));
 });
