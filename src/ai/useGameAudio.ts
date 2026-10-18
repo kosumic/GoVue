@@ -70,8 +70,10 @@ function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforeP
     extraction.current = controller;
     setPhase('loading');
     let clip: Clip | null = null;
+    const cancelled = () => !mounted.current || generation.current !== version || controller.signal.aborted;
+    const cancellation = Error('Audio playback cancelled');
     const check = () => {
-      if (!mounted.current || generation.current !== version || controller.signal.aborted) throw Error('Audio playback was stopped.');
+      if (cancelled()) throw cancellation;
     };
     try {
       const command = { op: 'word' in scope ? 'ai_word_audio' : 'gameId' in scope ? 'ai_game_audio' : 'ai_chat_audio', ...scope, cueId };
@@ -114,12 +116,13 @@ function useCaptionAudio(scope: GameScope | TranscriptScope | WordScope, beforeP
         const ended = player.addListener('playToEnd', () => finish());
         const status = player.addListener('statusChange', ({ status }) => { if (status === 'error') finish(Error('Caption audio could not be played.')); });
         const timeout = setTimeout(() => finish(Error('Audio playback timed out. Try replaying the clip.')), 60000);
-        active.current = { cancel: () => finish(Error('Audio playback was stopped.')) };
+        active.current = { cancel: () => finish(cancellation) };
         player.play();
         setPhase('playing');
       });
     } catch (error) {
-      if (mounted.current && generation.current === version) setError(error instanceof Error ? error.message : 'Could not play this caption.');
+      if (cancelled()) return;
+      setError(error instanceof Error ? error.message : 'Could not play this caption.');
       throw error;
     } finally {
       if (mounted.current && generation.current === version) {

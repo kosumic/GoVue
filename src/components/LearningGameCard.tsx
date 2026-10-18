@@ -67,6 +67,7 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
     if (!/^\d{1,8}$/.test(request.id) || requests.current.has(request.id) || requests.current.size >= 8) return;
     requests.current.add(request.id);
     const eventId = `${document.session}-${request.id}`;
+    setError('');
     try {
       if (request.method === 'action') {
         if (typeof request.action !== 'string' || request.action === '__play_audio' || !request.input || typeof request.input !== 'object' || Array.isArray(request.input)) throw Error('Invalid game action.');
@@ -106,7 +107,6 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
     {loading && <View pointerEvents="none" style={styles.loading}><ActivityIndicator color={colors.accent} /><Text style={styles.help}>Opening game…</Text></View>}
     {audio.phase !== 'idle' && <View style={styles.audioStatus}>
       {audio.phase === 'loading' ? <ActivityIndicator size="small" color={colors.accent} /> : <Play size={14} color={colors.accent} />}
-      <Text accessibilityLiveRegion="polite" style={styles.help}>{audio.phase === 'loading' ? 'Preparing audio…' : 'Playing video audio'}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="Stop game audio" onPress={audio.stop} style={styles.control}><Square size={16} color={colors.ink} /></Pressable>
     </View>}
     {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
