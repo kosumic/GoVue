@@ -197,7 +197,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           </ScrollView>
           <TranscriptTranslations visible={translationsVisible} tracks={translations} selected={selectedTracks} onSelect={onSelectTrack} onClose={() => setTranslationsVisible(false)} />
         </>}
-        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={styles.trackText}>Loading comparison…</Text></View>}
+        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={[styles.trackText, styles.comparisonMessage]}>{translations.some(track => track.id === selectedTracks[1]) ? 'Preparing YouTube translation… This can take over a minute.' : 'Loading comparison…'}</Text></View>}
         {!!comparisonError && <View style={styles.comparisonStatus}><Text accessibilityRole="alert" style={styles.comparisonError}>{comparisonError}</Text>
           {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()}><Text style={styles.selectedText}>Retry</Text></Pressable>}</View>}
         {searchVisible && <View style={styles.search}><Search size={16} color={colors.muted} /><TextInput autoFocus accessibilityLabel="Search transcript" placeholder="Find in transcript" placeholderTextColor={colors.muted}
@@ -268,6 +268,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   tracks: { flexGrow: 0, flexShrink: 0 },
   disabledTrack: { opacity: 0.4 },
   comparisonStatus: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 20, marginBottom: 8 },
+  comparisonMessage: { flex: 1 },
   comparisonError: { flex: 1, color: colors.muted, fontSize: 12 },
   trackContent: { paddingHorizontal: 20, paddingBottom: 10, gap: 8 },
   track: { paddingVertical: 9, paddingHorizontal: 13, borderRadius: 10, backgroundColor: colors.surface },
