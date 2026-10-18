@@ -6,6 +6,11 @@ The player's **Transcript** and **AI** buttons appear before speed and quality.
 Transcript opens the reader; AI opens the same full-screen conversation workspace
 as **Chat** in the bottom navigation.
 
+Opening a video starts loading its transcript in the background. The reader
+stays closed until you tap **Transcript**, then reuses the loaded captions or the
+request already in progress. Closing the reader keeps that work available for
+the current video; opening another video cancels the previous request.
+
 ## Read and compare captions
 
 The reader supports language selection, local search, playback following, and
