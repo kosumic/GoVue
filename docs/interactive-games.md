@@ -4,6 +4,17 @@ The assistant can call `create_interactive_game` to create a playable HTML card
 in its reply. There is no registry of game types. The model supplies HTML, CSS,
 presentation JavaScript, and declarative rules interpreted by Rust.
 
+For a new game, the assistant is instructed to explain its approach before
+generating it and use `update_plan` for work with several steps. The checklist
+updates in place, and short progress messages remain in the conversation.
+Simple questions and small follow-ups can skip planning. Updates depend on the
+selected model; an initial reasoning or network wait may still occur.
+
+**Generating exercise…** means the model is still writing the tool arguments;
+**Validating exercise…** means the host is checking and saving the game.
+Stopping or failing a response preserves unfinished plan steps. Completing a
+response never automatically checks them off.
+
 Open a card with **Play game**, or **Continue game** after making progress. Only
 one card runs at a time. Expand it for more space; closing, expanding, or reloading
 an interface preserves its Rust state. Game audio pauses the main video and stops

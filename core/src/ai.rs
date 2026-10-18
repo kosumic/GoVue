@@ -24,6 +24,7 @@ mod catalog;
 mod connections;
 mod conversations;
 mod games;
+mod plan;
 mod practice;
 mod replay;
 mod search;
@@ -643,6 +644,7 @@ struct Sse {
     data: String,
     text: String,
     reasoning: String,
+    phase: Option<activity::Phase>,
     usage: Value,
     counter: usage::Counter,
     first_output: Option<Instant>,
@@ -660,6 +662,7 @@ impl Sse {
             data: String::new(),
             text: String::new(),
             reasoning: String::new(),
+            phase: None,
             usage: Value::Null,
             counter: usage::Counter::default(),
             first_output: None,
@@ -707,6 +710,25 @@ impl Sse {
             serde_json::from_str(data).map_err(|_| "Provider sent an unreadable stream event.")?;
         let gemini_offset = self.tools.gemini_len();
         self.tools.event(&self.kind, &v)?;
+        if self.kind == "responses" && v["item"]["type"] == "message" {
+            let phase = serde_json::from_value(v["item"]["phase"].clone()).ok();
+            if v["type"] == "response.output_item.added" {
+                self.phase = phase;
+                if !self.text.is_empty() {
+                    self.text.push_str("\n\n");
+                }
+            }
+            if let Some(job) = &self.job {
+                let mut tape = job
+                    .activity
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if v["type"] == "response.output_item.done" {
+                    tape.phase(phase);
+                }
+                tape.close_output();
+            }
+        }
         let previous_output = self.text.len() + self.reasoning.len();
         let usage = if self.kind == "gemini" {
             &v["usageMetadata"]
@@ -856,7 +878,7 @@ impl Sse {
             job.activity
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .output(reasoning, delta)?;
+                .output(reasoning, delta, self.phase)?;
         }
         if reasoning {
             self.reasoning.push_str(delta);
@@ -1329,6 +1351,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
     let tools_enabled = job.conversation.get().is_some();
     if tools_enabled {
         instructions.push_str(games::INSTRUCTIONS);
+        instructions.push_str(plan::INSTRUCTIONS);
     }
     if let Some(activity) = c["gameActivity"].as_str().filter(|s| *s != "[]") {
         context.push_str("\n<game_activity>\n");
@@ -1612,7 +1635,12 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         let calls = response["tools"]["calls"]
             .as_array()
             .ok_or("Missing tool calls.")?;
-        if !calls.is_empty() && (!tools_enabled || round == 4 || calls.len() > 3) {
+        let commentary = tools::commentary_only(&response, protocol);
+        // Plan updates share the same bounded loop as work; leave room for both.
+        if (!calls.is_empty() && !tools_enabled)
+            || calls.len() > 3
+            || (round >= 11 && (!calls.is_empty() || commentary))
+        {
             return Err("The assistant exceeded this turn's tool limit.".into());
         }
         let mut results = Vec::new();
@@ -1626,6 +1654,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
                 .running(call_id, name)?;
             job.publish_activity();
             let result = match name {
+                "update_plan" => plan::update(job, call),
                 "create_interactive_game" => conversations::create_game(job, call),
                 "list_interactive_games" | "read_interactive_game" => {
                     conversations::read_game_library(job, call)
@@ -1647,13 +1676,15 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             results.push(json!({"id":call["id"],"providerId":call["providerId"],"name":call["name"],"output":result.unwrap_or_else(|error| json!({"error":error}))}));
         }
         tools::continue_with(&mut body, protocol, &response, results)?;
-        if let Some((content, reply_id)) = conversations::steer(job, calls.is_empty())? {
+        if let Some((content, reply_id)) =
+            conversations::steer(job, calls.is_empty() && !commentary)?
+        {
             tools::append_user(&mut body, protocol, &content)?;
             turn["replyId"] = json!(reply_id);
             round = 0;
             continue;
         }
-        if calls.is_empty() {
+        if calls.is_empty() && !commentary {
             replay::remember(p, &turn, job, protocol, &body);
             return Ok(response);
         }

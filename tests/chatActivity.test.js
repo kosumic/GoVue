@@ -55,6 +55,10 @@ const game = { id: 'game', definition: { html: 'PRIVATE_GAME_SOURCE', rules: 'PR
 const tool = { id: 'tool', kind: 'tool', callId: 'call', name: 'create_interactive_game', startedAt: 1000, durationMs: 2500, status: 'completed', gameId: 'game', title: 'Greeting exercise' };
 const text = (id, content, status = 'completed') => ({ id, kind: 'text', content, status });
 const reasoning = status => ({ id: 'reason', kind: 'reasoning', content: 'Provider reasoning', status });
+const plan = (status = 'running') => ({ id: 'plan', kind: 'plan', status, steps: [
+  { step: 'Choose an example', status: 'completed' },
+  { step: 'Build the game', status: status === 'completed' ? 'completed' : 'in_progress' },
+] });
 const reply = blocks => ({ id: 'reply', role: 'assistant', content: 'BeforeAfter', status: 'completed', blocks, games: [game] });
 const props = (message, busy = false) => ({
   chat: { conversation: { id: 'chat', messages: [message] }, busy, settingsBusy: false, error: '', gameAction: noop, stop: noop },
@@ -127,7 +131,7 @@ test('reasoning opens on request, folds when its phase ends, and a stopped tool 
   await update({ ...reply([reasoning('completed'), pending]), games: [], status: 'streaming' }, true);
   assert.equal(root.root.findByProps({ accessibilityLabel: 'Reasoning' }).props.accessibilityState.expanded, false);
   assert.equal(root.root.findAllByType('Markdown').length, 0);
-  assert.ok(labels(root).includes('Creating exercise…'));
+  assert.ok(labels(root).includes('Generating exercise…'));
   assert.equal(root.root.findAllByType('ActivityIndicator').length, 1, 'the tool supplies the only progress indicator');
   await update({ ...reply([reasoning('completed'), pending]), games: [], status: 'stopped' }, false);
   assert.ok(labels(root).includes('Exercise creation stopped'));
@@ -140,6 +144,37 @@ test('legacy messages retain their answer, optional reasoning, and exercise', as
   assert.equal(root.root.findByType('GameCard').props.gameId, 'game');
   await act(async () => root.root.findByProps({ accessibilityLabel: 'Reasoning' }).props.onPress());
   assert.deepEqual(root.root.findAllByType('Markdown').map(node => node.props.content), ['Legacy reasoning', 'Legacy answer']);
+});
+
+test('commentary remains visible while the plan updates in place and successful plan calls stay out of the transcript', async t => {
+  const preamble = { ...text('preamble', 'I’ll build a listening quiz.'), phase: 'commentary' };
+  const planning = { ...tool, id: 'planning', name: 'update_plan', gameId: undefined };
+  const pending = { ...tool, status: 'preparing', gameId: undefined, durationMs: 0 };
+  const { root, update } = await render(t, { ...reply([preamble, planning, plan(), pending]), games: [], status: 'streaming' }, true);
+  assert.equal(root.root.findByType('Markdown').props.content, preamble.content);
+  assert.ok(labels(root).includes('Plan'));
+  assert.ok(labels(root).includes('1/2'));
+  assert.ok(root.root.findByProps({ accessibilityLabel: 'Build the game: in progress' }));
+  assert.equal(labels(root).filter(label => label === 'Choose an example').length, 1);
+  assert.equal(labels(root).includes('Tool completed'), false);
+  assert.ok(labels(root).includes('Generating exercise…'));
+  await update({ ...reply([preamble, planning, plan('completed'), tool, { ...text('final', 'Ready to play.'), phase: 'final_answer' }]) }, false);
+  assert.ok(labels(root).includes('Plan complete'));
+  assert.ok(labels(root).includes('2/2'));
+  assert.deepEqual(root.root.findAllByType('Markdown').map(node => node.props.content), [preamble.content, 'Ready to play.']);
+  assert.equal(root.root.findAllByType('ActivityIndicator').length, 0);
+});
+
+test('stopping or failing a reply preserves unfinished plan steps without a spinner', async t => {
+  const { root, update } = await render(t, { ...reply([plan()]), games: [], status: 'stopped' }, false);
+  assert.ok(labels(root).includes('Plan unfinished'));
+  assert.ok(labels(root).includes('1/2'));
+  assert.ok(root.root.findByProps({ accessibilityLabel: 'Build the game: unfinished' }));
+  assert.equal(root.root.findAllByType('ActivityIndicator').length, 0);
+  await update({ ...reply([{ ...plan(), status: 'failed' }]), games: [], status: 'failed' }, false);
+  assert.ok(labels(root).includes('Plan interrupted'));
+  assert.ok(labels(root).includes('1/2'));
+  assert.equal(root.root.findAllByType('ActivityIndicator').length, 0);
 });
 
 test('the latest game opens automatically, stays closed on text updates, and yields to a newly created game', async t => {

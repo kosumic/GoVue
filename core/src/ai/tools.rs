@@ -272,14 +272,53 @@ fn append(target: &mut Value, name: &str, delta: &Value) -> Result<()> {
     Ok(())
 }
 
+// Keep preamble-only Responses turns running; other protocols have no phase signal.
+pub(super) fn commentary_only(response: &Value, protocol: &str) -> bool {
+    if protocol != "responses" {
+        return false;
+    }
+    let Some(items) = response["tools"]["continuation"].as_array() else {
+        return false;
+    };
+    let mut found = false;
+    for item in items
+        .iter()
+        .filter(|item| item["type"] == "message" || item["role"] == "assistant")
+    {
+        if !matches!(
+            item["phase"].as_str(),
+            Some("commentary" | "partial_answer")
+        ) {
+            return false;
+        }
+        found = true;
+    }
+    found
+}
+
+fn gemini_schema(value: &mut Value) {
+    if let Some(fields) = value.as_object_mut() {
+        fields.remove("additionalProperties");
+        for field in fields.values_mut() {
+            gemini_schema(field);
+        }
+    } else if let Some(items) = value.as_array_mut() {
+        for item in items {
+            gemini_schema(item);
+        }
+    }
+}
+
 pub(super) fn install(body: &mut Value, protocol: &str) {
-    let definitions = std::iter::once(games::tool()).chain(practice::tools());
+    let definitions = [games::tool(), plan::tool()]
+        .into_iter()
+        .chain(practice::tools());
     let declarations = definitions.map(|tool| match protocol {
         "responses" => json!({"type":"function","name":tool["name"],"description":tool["description"],"parameters":tool["parameters"],"strict":false}),
         "anthropic" => json!({"name":tool["name"],"description":tool["description"],"input_schema":tool["parameters"]}),
         "gemini" => {
             let mut parameters = tool["parameters"].clone();
-            if let Some(fields) = parameters.as_object_mut() { fields.remove("additionalProperties"); }
+            gemini_schema(&mut parameters);
             json!({"name":tool["name"],"description":tool["description"],"parameters":parameters})
         }
         _ => json!({"type":"function","function":tool}),

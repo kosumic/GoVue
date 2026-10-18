@@ -785,6 +785,7 @@ fn library_agent_roundtrip(
             names,
             vec![
                 json!("create_interactive_game"),
+                json!("update_plan"),
                 json!("list_interactive_games"),
                 json!("read_interactive_game")
             ]
