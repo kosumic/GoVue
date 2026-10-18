@@ -152,6 +152,38 @@ test('copy confirms success with a haptic and resets its checkmark timer on repe
   assert.equal(hapticEvents.length, 2);
 });
 
+test('every response footer regenerates its own reply and disables generation when unavailable', async t => {
+  const messages = [
+    { id: 'first-prompt', role: 'user', content: 'First question', status: 'completed' },
+    { ...reply(undefined), id: 'first-reply', games: [] },
+    { id: 'second-prompt', role: 'user', content: 'Second question', status: 'completed' },
+    { ...reply(undefined), id: 'second-reply', games: [] },
+    { id: 'third-prompt', role: 'user', content: 'Third question', status: 'completed' },
+    { ...reply(undefined), id: 'third-reply', status: 'failed', games: [] },
+  ];
+  const retried = [];
+  const value = { ...props(messages.at(-1)), onRetry: id => retried.push(id) };
+  value.chat.conversation.messages = messages;
+  let root;
+  await act(async () => { root = create(h(AiChat, value)); });
+  t.after(() => act(async () => root.unmount()));
+  const buttons = () => root.root.findAllByType('Pressable').filter(node => ['Regenerate response', 'Try again'].includes(node.props.accessibilityLabel));
+  assert.equal(buttons().length, 3, 'each assistant response has a button, including older and failed replies');
+  assert.equal(buttons()[0].props.accessibilityHint, 'Replaces this response and later messages');
+  for (const button of buttons()) await act(async () => button.props.onPress());
+  assert.deepEqual(retried, ['first-reply', 'second-reply', 'third-reply']);
+  for (const unavailable of [
+    { chat: { ...value.chat, busy: true } }, { loading: true }, { connected: false },
+    { contextReady: false }, { chat: { ...value.chat, settingsBusy: true } },
+  ]) {
+    await act(async () => root.update(h(AiChat, { ...value, ...unavailable })));
+    assert.ok(buttons().every(button => button.props.disabled && button.props.accessibilityState.disabled));
+  }
+  await act(async () => root.update(h(AiChat, { ...value, chat: { ...value.chat, conversation: { ...value.chat.conversation, messages: messages.map(message => message.id === 'third-reply' ? { ...message, status: 'streaming' } : message) } } })));
+  assert.equal(buttons().at(-1).props.disabled, true, 'a streaming reply cannot regenerate even if the busy flag is stale');
+  assert.equal(buttons()[0].props.disabled, false);
+});
+
 test('editing loads the original prompt, cancel restores the draft, and failed sends keep the edit', async t => {
   const message = { id: 'original', role: 'user', content: 'Original prompt', status: 'completed' };
   const sends = [];

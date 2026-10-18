@@ -113,15 +113,15 @@ export function useChats(visible: boolean, contextId: string) {
       if (mounted.current) void refresh().catch(() => {});
     }
   }
-  async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false, focusGameId?: string, editMessageId?: string) {
+  async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false, focusGameId?: string, editMessageId?: string, retryMessageId?: string) {
     if (sending.current || settingsPending.current) return false;
-    cancel(!!editMessageId); const version = epoch.current;
+    cancel(!!editMessageId || !!retryMessageId); const version = epoch.current;
     sending.current = true; setBusy(true); setError('');
     let pending: Promise<Started> | null = null;
     try {
       if (cancellation.current) await cancellation.current;
       if (!mounted.current || version !== epoch.current) return false;
-      pending = aiRequest<Started>({ op: 'ai_chat_send', id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}), ...(focusGameId ? { focusGameId } : {}), ...(editMessageId ? { editMessageId } : {}) });
+      pending = aiRequest<Started>({ op: 'ai_chat_send', id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}), ...(focusGameId ? { focusGameId } : {}), ...(editMessageId ? { editMessageId } : {}), ...(retryMessageId ? { retryMessageId } : {}) });
       starting.current = pending;
       const started = await pending;
       if (starting.current === pending) starting.current = null;

@@ -113,3 +113,32 @@ test('backtracking sends the selected prompt identity and rejects a late update 
   assert.deepEqual(env.chat().conversation, saved);
   assert.equal(env.chat().busy, false);
 });
+
+test('regeneration forwards the selected response identity and waits for acceptance before replacing history', async t => {
+  const env = await harness();
+  t.after(env.unmount);
+  const original = conversation('low', 'Original answer', 'completed');
+  original.messages.push({ id: 'later-user', role: 'user', content: 'Later question', status: 'completed' }, { id: 'later-reply', role: 'assistant', content: 'Later answer', status: 'completed' });
+  let opening, sending;
+  await act(() => { opening = env.chat().open('chat'); });
+  await env.reply('ai_chat_get', original);
+  await opening;
+  await act(() => { sending = env.chat().send('fixture', '', null, undefined, true, undefined, undefined, 'reply'); });
+  const command = env.pending('ai_chat_send').command;
+  assert.equal(command.chatId, 'chat');
+  assert.equal(command.retry, true);
+  assert.equal(command.retryMessageId, 'reply');
+  assert.equal(command.editMessageId, undefined);
+  assert.deepEqual(env.chat().conversation.messages, original.messages);
+  assert.equal(await env.chat().send('fixture', '', null, undefined, true, undefined, undefined, 'later-reply'), false, 'a second tap cannot start another request');
+  const regenerated = conversation();
+  regenerated.messages[1].id = 'replacement';
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: regenerated });
+  assert.equal(await sending, true);
+  assert.deepEqual(env.chat().conversation.messages.map(message => message.id), ['user', 'replacement']);
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'completed', text: 'Regenerated answer' } });
+  const saved = { ...regenerated, activeTask: null, messages: regenerated.messages.map(message => message.id === 'replacement' ? { ...message, content: 'Regenerated answer', status: 'completed' } : message) };
+  await env.reply('ai_chat_get', saved);
+  assert.deepEqual(env.chat().conversation, saved);
+  assert.equal(env.chat().busy, false);
+});

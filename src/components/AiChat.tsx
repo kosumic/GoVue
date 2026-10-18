@@ -28,7 +28,7 @@ function UserPrompt({ content, onEdit, disabled }: { content: string; onEdit: ()
   </View>;
 }
 
-const Message = memo(function Message({ message, last, busy, onRetry, onEdit, editDisabled, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; onEdit: () => void; editDisabled: boolean; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void }) {
+const Message = memo(function Message({ message, last, busy, onRetry, retryDisabled, onEdit, editDisabled, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; retryDisabled: boolean; onEdit: () => void; editDisabled: boolean; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const entrance = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
@@ -56,7 +56,7 @@ const Message = memo(function Message({ message, last, busy, onRetry, onEdit, ed
       {message.games?.filter(game => !linkedGames.has(game.id)).map(gameCard)}
       {message.error && <Text accessibilityRole="alert" style={styles.error}>{message.error}</Text>}
       {message.status === 'stopped' && !message.error && <Text style={styles.muted}>Response stopped</Text>}
-      <AiMessageDetails message={message} last={last} busy={busy} onRetry={onRetry} />
+      <AiMessageDetails message={message} last={last} retryDisabled={retryDisabled} onRetry={onRetry} />
     </>}
   </Animated.View>;
 });
@@ -98,7 +98,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   viewports?: ChatViewportStore;
   onBeforeGameAudio?: () => Promise<void> | void;
   onSend: (editMessageId?: string) => void | Promise<boolean>;
-  onRetry: () => void;
+  onRetry: (messageId: string) => void;
   onAttach: () => void;
   onDetach?: () => void;
   onOpenTranscript: () => void;
@@ -149,7 +149,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
             <Pressable accessibilityRole="button" onPress={() => { voice.changeDraft('Explain this phrase: '); input.current?.focus(); }} style={styles.suggestion}><MessageCircle size={17} color={colors.muted} /><Text style={styles.suggestionText}>Explain a phrase</Text></Pressable>
           </View> : <Pressable accessibilityRole="button" onPress={onModels} style={styles.connect}><Text style={styles.connectText}>Choose a model</Text></Pressable>}
         </View>}
-        renderMessage={(item, index) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={onRetry} onEdit={() => edit(item)} editDisabled={chat.busy || loading || chat.settingsBusy} reduceMotion={reduceMotion}
+        renderMessage={(item, index) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={() => onRetry(item.id)} retryDisabled={chat.busy || loading || chat.settingsBusy || !connected || !contextReady} onEdit={() => edit(item)} editDisabled={chat.busy || loading || chat.settingsBusy} reduceMotion={reduceMotion}
           chatId={chat.conversation?.id ?? ''} activeGameId={activeGameId} onActiveGame={setActiveGameId} gamesEnabled={voiceEnabled && contextReady && !loading && !voice.active}
           onGameAction={chat.gameAction} onBeforeGameAudio={onBeforeGameAudio} />}
       />

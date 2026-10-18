@@ -177,7 +177,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
             onBeforeGameAudio={onBeforeGameAudio}
             connected={!!selected?.connected && !!selected?.enabled && !selected?.needsReauth && !!selectedModel && !ai.busy} loading={!ai.ready || !chats.ready || chats.loading || contextLoading} contextReady={contextReady}
             reasoning={reasoningName(chats.reasoningEffort ?? savedReasoning)} providerId={selected?.id} model={selectedModel}
-            onSend={sendMessage} onRetry={() => { if (contextReady && selected?.connected) void chats.send(selected.id, '', attachment, undefined, true); }}
+            onSend={sendMessage} onRetry={messageId => { if (contextReady && selected?.connected && selected.enabled && !selected.needsReauth && selectedModel) void chats.send(selected.id, '', attachment, undefined, true, undefined, undefined, messageId); }}
             onAttach={attachCurrent} onDetach={chatVideoId ? undefined : () => setAttachment(null)} onOpenTranscript={() => { Keyboard.dismiss(); setTranscriptVisible(true); }} onSummarize={summarize} onModels={() => showPage('models')} />
         </> : page === 'models' ? <AiModels ai={ai} selectedId={selected?.id} selectedModel={selectedModel} onSelect={(id, model) => { void choose(id, model); }} onManage={() => showPage('providers')} /> : <AiProviders ai={ai} onUsage={() => { Keyboard.dismiss(); setUsageVisible(true); }} />}
         </View>

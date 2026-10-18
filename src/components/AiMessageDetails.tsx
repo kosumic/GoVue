@@ -17,7 +17,7 @@ function Detail({ label, value }: { label: string; value: string | undefined }) 
   return value === undefined ? null : <View style={s.detail}><Text style={s.label}>{label}</Text><Text selectable style={s.value}>{value}</Text></View>;
 }
 
-export function AiMessageDetails({ message, last, busy, onRetry }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void }) {
+export function AiMessageDetails({ message, last, retryDisabled, onRetry }: { message: ChatMessage; last: boolean; retryDisabled: boolean; onRetry: () => void }) {
   const colors = useThemeColors();
   const s = useThemeStyles(makeStyles);
   const { copied, copyText } = useCopyFeedback();
@@ -32,6 +32,7 @@ export function AiMessageDetails({ message, last, busy, onRetry }: { message: Ch
     : usage?.inputTokens != null || usage?.outputTokens != null ? `${formatTokens(usage?.inputTokens)} in / ${formatTokens(usage?.outputTokens)} out` : message.status === 'streaming' ? 'Responding…' : 'Usage not reported';
   const streamTime = usage?.streamMs ? `${Number((usage.streamMs / 1000).toFixed(1))}s` : undefined;
   const summary = [message.modelName || message.model, tokens, streamTime ? `${streamTime} streaming` : null].filter(Boolean).join(' · ');
+  const disabled = retryDisabled || message.status === 'streaming';
   return <View style={s.footer}>
     <View style={s.row}>
       <Pressable accessibilityRole="button" accessibilityLabel="Response details" accessibilityHint={cacheLabel} accessibilityState={{ expanded }} onPress={() => setExpanded(!expanded)} style={s.summary}>
@@ -43,7 +44,7 @@ export function AiMessageDetails({ message, last, busy, onRetry }: { message: Ch
       {!!message.content && <Pressable accessibilityRole="button" accessibilityLabel={copied ? 'Response copied' : 'Copy response'} accessibilityLiveRegion="polite" onPress={() => copyText(message.content)} style={s.action}>
         {copied ? <Check size={16} color={colors.action} /> : <Copy size={16} color={colors.muted} />}
       </Pressable>}
-      {last && message.status !== 'streaming' && <Pressable accessibilityRole="button" accessibilityLabel={message.status === 'completed' ? 'Regenerate response' : 'Try again'} disabled={busy} onPress={onRetry} style={[s.action, busy && s.disabled]}><RotateCw size={16} color={colors.muted} /></Pressable>}
+      <Pressable accessibilityRole="button" accessibilityLabel={message.status === 'failed' || message.status === 'stopped' ? 'Try again' : 'Regenerate response'} accessibilityHint={last ? 'Generate a new response to this prompt' : 'Replaces this response and later messages'} accessibilityState={{ disabled }} disabled={disabled} onPress={onRetry} style={[s.action, disabled && s.disabled]}><RotateCw size={16} color={colors.muted} /></Pressable>
     </View>
     {expanded && <View style={s.details}>
       <Detail label="Model" value={message.modelName || message.model} />

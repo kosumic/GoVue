@@ -346,4 +346,88 @@ fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
             .len(),
         2
     );
+
+    // Regeneration targets the selected response, retaining only its preceding context.
+    for prompt in ["Middle regeneration prompt", "Latest regeneration prompt"] {
+        let started = ok(
+            root,
+            json!({"op":"ai_chat_send","chatId":id,"id":provider,"prompt":prompt}),
+        );
+        wait(root, &started);
+    }
+    let before = ok(root, json!({"op":"ai_chat_get","chatId":id}));
+    let middle_reply = before["messages"][3]["id"].clone();
+    let bytes = fs::read(&path).unwrap();
+    for command in [
+        json!({"retry":true,"retryMessageId":"missing"}),
+        json!({"retry":true,"retryMessageId":before["messages"][2]["id"]}),
+        json!({"retry":true,"retryMessageId":"../invalid"}),
+        json!({"retry":true,"retryMessageId":null}),
+        json!({"retryMessageId":middle_reply,"prompt":"Changed"}),
+        json!({"retry":true,"retryMessageId":middle_reply,"editMessageId":first_user}),
+    ] {
+        let mut request = json!({"op":"ai_chat_send","chatId":id,"id":provider});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(command.as_object().unwrap().clone());
+        assert_eq!(call(root, request)["ok"], false);
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            bytes,
+            "invalid regeneration preserves history"
+        );
+    }
+    let regenerated = ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":id,"id":provider,"retry":true,"retryMessageId":middle_reply}),
+    );
+    let messages = regenerated["conversation"]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[0], before["messages"][0]);
+    assert_eq!(messages[1], before["messages"][1]);
+    assert_eq!(messages[2], before["messages"][2]);
+    assert_ne!(messages[3]["id"], middle_reply);
+    assert_eq!(
+        regenerated["conversation"]["transcript"],
+        before["transcript"]
+    );
+    assert_eq!(regenerated["conversation"]["model"], before["model"]);
+    wait(root, &regenerated);
+    let wire = backend.requests.lock().unwrap().last().unwrap().to_string();
+    assert!(wire.contains("Restart with a new question"));
+    assert!(wire.contains("Middle regeneration prompt"));
+    assert!(!wire.contains("Latest regeneration prompt"));
+    assert!(wire.contains("Caption context for the question."));
+
+    let oldest = ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":id,"id":provider,"retry":true,"retryMessageId":before["messages"][1]["id"]}),
+    );
+    assert_eq!(
+        oldest["conversation"]["messages"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(oldest["conversation"]["messages"][0], before["messages"][0]);
+    wait(root, &oldest);
+    let wire = backend.requests.lock().unwrap().last().unwrap().to_string();
+    assert!(wire.contains("Restart with a new question"));
+    assert!(!wire.contains("Middle regeneration prompt"));
+    assert!(!wire.contains("Latest regeneration prompt"));
+
+    // Existing callers can still retry the latest response without an explicit identity.
+    let latest = ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":id,"id":provider,"retry":true}),
+    );
+    assert_eq!(
+        latest["conversation"]["messages"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(latest["conversation"]["messages"][0], before["messages"][0]);
+    assert_ne!(
+        latest["conversation"]["messages"][1]["id"],
+        oldest["conversation"]["messages"][1]["id"]
+    );
+    wait(root, &latest);
 }
