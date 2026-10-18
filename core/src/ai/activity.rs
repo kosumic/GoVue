@@ -238,7 +238,14 @@ impl Tape {
         Ok(())
     }
     pub fn result(&mut self, call_id: &str, result: &Result<Value>) {
-        let game = result.as_ref().ok().and_then(|v| v["gameId"].as_str());
+        let created = self.blocks.iter().rev().find(|block| matches!(block,
+            Block::Tool { call_id: id, .. } if id == call_id))
+            .is_some_and(|block| matches!(block, Block::Tool { name, .. } if name == "create_interactive_game"));
+        let game = result
+            .as_ref()
+            .ok()
+            .filter(|_| created)
+            .and_then(|v| v["gameId"].as_str());
         let linked = game.is_some_and(|id| {
             self.blocks
                 .iter()

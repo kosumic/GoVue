@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, AppState, PanResponder, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { ArrowLeft, Check, ExternalLink, GripHorizontal, Library, Play, RotateCw, Undo2, X } from 'lucide-react-native';
+import { ActivityIndicator, Animated, AppState, Keyboard, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ArrowLeft, Check, ExternalLink, GripHorizontal, Library, Pencil, Play, RotateCw, Undo2, X } from 'lucide-react-native';
 import { usePractice } from '../ai/usePractice';
 import type { GameAction, GameSource, LearningGame } from '../ai/games';
 import { GameSurface } from './LearningGameCard';
@@ -8,6 +8,7 @@ import { IconButton } from './IconButton';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { useReducedMotion } from '../player/useReducedMotion';
 import { useHaptic } from '../player/Haptics';
+import { PlayerSheet } from '../player/PlayerSheet';
 
 function timestamp(seconds: number) {
   const value = Math.floor(seconds);
@@ -23,9 +24,9 @@ function SourceLink({ source, onOpen }: { source?: GameSource | null; onOpen?: S
   </Pressable>;
 }
 
-function SwipeGame({ game, busy, reduced, onReview, onAction, onReset, onBeforeAudio, onOpenSource }: {
+function SwipeGame({ game, busy, reduced, onReview, onAction, onReset, onRename, onBeforeAudio, onOpenSource }: {
   game: LearningGame; busy: boolean; reduced: boolean; onReview: (verdict: 'forgot' | 'know') => Promise<void>;
-  onAction: GameAction; onReset: () => Promise<void>; onBeforeAudio?: () => Promise<void> | void; onOpenSource?: SourceAction;
+  onAction: GameAction; onReset: () => Promise<void>; onRename: () => void; onBeforeAudio?: () => Promise<void> | void; onOpenSource?: SourceAction;
 }) {
   const colors = useThemeColors();
   const s = useThemeStyles(makeStyles);
@@ -81,6 +82,7 @@ function SwipeGame({ game, busy, reduced, onReview, onAction, onReset, onBeforeA
     <Animated.View {...handlers} style={[s.gameCard, { opacity: entrance, transform: [{ translateX: x }, { translateY: y }, { rotate: reduced ? '0deg' : x.interpolate({ inputRange: [-width, 0, width], outputRange: ['-14deg', '0deg', '14deg'] }) }, { scale: entrance.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] }) }] }]}>
       <View style={s.cardHeading} accessibilityLabel="Swipe card left for Forgot or right for Know">
         <View style={s.cardTitle}><GripHorizontal size={16} color={colors.muted} /><Text accessibilityRole="header" numberOfLines={2} style={s.title}>{game.definition.title}</Text></View>
+        <IconButton icon={Pencil} label="Rename activity" disabled={inactive} onPress={onRename} />
         <IconButton icon={RotateCw} label="Restart activity" disabled={inactive} onPress={() => { void onReset().then(() => { if (alive.current) setReload(value => value + 1); }).catch(() => {}); }} />
       </View>
       <View pointerEvents="none" style={s.stamps}>
@@ -112,10 +114,20 @@ export function GamePractice({ onBeforeAudio, onOpenSource }: { onBeforeAudio?: 
   const reduced = useReducedMotion();
   const [showLibrary, setShowLibrary] = useState(false);
   const [startedHere, setStartedHere] = useState(false);
+  const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+  const [name, setName] = useState('');
+  const [renameError, setRenameError] = useState('');
   const library = practice.library;
   const session = library?.session;
   async function start(filter: 'all' | 'forgot' = 'all', gameId?: string) {
     try { await practice.start(filter, gameId); setShowLibrary(false); setStartedHere(true); } catch {}
+  }
+  function editName(game: { id: string; title: string }) { setRenaming(game); setName(game.title); setRenameError(''); }
+  async function saveName() {
+    if (!renaming || practice.busy) return;
+    setRenameError('');
+    try { await practice.rename(renaming.id, name); Keyboard.dismiss(); setRenaming(null); }
+    catch (reason) { setRenameError(reason instanceof Error ? reason.message : 'Could not rename this activity.'); }
   }
   const reviewing = !!session?.started && !showLibrary && (!!session.game || startedHere || session.canUndo);
   return <View style={s.container}>
@@ -127,7 +139,7 @@ export function GamePractice({ onBeforeAudio, onOpenSource }: { onBeforeAudio?: 
           <Text accessibilityLiveRegion="polite" style={s.progress}>{session.game ? `${session.total - session.remaining + 1} / ${session.total}` : `${session.total} / ${session.total}`}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="Undo last swipe" disabled={!session.canUndo || practice.busy} onPress={() => void practice.undo().catch(() => {})} style={[s.smallButton, (!session.canUndo || practice.busy) && s.disabled]}><Undo2 size={18} color={colors.ink} /><Text style={s.buttonText}>Undo</Text></Pressable>
         </View>
-        {session.game ? <SwipeGame key={session.game.id} game={session.game} busy={practice.busy} reduced={reduced} onReview={practice.review} onAction={practice.gameAction} onReset={practice.reset} onBeforeAudio={onBeforeAudio} onOpenSource={onOpenSource} />
+        {session.game ? <SwipeGame key={session.game.id} game={session.game} busy={practice.busy} reduced={reduced} onReview={practice.review} onAction={practice.gameAction} onReset={practice.reset} onRename={() => editName({ id: session.game!.id, title: session.game!.definition.title })} onBeforeAudio={onBeforeAudio} onOpenSource={onOpenSource} />
           : <View style={s.empty}><Check size={36} color={colors.ink} /><Text accessibilityRole="header" style={s.emptyTitle}>Session complete</Text><Text style={s.help}>{session.known} known · {session.forgot} forgotten</Text>
             {!!session.forgot && <Pressable accessibilityRole="button" disabled={practice.busy} onPress={() => void start('forgot')} style={s.primary}><Text style={s.primaryText}>Practice forgotten activities</Text></Pressable>}
             <Pressable accessibilityRole="button" disabled={practice.busy} onPress={() => void start()} style={s.smallButton}><RotateCw size={17} color={colors.ink} /><Text style={s.buttonText}>Review all again</Text></Pressable>
@@ -139,11 +151,24 @@ export function GamePractice({ onBeforeAudio, onOpenSource }: { onBeforeAudio?: 
         {!library.games.length ? <View style={s.empty}><Library size={36} color={colors.muted} /><Text accessibilityRole="header" style={s.emptyTitle}>Your practice starts in chat</Text><Text style={s.emptyHelp}>Ask the assistant to create a word, grammar, or sentence activity. Saved games appear here.</Text></View>
           : <><Pressable accessibilityRole="button" disabled={practice.busy} onPress={() => void start()} style={[s.primary, s.reviewAll]}><Play size={18} color={colors.inverted} /><Text style={s.primaryText}>Review all</Text></Pressable>
           <ScrollView contentContainerStyle={s.libraryList}>
-            {library.games.map(game => <Pressable key={game.id} accessibilityRole="button" accessibilityLabel={`Practice ${game.title}`} disabled={practice.busy} onPress={() => void start('all', game.id)} style={s.libraryRow}>
-              <View style={s.libraryText}><Text numberOfLines={2} style={s.rowTitle}>{game.title}</Text><Text numberOfLines={1} style={s.help}>{game.source?.title || 'Learning activity'}{game.verdict ? ` · ${game.verdict === 'know' ? 'Known' : 'Forgotten'}` : ''}</Text></View><ArrowLeft size={18} color={colors.muted} style={{ transform: [{ rotate: '180deg' }] }} />
-            </Pressable>)}
+            {library.games.map(game => <View key={game.id} style={s.libraryRow}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Practice ${game.title}`} disabled={practice.busy} onPress={() => void start('all', game.id)} style={s.libraryEntry}>
+                <View style={s.libraryText}><Text numberOfLines={2} style={s.rowTitle}>{game.title}</Text><Text numberOfLines={1} style={s.help}>{game.source?.title || 'Learning activity'}{game.verdict ? ` · ${game.verdict === 'know' ? 'Known' : 'Forgotten'}` : ''}</Text></View><ArrowLeft size={18} color={colors.muted} style={{ transform: [{ rotate: '180deg' }] }} />
+              </Pressable>
+              <IconButton icon={Pencil} label={`Rename ${game.title}`} disabled={practice.busy} onPress={() => editName(game)} />
+            </View>)}
           </ScrollView></>}
       </>}
+    <PlayerSheet visible={!!renaming} title="Rename activity" presentation="dialog" onClose={() => { if (!practice.busy) { Keyboard.dismiss(); setRenaming(null); } }}
+      footer={<View style={s.renameButtons}>
+        <Pressable accessibilityRole="button" disabled={practice.busy} onPress={() => { Keyboard.dismiss(); setRenaming(null); }} style={s.smallButton}><Text style={s.buttonText}>Cancel</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Save activity name" disabled={practice.busy || !name.trim()} onPress={() => void saveName()} style={[s.primary, (practice.busy || !name.trim()) && s.disabled]}><Text style={s.primaryText}>{practice.busy ? 'Saving…' : 'Save'}</Text></Pressable>
+      </View>}>
+      {renaming && <View style={s.renameForm}>
+        <TextInput accessibilityLabel="Activity name" value={name} onChangeText={setName} maxLength={120} autoFocus selectTextOnFocus editable={!practice.busy} returnKeyType="done" onSubmitEditing={() => void saveName()} style={s.nameInput} selectionColor={colors.action + '55'} cursorColor={colors.ink} />
+        {!!renameError && <Text accessibilityRole="alert" style={s.error}>{renameError}</Text>}
+      </View>}
+    </PlayerSheet>
   </View>;
 }
 
@@ -166,5 +191,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   empty: { flex: 1, padding: 28, justifyContent: 'center', alignItems: 'center', gap: 18 }, emptyTitle: { color: colors.ink, fontSize: 22, fontWeight: '600', textAlign: 'center' }, emptyHelp: { color: colors.muted, fontSize: 14, lineHeight: 22, textAlign: 'center', maxWidth: 320 },
   primary: { minHeight: 50, borderRadius: 26, paddingHorizontal: 24, backgroundColor: colors.accent, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10 }, primaryText: { color: colors.inverted, fontSize: 15, fontWeight: '600' }, reviewAll: { marginHorizontal: 22, marginBottom: 18 },
   libraryHeading: { paddingHorizontal: 22, minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, libraryList: { paddingHorizontal: 22, paddingBottom: 24 },
-  libraryRow: { minHeight: 86, flexDirection: 'row', alignItems: 'center', gap: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line }, libraryText: { flex: 1, gap: 5, paddingVertical: 14 }, rowTitle: { color: colors.ink, fontSize: 16, fontWeight: '500', lineHeight: 22 },
+  libraryRow: { minHeight: 86, flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line }, libraryEntry: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14 }, libraryText: { flex: 1, gap: 5, paddingVertical: 14 }, rowTitle: { color: colors.ink, fontSize: 16, fontWeight: '500', lineHeight: 22 },
+  renameForm: { paddingHorizontal: 20, paddingBottom: 20, gap: 12 }, nameInput: { minHeight: 52, borderWidth: 1, borderColor: colors.outline, borderRadius: 12, paddingHorizontal: 12, color: colors.ink, fontSize: 16 }, renameButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, paddingHorizontal: 20, paddingBottom: 20 },
 });

@@ -1615,7 +1615,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             return Ok(response);
         }
         if !tools_enabled || round == 4 || calls.len() > 3 {
-            return Err("The assistant exceeded this turn's game tool limit.".into());
+            return Err("The assistant exceeded this turn's tool limit.".into());
         }
         let mut results = Vec::new();
         for call in calls {
@@ -1627,10 +1627,12 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .running(call_id, name)?;
             job.publish_activity();
-            let result = if call["name"] != "create_interactive_game" {
-                Err("Unknown tool. Use create_interactive_game.".into())
-            } else {
-                conversations::create_game(job, call)
+            let result = match name {
+                "create_interactive_game" => conversations::create_game(job, call),
+                "list_interactive_games" | "read_interactive_game" => {
+                    conversations::read_game_library(job, call)
+                }
+                _ => Err("Unknown game tool.".into()),
             };
             {
                 let mut tape = job
@@ -1667,7 +1669,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             state["usage"].clone()
         };
     }
-    Err("The assistant could not complete its game.".into())
+    Err("The assistant could not complete its tool request.".into())
 }
 
 fn verify_identity(token: &str, client: &str, nonce: &str, job: &Arc<Job>) -> Result<Value> {

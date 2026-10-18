@@ -94,5 +94,16 @@ export function usePractice() {
       updateGame(result.game);
     });
   }
-  return { library, error, busy, load, start, review, undo, reset, gameAction };
+  async function rename(gameId: string, title: string) {
+    return enqueue(async () => {
+      const result = await aiRequest<{ game: LearningGame }>({ op: 'ai_practice_rename', gameId, title });
+      const saved = current.current;
+      if (!mounted.current || !saved) return;
+      update({ ...saved,
+        games: saved.games.map(game => game.id === gameId ? { ...game, title: result.game.definition.title } : game),
+        session: saved.session.game?.id === gameId ? { ...saved.session, game: result.game } : saved.session,
+      });
+    });
+  }
+  return { library, error, busy, load, start, review, undo, reset, rename, gameAction };
 }

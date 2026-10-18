@@ -20,6 +20,18 @@ card, while taps and vertical scrolling stay with the generated game.
 **Undo** restores the previous swipe and rating.
 Games control their own answer reveals and interactions.
 
+Use the pencil beside a library entry or in the card header to rename an
+activity. Names are trimmed, limited to 120 characters on one line, and shared
+with chat. Renaming preserves the activity's answers, source, review queue and
+ratings.
+
+The assistant can use `list_interactive_games` to search saved names or source
+titles across chats, including deleted chats. Results are paginated with
+`offset` and `limit` (default 20, maximum 50); `nextOffset` identifies another
+page. `read_interactive_game` accepts a returned `gameId` and provides its
+current name, original definition and rules, captions, source, state, rating
+and recent actions. Reading does not start a session or change progress.
+
 New games are saved to the independent native Practice library. Existing chat
 games are imported when opening Practice, and retained when deleting their chat.
 Game state is shared between chat and Practice. Closing or restarting the app

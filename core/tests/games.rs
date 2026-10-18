@@ -23,6 +23,7 @@ use std::{
 struct Backend {
     secrets: Mutex<HashMap<String, String>>,
     definition: Mutex<Value>,
+    tool_name: Mutex<Option<String>>,
     requests: Mutex<Vec<Value>>,
     answer_only: AtomicBool,
     fail_final: AtomicBool,
@@ -123,13 +124,20 @@ impl AiPlatform for Platform {
             }
         } else {
             let definition = self.0.definition.lock().unwrap().clone();
+            let name = self
+                .0
+                .tool_name
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| "create_interactive_game".into());
             let raw = definition.to_string();
             let middle = raw.char_indices().nth(raw.chars().count() / 2).unwrap().0;
             match protocol {
                 "responses" => {
                     let mode = self.0.response_mode.load(Ordering::SeqCst);
                     let reasoning = json!({"id":"reasoning-1","type":"reasoning","summary":[],"encrypted_content":"OPAQUE_CONTINUATION"});
-                    let mut item = json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"create_interactive_game","arguments":""});
+                    let mut item = json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":name,"arguments":""});
                     let frame = |mut v: Value| {
                         if mode == 3 {
                             v.as_object_mut().unwrap().remove("output_index");
@@ -178,7 +186,7 @@ impl AiPlatform for Platform {
                         json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"OPAQUE_CONTINUATION"}}),
                     );
                     stream += &event(
-                        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-1","name":"create_interactive_game","input":{}}}),
+                        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-1","name":name,"input":{}}}),
                     );
                     for part in [&raw[..middle], &raw[middle..]] {
                         stream += &event(
@@ -190,8 +198,7 @@ impl AiPlatform for Platform {
                     stream += &event(json!({"type":"message_stop"}));
                 }
                 "gemini" => {
-                    let mut call =
-                        json!({"id":"call-1","name":"create_interactive_game","args":definition});
+                    let mut call = json!({"id":"call-1","name":name,"args":definition});
                     if self.0.legacy_gemini.load(Ordering::SeqCst) {
                         call.as_object_mut().unwrap().remove("id");
                     }
@@ -207,10 +214,10 @@ impl AiPlatform for Platform {
                         json!({"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"OPAQUE_CONTINUATION","id":"encrypted-1","format":"anthropic-claude-v1","index":1}]}}]}),
                     );
                     stream += &event(
-                        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"create_interactive_","arguments":&raw[..middle]}}]}}]}),
+                        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":&name[..name.len()/2],"arguments":&raw[..middle]}}]}}]}),
                     );
                     stream += &event(
-                        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"game","arguments":&raw[middle..]}}]},"finish_reason":"tool_calls"}]}),
+                        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":&name[name.len()/2..],"arguments":&raw[middle..]}}]},"finish_reason":"tool_calls"}]}),
                     );
                     stream += "data: [DONE]\n\n";
                 }
@@ -517,6 +524,12 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
             ranges.0.lock().unwrap().is_empty(),
             "creating and playing text games must not fetch audio"
         );
+        library_agent_roundtrip(root, &backend, protocol, &id, &game["id"]);
+        let renamed_chat = ok(root, json!({"op":"ai_chat_get","chatId":chat["id"]}));
+        assert_eq!(
+            renamed_chat["messages"][1]["games"][0]["definition"]["title"],
+            "Saved grammar · 过去"
+        );
     }
     // A final stream failure must preserve a successfully committed card.
     let store = Temp::new();
@@ -669,6 +682,165 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     practice_roundtrip(root, &chat, &reply["games"][0], &ranges);
 }
 
+fn rename_saved_game(root: &Path, id: &Value) -> Value {
+    let before = ok(root, json!({"op":"ai_practice_get","gameId":id}));
+    let title = "Saved grammar · 过去";
+    let renamed = ok(
+        root,
+        json!({"op":"ai_practice_rename","gameId":id,"title":format!("  {title}  ")}),
+    );
+    assert_eq!(renamed["game"]["definition"]["title"], title);
+    assert_eq!(renamed["game"]["state"], before["state"]);
+    assert_eq!(renamed["game"]["revision"], before["revision"]);
+    assert_eq!(renamed["game"]["source"], before["source"]);
+    assert_eq!(
+        renamed["game"]["definition"]["rules"],
+        before["definition"]["rules"]
+    );
+    for invalid in [
+        json!("  "),
+        json!("x".repeat(121)),
+        json!("line\nbreak"),
+        Value::Null,
+        json!(7),
+    ] {
+        assert_eq!(
+            call(
+                root,
+                json!({"op":"ai_practice_rename","gameId":id,"title":invalid})
+            )["ok"],
+            false
+        );
+        assert_eq!(
+            ok(root, json!({"op":"ai_practice_get","gameId":id}))["title"],
+            title
+        );
+    }
+    let action = ok(
+        root,
+        json!({"op":"ai_practice_action","gameId":id,"action":"check","input":{},"revision":before["revision"],"eventId":"action-after-rename"}),
+    );
+    assert_eq!(
+        action["game"]["definition"]["title"], title,
+        "an action using the revision from before rename must preserve the new name"
+    );
+    ok(root, json!({"op":"ai_practice_get","gameId":id}))
+}
+
+fn library_agent_roundtrip(
+    root: &Path,
+    backend: &Backend,
+    protocol: &str,
+    provider: &str,
+    id: &Value,
+) {
+    let saved = rename_saved_game(root, id);
+    let session = ok(root, json!({"op":"ai_practice_session"}));
+    let count = ok(root, json!({"op":"ai_practice_catalog"}))["total"].clone();
+    for (name, arguments) in [
+        (
+            "list_interactive_games",
+            json!({"query":"SAVED GRAMMAR","limit":1}),
+        ),
+        (
+            "read_interactive_game",
+            json!({"gameId":id,"op":"ai_practice_rename","title":"Cannot mutate through a read tool"}),
+        ),
+    ] {
+        *backend.tool_name.lock().unwrap() = Some(name.into());
+        *backend.definition.lock().unwrap() = arguments;
+        backend.requests.lock().unwrap().clear();
+        backend.answer_only.store(false, Ordering::SeqCst);
+        backend.repeat.store(false, Ordering::SeqCst);
+        // A fresh chat must find games created elsewhere, without creating another card.
+        let started = ok(
+            root,
+            json!({"op":"ai_chat_send","id":provider,"prompt":"Find my saved grammar game"}),
+        );
+        assert_eq!(wait(root, &started)["status"], "completed");
+        let requests = backend.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let declarations = if protocol == "gemini" {
+            &requests[0]["tools"][0]["functionDeclarations"]
+        } else {
+            &requests[0]["tools"]
+        };
+        let names = declarations
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| {
+                if protocol == "chat" {
+                    tool["function"]["name"].clone()
+                } else {
+                    tool["name"].clone()
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                json!("create_interactive_game"),
+                json!("list_interactive_games"),
+                json!("read_interactive_game")
+            ]
+        );
+        let output = library_tool_output(requests.last().unwrap(), protocol);
+        drop(requests);
+        if name == "list_interactive_games" {
+            assert_eq!(output["games"][0]["gameId"], *id);
+            assert_eq!(output["games"][0]["title"], saved["title"]);
+        } else {
+            assert_eq!(
+                output, saved,
+                "read returns the real definition and progress without mutating it"
+            );
+        }
+        let chat = ok(
+            root,
+            json!({"op":"ai_chat_get","chatId":started["conversation"]["id"]}),
+        );
+        assert!(chat["messages"][1]["games"].is_null());
+        for block in chat["messages"][1]["blocks"].as_array().unwrap() {
+            if block["kind"] == "tool" {
+                assert_eq!(block["name"], name);
+                assert_eq!(block["status"], "completed");
+                assert!(
+                    block["gameId"].is_null(),
+                    "read tools must not claim to create a playable card in this chat"
+                );
+            }
+        }
+        assert_eq!(ok(root, json!({"op":"ai_practice_session"})), session);
+        assert_eq!(
+            ok(root, json!({"op":"ai_practice_catalog"}))["total"],
+            count
+        );
+    }
+    backend.tool_name.lock().unwrap().take();
+    *backend.definition.lock().unwrap() = definition();
+}
+
+fn library_tool_output(request: &Value, protocol: &str) -> Value {
+    if protocol == "gemini" {
+        return request["contents"].as_array().unwrap().last().unwrap()["parts"][0]["functionResponse"]["response"].clone();
+    }
+    let raw = match protocol {
+        "responses" => &request["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|row| row["type"] == "function_call_output")
+            .unwrap()["output"],
+        "anthropic" => {
+            &request["messages"].as_array().unwrap().last().unwrap()["content"][0]["content"]
+        }
+        _ => &request["messages"].as_array().unwrap().last().unwrap()["content"],
+    };
+    serde_json::from_str(raw.as_str().unwrap()).unwrap()
+}
+
 fn practice_roundtrip(root: &Path, chat: &Value, game: &Value, ranges: &Ranges) {
     let id = &game["id"];
     let library = ok(root, json!({"op":"ai_practice_list"}));
@@ -811,4 +983,42 @@ fn practice_survives_chat(root: &Path, chat: &Value, game: &Value, ranges: &Rang
         current["game"]["state"]["round"], 250,
         "repeated practice compacts history without exhausting a saved game"
     );
+    library_pages(root, id);
+}
+
+fn library_pages(root: &Path, id: &Value) {
+    let mut offset = json!(0);
+    let mut ids = std::collections::HashSet::new();
+    loop {
+        let page = ok(
+            root,
+            json!({"op":"ai_practice_catalog","limit":1,"offset":offset}),
+        );
+        for game in page["games"].as_array().unwrap() {
+            assert!(ids.insert(game["gameId"].clone().to_string()));
+        }
+        if page["nextOffset"].is_null() {
+            assert_eq!(ids.len() as u64, page["total"].as_u64().unwrap());
+            break;
+        }
+        offset = page["nextOffset"].clone();
+    }
+    assert!(
+        ids.contains(&id.to_string()),
+        "deleted chats' games remain readable in the catalog"
+    );
+    assert_eq!(
+        ok(root, json!({"op":"ai_practice_get","gameId":id}))["gameId"],
+        *id
+    );
+    for command in [
+        json!({"op":"ai_practice_catalog","limit":0}),
+        json!({"op":"ai_practice_catalog","limit":51}),
+        json!({"op":"ai_practice_catalog","offset":-1}),
+        json!({"op":"ai_practice_catalog","query":7}),
+        json!({"op":"ai_practice_get","gameId":"../unsafe"}),
+        json!({"op":"ai_practice_rename","gameId":"../unsafe","title":"Unsafe"}),
+    ] {
+        assert_eq!(call(root, command)["ok"], false);
+    }
 }
