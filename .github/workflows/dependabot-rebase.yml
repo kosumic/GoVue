@@ -36,7 +36,7 @@ jobs:
           CI_WORKFLOW: ci.yml
         run: |
           if [[ -z "$GH_TOKEN" ]]; then
-            echo '::notice::Set the DEPENDABOT_REBASE_TOKEN Actions secret to enable rebasing; see .github/README.md'
+            echo '::notice::Set the DEPENDABOT_REBASE_TOKEN Actions secret to enable rebasing; see .github/CI.md'
             exit 0
           fi
 

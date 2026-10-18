@@ -400,7 +400,7 @@ npx expo install --check
 These cover TypeScript, injected browser behavior, Rust formatting, Clippy, and
 Rust boundary/cache tests. CI also audits Rust dependencies, builds and lints an
 ARM64 Android APK, then compiles an unsigned ARM64 iOS app. See
-[CI documentation](.github/README.md). Fixture and compile checks complement
+[CI documentation](.github/CI.md). Fixture and compile checks complement
 live device verification.
 
 ## Project status
@@ -428,7 +428,7 @@ WebView is signed in. Available formats and captions depend on YouTube.
 - [Standalone extraction and cache boundaries](docs/extraction.md)
 - [Porting inventory and verification evidence](PORTING.md)
 - [Casting networking policy](docs/cast-networking.md)
-- [CI and dependency automation](.github/README.md)
+- [CI and dependency automation](.github/CI.md)
 - [Historical feature and profiling notes](docs/legacy-features.md) — includes
   superseded extraction and UI descriptions.
 
