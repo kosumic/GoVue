@@ -1,4 +1,9 @@
-# LingoPlay
+# GoVue
+
+Formerly LingoPlay. The Android application ID and iOS bundle ID, credential
+storage keys, data and download directories, and backup format markers keep
+their original names so existing installations, sign-ins, and exports continue
+to work. New links use `govue://`; existing `lingoplay://` links remain supported.
 
 A port of [LiTube](https://github.com/HydeYYHH/Litube) to **shared React Native UI
 and a Rust core**, for Android and iOS. Android is the first implementation and
@@ -135,7 +140,7 @@ microphone and speak; partial results appear separately, and only final results
 are added to the current draft. Rust owns dictation state and joins recognized
 text with spacing appropriate for English, Chinese, and Japanese. Recognition
 uses the device locale and up to 100 vocabulary hints built in Rust from the draft,
-recent chat messages, and the attached transcript. LingoPlay does not save
+recent chat messages, and the attached transcript. GoVue does not save
 audio recordings. Rebuild the native app after installing the dependency so the
 speech module and microphone permissions are included. Hint loading falls back
 to draft vocabulary after 1.5 seconds. Android finishes on a pause; iOS supports

@@ -1,4 +1,4 @@
-use lingoplay_core::execute;
+use govue_core::execute;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -23,7 +23,7 @@ impl Store {
     fn new() -> Self {
         let scenario = SCENARIOS.lock().unwrap_or_else(|error| error.into_inner());
         let path = std::env::temp_dir().join(format!(
-            "lingoplay-{}-{}",
+            "govue-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

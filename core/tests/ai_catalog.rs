@@ -1,5 +1,5 @@
 //! Native-independent boundary/routing regressions, added after Pixel streaming checks.
-use lingoplay_core::{
+use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
 use serde_json::{Value, json};
@@ -190,7 +190,7 @@ fn group(root: &Path, id: &str, members: &[&str], strategy: &str, any: bool) -> 
 #[test]
 fn saved_models_groups_configuration_and_wire_controls_work_together() {
     let temp = Temp(std::env::temp_dir().join(format!(
-            "lingoplay-catalog-{}-{}",
+            "govue-catalog-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

@@ -1,5 +1,5 @@
 {
-  "name": "lingoplay",
+  "name": "govue",
   "version": "0.1.0",
   "private": true,
   "expo": {
@@ -16,7 +16,7 @@
   "scripts": {
     "page:build": "node scripts/build-page.ts",
     "postinstall": "node scripts/patch-video.ts && node scripts/patch-translate.ts && npm run page:build",
-    "start": "expo start --dev-client --scheme lingoplay --host lan",
+    "start": "expo start --dev-client --scheme govue --host lan",
     "android": "expo run:android",
     "ios": "npm run core:ios && expo run:ios",
     "typecheck": "tsc --noEmit && tsc --project scripts/tsconfig.json",
@@ -27,7 +27,7 @@
     "test": "node --test tests/*.test.*",
     "fmt:core": "cargo fmt --all --check",
     "lint:core": "cargo clippy --locked --workspace --all-targets -- -D warnings",
-    "test:core": "cargo test --locked -p lingoplay-core",
+    "test:core": "cargo test --locked -p govue-core",
     "check": "npm run typecheck && npm test && npm run fmt:core && npm run lint:core && npm run test:core"
   },
   "dependencies": {

@@ -1002,8 +1002,7 @@ mod tests {
         }
         let count = Arc::new(AtomicUsize::new(0));
         install_extraction_http(Box::new(Http(count.clone())));
-        let root =
-            std::env::temp_dir().join(format!("lingoplay-extraction-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("govue-extraction-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let call = |command: Value| -> Value {
             serde_json::from_str(&crate::execute(

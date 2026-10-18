@@ -241,7 +241,7 @@ const modulePath =
   'node_modules/expo-video/android/src/main/java/expo/modules/video/VideoModule.kt';
 let moduleSource = readFileSync(modulePath, 'utf8');
 const trackAnchor = '      Property("availableVideoTracks")';
-const videoEnabled = `      AsyncFunction("lingoplaySetVideoEnabled") { ref: VideoPlayer, expectedUri: String, enabled: Boolean ->
+const videoEnabled = `      AsyncFunction("govueSetVideoEnabled") { ref: VideoPlayer, expectedUri: String, enabled: Boolean ->
         if (ref.player.currentMediaItem?.localConfiguration?.uri?.toString() != expectedUri) false
         else {
           ref.player.trackSelectionParameters = ref.player.trackSelectionParameters.buildUpon()
@@ -252,7 +252,7 @@ const videoEnabled = `      AsyncFunction("lingoplaySetVideoEnabled") { ref: Vid
 
 ${trackAnchor}`;
 if (!moduleSource.includes(videoEnabled.slice(0, -trackAnchor.length))) {
-  if (moduleSource.includes('AsyncFunction("lingoplaySetVideoEnabled")'))
+  if (moduleSource.includes('AsyncFunction("govueSetVideoEnabled")'))
     throw Error(
       'Expo Video background renderer patch differs; review the adapter.',
     );
@@ -260,7 +260,7 @@ if (!moduleSource.includes(videoEnabled.slice(0, -trackAnchor.length))) {
     throw Error('Expo Video track property changed.');
   moduleSource = moduleSource.replace(trackAnchor, videoEnabled);
 }
-const selectTrack = `      AsyncFunction("lingoplaySelectVideoTrack") { ref: VideoPlayer, expectedUri: String, trackId: String? ->
+const selectTrack = `      AsyncFunction("govueSelectVideoTrack") { ref: VideoPlayer, expectedUri: String, trackId: String? ->
         if (ref.player.currentMediaItem?.localConfiguration?.uri?.toString() != expectedUri) false
         else {
           val parameters = ref.player.trackSelectionParameters.buildUpon()
@@ -294,7 +294,7 @@ ${trackAnchor}`;
 // Other adapters can be inserted before the same property anchor. Check the
 // complete method body independently so applying patches twice stays safe.
 if (!moduleSource.includes(selectTrack.slice(0, -trackAnchor.length))) {
-  if (moduleSource.includes('AsyncFunction("lingoplaySelectVideoTrack")'))
+  if (moduleSource.includes('AsyncFunction("govueSelectVideoTrack")'))
     throw Error(
       'Expo Video live selection patch differs; review the existing adapter.',
     );
@@ -318,7 +318,7 @@ writeFileSync(modulePath, moduleSource);
 // Read renderer counters from the existing player. Only bounded metadata and
 // numeric counters cross this adapter; source addresses and error text do not.
 const statsAnchor = '      Property("availableVideoTracks")';
-const statsMethod = `      AsyncFunction("lingoplayPlaybackStats") { ref: VideoPlayer, expectedUri: String ->
+const statsMethod = `      AsyncFunction("govuePlaybackStats") { ref: VideoPlayer, expectedUri: String ->
         if (ref.player.currentMediaItem?.localConfiguration?.uri?.toString() != expectedUri) null
         else {
           val player = ref.player
@@ -329,21 +329,21 @@ const statsMethod = `      AsyncFunction("lingoplayPlaybackStats") { ref: VideoP
           val display = ref.context.getSystemService(android.hardware.display.DisplayManager::class.java)
             ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
           mapOf(
-            "epoch" to ref.lingoplaySourceAt,
+            "epoch" to ref.govueSourceAt,
             "sampledAt" to android.os.SystemClock.elapsedRealtime(),
             "nominalFps" to video?.frameRate?.takeIf { it.isFinite() && it > 0 },
             "refreshRate" to display?.refreshRate?.takeIf { it.isFinite() && it > 0 },
             "speed" to player.playbackParameters.speed,
             "videoCodec" to (video?.codecs ?: video?.sampleMimeType),
             "audioCodec" to (audio?.codecs ?: audio?.sampleMimeType),
-            "videoDecoder" to ref.lingoplayVideoDecoder,
-            "audioDecoder" to ref.lingoplayAudioDecoder,
+            "videoDecoder" to ref.govueVideoDecoder,
+            "audioDecoder" to ref.govueAudioDecoder,
             "width" to video?.width, "height" to video?.height,
             "videoBitrate" to video?.bitrate, "audioBitrate" to audio?.bitrate,
             "audioSampleRate" to audio?.sampleRate, "audioChannels" to audio?.channelCount,
             "renderedFrames" to (counters?.renderedOutputBufferCount ?: 0),
             "droppedFrames" to (counters?.droppedBufferCount ?: 0),
-            "firstFrameMs" to ref.lingoplayFirstFrameMs,
+            "firstFrameMs" to ref.govueFirstFrameMs,
             "visible" to (ref.currentVideoView?.isShown == true),
             "state" to when {
               player.playerError != null -> "error"
@@ -360,7 +360,7 @@ const statsMethod = `      AsyncFunction("lingoplayPlaybackStats") { ref: VideoP
 
 ${statsAnchor}`;
 if (!moduleSource.includes(statsMethod.slice(0, -statsAnchor.length))) {
-  if (moduleSource.includes('AsyncFunction("lingoplayPlaybackStats")'))
+  if (moduleSource.includes('AsyncFunction("govuePlaybackStats")'))
     throw Error('Expo Video diagnostics patch differs; review the adapter.');
   if (!moduleSource.includes(statsAnchor))
     throw Error('Expo Video tracks changed; review playback diagnostics.');
@@ -379,35 +379,35 @@ function patchPlayer(before: string, after: string) {
 }
 patchPlayer(
   '  private val analyticsListener = object : AnalyticsListener {',
-  `  var lingoplaySourceAt: Long = 0L
-  var lingoplayFirstFrameMs: Long? = null
-  var lingoplayVideoDecoder: String? = null
-  var lingoplayAudioDecoder: String? = null
+  `  var govueSourceAt: Long = 0L
+  var govueFirstFrameMs: Long? = null
+  var govueVideoDecoder: String? = null
+  var govueAudioDecoder: String? = null
 
-  private fun lingoplayCurrentEvent(event: AnalyticsListener.EventTime): Boolean =
+  private fun govueCurrentEvent(event: AnalyticsListener.EventTime): Boolean =
     !event.timeline.isEmpty && event.windowIndex in 0 until event.timeline.windowCount &&
       event.timeline.getWindow(event.windowIndex, Timeline.Window()).mediaItem.localConfiguration?.uri ==
         player.currentMediaItem?.localConfiguration?.uri
 
   private val analyticsListener = object : AnalyticsListener {
     override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
-      if (lingoplayCurrentEvent(eventTime)) lingoplayVideoDecoder = decoderName.take(256)
+      if (govueCurrentEvent(eventTime)) govueVideoDecoder = decoderName.take(256)
     }
     override fun onAudioDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
-      if (lingoplayCurrentEvent(eventTime)) lingoplayAudioDecoder = decoderName.take(256)
+      if (govueCurrentEvent(eventTime)) govueAudioDecoder = decoderName.take(256)
     }
     override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
-      if (lingoplayCurrentEvent(eventTime) && lingoplayFirstFrameMs == null && lingoplaySourceAt > 0)
-        lingoplayFirstFrameMs = (android.os.SystemClock.elapsedRealtime() - lingoplaySourceAt).coerceAtLeast(0)
+      if (govueCurrentEvent(eventTime) && govueFirstFrameMs == null && govueSourceAt > 0)
+        govueFirstFrameMs = (android.os.SystemClock.elapsedRealtime() - govueSourceAt).coerceAtLeast(0)
     }`,
 );
 patchPlayer(
   '  fun prepare() {\n    availableVideoTracks = listOf()',
   `  fun prepare() {
-    lingoplaySourceAt = android.os.SystemClock.elapsedRealtime()
-    lingoplayFirstFrameMs = null
-    lingoplayVideoDecoder = null
-    lingoplayAudioDecoder = null
+    govueSourceAt = android.os.SystemClock.elapsedRealtime()
+    govueFirstFrameMs = null
+    govueVideoDecoder = null
+    govueAudioDecoder = null
     availableVideoTracks = listOf()`,
 );
 writeFileSync(playerPath, playerSource);

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { useVideoPlayer } from 'expo-video';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 import { extractMedia } from '../core/media';
 
 type Clip = { needsMedia: false; uri: string; token: string; start: number; end: number };

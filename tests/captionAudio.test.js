@@ -16,7 +16,7 @@ async function harness(t, respond = async command => clip(command.cueId)) {
   let transcript, game;
   const result = await build({ entryPoints: ['src/ai/useGameAudio.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'caption-edges', setup(builder) {
-      builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'mock-core', external: true }));
+      builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'mock-core', external: true }));
       builder.onResolve({ filter: /\/core\/media$/ }, () => ({ path: 'mock-media', external: true }));
     } }],
   });

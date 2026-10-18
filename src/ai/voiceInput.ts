@@ -1,5 +1,5 @@
 import { AppState, Platform } from 'react-native';
-import { aiRequest, dictationRequest } from '../../modules/lingoplay-core';
+import { aiRequest, dictationRequest } from '../../modules/govue-core';
 import type { ChatTranscript } from './useChats';
 
 type Recognizer = Pick<typeof import('expo-speech-recognition').ExpoSpeechRecognitionModule,

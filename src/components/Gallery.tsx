@@ -62,7 +62,7 @@ export function Gallery({
       await exportGalleryImage(currentImage, save);
     } catch (error) {
       Alert.alert(
-        'LingoPlay',
+        'GoVue',
         error instanceof Error ? error.message : 'Image could not be saved.',
       );
     } finally {

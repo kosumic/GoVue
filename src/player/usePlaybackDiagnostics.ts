@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import type { VideoPlayer } from 'expo-video';
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 
 export type PlaybackDiagnostics = {
   nominalFps: number | null;
@@ -27,7 +27,7 @@ export type PlaybackDiagnostics = {
   errorCode: string | null;
 };
 type DiagnosticsPlayer = VideoPlayer & {
-  lingoplayPlaybackStats?: (
+  govuePlaybackStats?: (
     uri: string,
   ) => Promise<Record<string, unknown> | null>;
 };
@@ -43,7 +43,7 @@ export function usePlaybackDiagnostics(
     id = playback?.videoId;
   useEffect(() => {
     setDiagnostics(null);
-    const sample = (player as DiagnosticsPlayer).lingoplayPlaybackStats;
+    const sample = (player as DiagnosticsPlayer).govuePlaybackStats;
     if (!uri || !id || !sample) return;
     let alive = true,
       busy = false,

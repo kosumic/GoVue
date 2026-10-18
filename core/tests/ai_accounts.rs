@@ -1,5 +1,5 @@
 //! Account protocol tests use synthetic keys/tokens; they do not establish plan access.
-use lingoplay_core::{
+use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
 use serde_json::{Value, json};
@@ -37,14 +37,7 @@ fn token(ec: bool, nonce: &str) -> String {
     } else {
         Algorithm::RS256
     });
-    header.kid = Some(
-        if ec {
-            "lingoplay-ec-test"
-        } else {
-            "lingoplay-test"
-        }
-        .into(),
-    );
+    header.kid = Some(if ec { "govue-ec-test" } else { "govue-test" }.into());
     let claims = json!({"iss":if ec{"https://auth.x.ai"}else{"https://auth.openai.com"},"aud":if ec{"b1a00492-073a-47ea-816f-4c329264a828"}else{"app_EMoamEEZ73f0CkXaXp7hrann"},"sub":"fixture-person","email":"fixture@example.test","nonce":nonce,"exp":now()+3600,"https://api.openai.com/auth":{"chatgpt_account_id":"fixture-account"}});
     let key = if ec {
         EncodingKey::from_ec_der(include_bytes!("fixtures/ai-test-ec-private.der"))
@@ -302,11 +295,8 @@ fn browser_login(root: &Path, id: &str, backend: &Backend) -> Value {
 }
 #[test]
 fn account_flows_verify_callbacks_refresh_and_keep_credential_boundaries() {
-    let temp = Temp(std::env::temp_dir().join(format!(
-        "lingoplay-accounts-{}-{}",
-        std::process::id(),
-        now()
-    )));
+    let temp =
+        Temp(std::env::temp_dir().join(format!("govue-accounts-{}-{}", std::process::id(), now())));
     let root = &temp.0;
     fs::create_dir_all(root).unwrap();
     let backend = Arc::new(Backend::default());

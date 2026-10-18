@@ -15,7 +15,7 @@ import { Cast, CastConnected } from './icons';
 import {
   castDiscoverySnapshot,
   coreRequest,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { SheetRow } from './PlayerSheet';
 import {
@@ -75,7 +75,7 @@ export function CastPicker({
   useEffect(() => {
     if (!visible || !shareRequested || !session.url) return;
     setShareRequested(false);
-    void Share.share({ message: session.url, title: 'LingoPlay' }).catch(() =>
+    void Share.share({ message: session.url, title: 'GoVue' }).catch(() =>
       onError('Could not share this link.'),
     );
   }, [visible, shareRequested, session.url]);
@@ -257,7 +257,7 @@ export function CastPicker({
                         if (session.active && session.link && session.url)
                           await Share.share({
                             message: session.url,
-                            title: 'LingoPlay',
+                            title: 'GoVue',
                           });
                         else {
                           setShareRequested(true);

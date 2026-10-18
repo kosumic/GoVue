@@ -1,4 +1,4 @@
-use lingoplay_core::{ai_execute, execute};
+use govue_core::{ai_execute, execute};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -10,7 +10,7 @@ struct Store(PathBuf);
 impl Store {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "lingoplay-chat-search-{}-{}",
+            "govue-chat-search-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

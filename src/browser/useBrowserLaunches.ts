@@ -4,7 +4,7 @@ import {
   coreRequest,
   observeBrowserLaunches,
   takeBrowserLaunches,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 
 // Platform adapters supply shared text; core selects the first routable link.
 export function useBrowserLaunches(

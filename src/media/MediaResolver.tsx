@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import { extractMedia, type MediaCatalog } from '../core/media';
 import { extractTranscript } from '../core/transcripts';
 import type { DownloadConfig, DownloadPlan } from '../core/downloads';

@@ -1,4 +1,4 @@
-use lingoplay_core::execute;
+use govue_core::execute;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
@@ -6,7 +6,7 @@ struct Store(PathBuf);
 impl Store {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "lingoplay-download-test-{}-{}",
+            "govue-download-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

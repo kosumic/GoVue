@@ -29,7 +29,7 @@ export function ChatFindBar({ search, onClose }: { search: ChatFindController; o
       <IconButton compact icon={X} label="Close find in chat" onPress={onClose} />
     </View>
     <View style={styles.result}>
-      <Text accessibilityLiveRegion="polite" accessibilityRole={search.error ? 'alert' : undefined} style={styles.status}>{status}{hasQuery && search.hit ? ` · ${search.hit.role === 'user' ? 'You' : 'LingoPlay'}` : ''}</Text>
+      <Text accessibilityLiveRegion="polite" accessibilityRole={search.error ? 'alert' : undefined} style={styles.status}>{status}{hasQuery && search.hit ? ` · ${search.hit.role === 'user' ? 'You' : 'GoVue'}` : ''}</Text>
       {hasQuery && search.hit && <SearchExcerpt hit={search.hit} />}
     </View>
   </View>;

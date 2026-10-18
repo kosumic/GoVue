@@ -67,7 +67,7 @@ updates:
   # The app's android/ and ios/ projects are generated and ignored.
   # Maintain the local Expo module's checked-in native dependencies instead.
   - package-ecosystem: gradle
-    directory: /modules/lingoplay-core/android
+    directory: /modules/govue-core/android
     cooldown:
       default-days: 1
     schedule:

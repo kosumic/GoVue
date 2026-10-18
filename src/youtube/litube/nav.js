@@ -5,21 +5,21 @@
 
   const safeArea = document.createElement('style');
   // Native supplies the inset even on WebViews without CSS safe-area support.
-  safeArea.textContent = `html[data-lingoplay-bottom-inset] body {
-    padding-bottom: var(--lingoplay-bottom-inset) !important;
+  safeArea.textContent = `html[data-govue-bottom-inset] body {
+    padding-bottom: var(--govue-bottom-inset) !important;
   }
-  html[data-lingoplay-bottom-inset] ytm-pivot-bar-renderer {
+  html[data-govue-bottom-inset] ytm-pivot-bar-renderer {
     box-sizing: content-box !important;
-    padding-bottom: var(--lingoplay-bottom-inset) !important;
+    padding-bottom: var(--govue-bottom-inset) !important;
   }`;
   document.documentElement.appendChild(safeArea);
 
   // YouTube can replace its bottom bar during SPA navigation.
   function ensureChat() {
     const bar = document.querySelector('ytm-pivot-bar-renderer');
-    if (!bar || bar.querySelector('[data-lingoplay-chat]')) return;
+    if (!bar || bar.querySelector('[data-govue-chat]')) return;
     const item = document.createElement('ytm-pivot-bar-item-renderer');
-    item.setAttribute('data-lingoplay-chat', '');
+    item.setAttribute('data-govue-chat', '');
     item.style.cssText = 'flex:1;min-width:0;display:flex;align-items:center;justify-content:center';
     const button = document.createElement('button');
     button.type = 'button';

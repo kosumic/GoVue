@@ -108,7 +108,7 @@
   }
 
   Lite.ui = { kind, dismiss, originalBack: () => back.call(history), originalGo: delta => go.call(history, delta) };
-  window.addEventListener('lingoplayDocumentChanged', () => { generation = null; reported = null; schedule(); });
+  window.addEventListener('govueDocumentChanged', () => { generation = null; reported = null; schedule(); });
   function init() {
     new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, attributes: true,
       attributeFilter: ['hidden', 'aria-hidden', 'class', 'style', 'open'] });

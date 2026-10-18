@@ -677,10 +677,8 @@ mod tests {
     fn playback_preferences_migrate_validate_and_survive_reload() {
         let mut unique = [0u8; 8];
         getrandom::getrandom(&mut unique).unwrap();
-        let directory = std::env::temp_dir().join(format!(
-            "lingoplay-playback-{:x}",
-            u64::from_ne_bytes(unique)
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("govue-playback-{:x}", u64::from_ne_bytes(unique)));
         let root = directory.to_str().unwrap();
         write(root, "settings.json", &json!({"adBlock":false,"sponsorBlock":true,"backgroundPlayback":true,"autoPip":false,"categories":["sponsor"]})).unwrap();
         let migrated = dispatch(&json!({"op":"media_settings"}), root).unwrap();

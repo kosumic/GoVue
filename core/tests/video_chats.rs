@@ -1,5 +1,5 @@
 //! Regressions after the Pixel video chat opened empty with its transcript attached.
-use lingoplay_core::{
+use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, execute, install_ai_platform,
 };
 use serde_json::{Value, json};
@@ -50,7 +50,7 @@ struct Store(PathBuf);
 impl Store {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "lingoplay-video-chats-{}-{}",
+            "govue-video-chats-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

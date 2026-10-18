@@ -31,7 +31,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import { Languages, Sparkles } from 'lucide-react-native';
-import { coreRequest, saveFileToDevice } from '../../modules/lingoplay-core';
+import { coreRequest, saveFileToDevice } from '../../modules/govue-core';
 import type { MediaSettings } from '../core/media';
 import { Range } from '../player/Range';
 import { SheetRow } from '../player/PlayerSheet';
@@ -90,7 +90,7 @@ export function ExtensionSettings({
   const run = (fn: () => Promise<unknown>) => {
     void fn().catch((e) =>
       Alert.alert(
-        'LingoPlay',
+        'GoVue',
         e instanceof Error ? e.message : 'Please try again.',
       ),
     );
@@ -114,9 +114,9 @@ export function ExtensionSettings({
   }
   async function exportDiagnostics(share: boolean) {
     return exportFile(
-      'lingoplay-diagnostics.json',
+      'govue-diagnostics.json',
       {
-        app: 'LingoPlay',
+        app: 'GoVue',
         version: '0.1.0',
         core: await coreRequest({ op: 'info' }),
         transport: await coreRequest({ op: 'media_transport_status' }),
@@ -324,7 +324,7 @@ export function ExtensionSettings({
               onPress={() =>
                 run(async () =>
                   exportFile(
-                    'lingoplay-settings.json',
+                    'govue-settings.json',
                     await coreRequest({ op: 'media_settings_export' }),
                   ),
                 )
@@ -378,7 +378,7 @@ export function ExtensionSettings({
               <View style={s.mark}>
                 <BrandMark size={108} color={colors.ink} />
               </View>
-              <Text style={s.name}>LingoPlay</Text>
+              <Text style={s.name}>GoVue</Text>
               <Text style={[s.detail, { marginTop: 0 }]}>
                 0.1.0 · LiTube port
               </Text>
@@ -388,7 +388,7 @@ export function ExtensionSettings({
               title="Source code"
               onPress={() =>
                 run(() =>
-                  Linking.openURL('https://github.com/kosumic/lingoplay'),
+                  Linking.openURL('https://github.com/kosumic/GoVue'),
                 )
               }
             />
@@ -399,7 +399,7 @@ export function ExtensionSettings({
               onPress={() =>
                 run(() =>
                   Linking.openURL(
-                    'https://github.com/kosumic/lingoplay/releases/latest',
+                    'https://github.com/kosumic/GoVue/releases/latest',
                   ),
                 )
               }
@@ -410,7 +410,7 @@ export function ExtensionSettings({
               onPress={() =>
                 run(() =>
                   Linking.openURL(
-                    'https://github.com/kosumic/lingoplay/releases/latest',
+                    'https://github.com/kosumic/GoVue/releases/latest',
                   ),
                 )
               }
@@ -460,7 +460,7 @@ export function ExtensionSettings({
               onPress={() =>
                 run(() =>
                   Linking.openURL(
-                    'https://github.com/kosumic/lingoplay/blob/main/LICENSE',
+                    'https://github.com/kosumic/GoVue/blob/master/LICENSE',
                   ),
                 )
               }

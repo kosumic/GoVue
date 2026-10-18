@@ -9,7 +9,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const require = createRequire(import.meta.url);
 const bundle = await build({ entryPoints: ['src/ai/useExampleSpeech.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', supported: { 'dynamic-import': false },
   plugins: [{ name: 'speech-core', setup(builder) {
-    builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'test-core', external: true }));
+    builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'test-core', external: true }));
   } }],
 });
 

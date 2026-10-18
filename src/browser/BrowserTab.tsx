@@ -90,7 +90,7 @@ export const BrowserTab = forwardRef<
       browserInsetsScript(bottomInset);
     const documentScripts = () =>
       scripts +
-      `\nwindow.__lingoplayBrowser?.setDocumentGeneration(${JSON.stringify(documentGeneration.current)});true;`;
+      `\nwindow.__govueBrowser?.setDocumentGeneration(${JSON.stringify(documentGeneration.current)});true;`;
     const reload = () => {
       setError('');
       stoppedRef.current = false;
@@ -182,7 +182,7 @@ export const BrowserTab = forwardRef<
             allowUniversalAccessFromFileURLs={false}
             mixedContentMode="never"
             webviewDebuggingEnabled={
-              process.env.EXPO_PUBLIC_LINGOPLAY_DEBUG === '1'
+              process.env.EXPO_PUBLIC_GOVUE_DEBUG === '1'
             }
             injectedJavaScript={scripts}
             injectedJavaScriptBeforeContentLoaded={

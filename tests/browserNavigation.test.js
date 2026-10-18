@@ -14,11 +14,11 @@ test('Chat survives bottom bar replacement and works when Trusted Types blocks H
   Object.defineProperty(window.Element.prototype, 'innerHTML', { get: html.get, set() { throw Error('TrustedHTML required'); }, configurable: true });
   try {
     window.eval(readFileSync('scripts/browser-adapter.js', 'utf8'));
-    window.__lingoplayBrowser.setDocumentGeneration(42);
+    window.__govueBrowser.setDocumentGeneration(42);
     const nav = readFileSync('src/youtube/litube/nav.js', 'utf8');
     assert.doesNotThrow(() => window.eval(nav));
     window.eval(nav);
-    assert.equal(window.document.querySelectorAll('[data-lingoplay-chat]').length, 1);
+    assert.equal(window.document.querySelectorAll('[data-govue-chat]').length, 1);
     const button = window.document.querySelector('[aria-label="Chat"]');
     assert.equal(button.textContent, 'Chat');
     assert.equal(button.closest('ytm-pivot-bar-item-renderer').nextElementSibling.textContent, 'You');
@@ -30,7 +30,7 @@ test('Chat survives bottom bar replacement and works when Trusted Types blocks H
     window.document.body.replaceChildren(bar);
     window.history.pushState(null, '', '/watch?v=0123456789a');
     await new Promise(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
-    assert.equal(bar.querySelectorAll('[data-lingoplay-chat]').length, 1);
+    assert.equal(bar.querySelectorAll('[data-govue-chat]').length, 1);
     bar.querySelector('button').click();
     assert.equal(messages.at(-1).action, 'chat');
     assert.equal(messages.at(-1).videoId, '0123456789a');

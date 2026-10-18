@@ -1,6 +1,6 @@
 // Runs only inside YouTube's WebView. npm run page:build bundles this script.
 (() => {
-  if (window.__lingoplay || !['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com'].includes(location.hostname) || location.protocol !== 'https:') return;
+  if (window.__govue || !['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com'].includes(location.hostname) || location.protocol !== 'https:') return;
   const videoId = () => {
     const url = new URL(location.href);
     const id = url.pathname === '/watch' ? url.searchParams.get('v') : url.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]{11})(?:\/|$)/)?.[1];
@@ -17,7 +17,7 @@
     if (nextVideo !== documentVideo) { documentVideo = nextVideo; positionRequest = null; }
     send({ type: 'page', url: location.href, videoId: videoId(), title: document.title, userAgent: navigator.userAgent });
   };
-  window.__lingoplay = {
+  window.__govue = {
     position(requestId, id, playback = false) {
       if (videoId() !== id) return;
       const player = document.getElementById('movie_player');

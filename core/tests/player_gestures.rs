@@ -1,4 +1,4 @@
-use lingoplay_core::execute;
+use govue_core::execute;
 use serde_json::{Value, json};
 
 fn call(command: Value) -> Value {

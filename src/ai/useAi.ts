@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 
 export type ProviderKind = 'chatgpt' | 'codex' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'xai' | 'kimi' | 'copilot' | 'custom';
 export type Model = { id: string; name: string; hidden?: boolean; contextWindow?: number | null; maxOutputTokens?: number | null; reasoning?: string; reasoningEfforts?: string[]; temperature?: number | null; topP?: number | null; inputModalities?: string[]; outputModalities?: string[] };

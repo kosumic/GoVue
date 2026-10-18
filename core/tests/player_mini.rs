@@ -1,11 +1,11 @@
-use lingoplay_core::execute;
+use govue_core::execute;
 use serde_json::{Value, json};
 use std::fs;
 
 #[test]
 fn large_mini_players_reach_the_close_target_without_storing_drag_or_dismiss_frames() {
     let directory = std::env::temp_dir().join(format!(
-        "lingoplay-mini-{}-{}",
+        "govue-mini-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

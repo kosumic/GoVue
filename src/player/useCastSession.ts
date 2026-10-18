@@ -4,7 +4,7 @@ import type { VideoPlayer } from 'expo-video';
 import {
   coreRequest,
   castNeedsLocalPermission,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 import type { MediaCatalog } from '../core/media';
 
 export type CastDevice = {

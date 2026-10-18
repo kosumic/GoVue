@@ -1,4 +1,4 @@
-// Adapted from LiTube (GPL-3.0); native layout and playback are owned by LingoPlay mediaBridge.
+// Adapted from LiTube (GPL-3.0); native layout and playback are owned by GoVue mediaBridge.
 (() => {
   'use strict';
   // Top frame only: an iframe's URL rarely resolves a watch id, and its

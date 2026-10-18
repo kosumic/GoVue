@@ -3,7 +3,7 @@ import {
   coreRequest,
   observePhysicalOrientation,
   setOrientationObservation,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 
 type Context = {
   visible: boolean;

@@ -8,7 +8,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import type { MediaChapter, SponsorSegment } from '../core/media';
 import { useThemeStyles, type ThemeColors } from '../theme';
 import { MarqueeTitle } from './MarqueeTitle';

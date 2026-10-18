@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import { defaultMediaSettings, type SubtitleStyle } from '../core/media';
 import { Range } from './Range';
 import { YouTubeSwitch as Switch } from '../components/YouTubeSwitch';

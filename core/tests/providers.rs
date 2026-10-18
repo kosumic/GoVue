@@ -1,6 +1,6 @@
 //! Boundary regressions, independent of account entitlement and live device checks.
 //! The committed RSA fixture signs synthetic test identities only.
-use lingoplay_core::{
+use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
 use serde_json::{Value, json};
@@ -153,7 +153,7 @@ fn identity(nonce: &str, mode: &str) -> String {
         .as_secs();
     let claims = json!({"iss":if mode=="wrong_issuer" {"https://attacker.invalid"} else {"https://auth.openai.com"},"aud":if mode=="wrong_audience" {"another-client"} else {"oaiapp_fixture"},"sub":if mode=="wrong_subject" {"another-person"} else {"fixture-person"},"email":"learner@example.test","nonce":if mode=="wrong_nonce" {"another-nonce"} else {nonce},"exp":if mode=="expired" {now-600} else {now+600}});
     let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("lingoplay-test".into());
+    header.kid = Some("govue-test".into());
     let mut token = encode(
         &header,
         &claims,
@@ -256,7 +256,7 @@ impl Drop for Temp {
 #[test]
 fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     let root = Temp(std::env::temp_dir().join(format!(
-            "lingoplay-ai-test-{}-{}",
+            "govue-ai-test-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -285,7 +285,7 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     let id = add(root, "chatgpt");
     let (first, fields) = auth_start(root, &id, &backend);
     assert_eq!(fields["client_id"], "dynamic_agent_client");
-    assert_eq!(fields["agent_name_hint"], "LingoPlay");
+    assert_eq!(fields["agent_name_hint"], "GoVue");
     assert_eq!(
         send_callback(&fields, "forged-state", Some("oaiapp_fixture")).status(),
         400
@@ -402,7 +402,7 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     *backend.mode.lock().unwrap() = String::new();
 
     let raw = json!({"type":"transcript","requestId":"fixture","videoId":"abcdefghijk","ok":true,"transcript":{"videoId":"abcdefghijk","title":"Fixture title","language":"en","trackId":"en","tracks":[{"id":"en","label":"English","language":"en","automatic":false}],"segments":[{"start":0,"duration":3,"text":"CAPTION_PRIVATE_MARKER"}]}});
-    let accepted: Value=serde_json::from_str(&lingoplay_core::execute(json!({"op":"accept","videoId":"abcdefghijk","requestId":"fixture","origin":"https://www.youtube.com/watch?v=abcdefghijk","raw":raw.to_string()}).to_string(),root.to_str().unwrap().into())).unwrap();
+    let accepted: Value=serde_json::from_str(&govue_core::execute(json!({"op":"accept","videoId":"abcdefghijk","requestId":"fixture","origin":"https://www.youtube.com/watch?v=abcdefghijk","raw":raw.to_string()}).to_string(),root.to_str().unwrap().into())).unwrap();
     assert_eq!(accepted["ok"], true, "{accepted}");
     for attach in [false, true] {
         let task = start(

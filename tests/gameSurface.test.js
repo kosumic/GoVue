@@ -11,7 +11,7 @@ const noop = () => {};
 const colors = new Proxy({}, { get: () => '#777777' });
 const bundled = await build({ entryPoints: ['src/components/LearningGameCard.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
   plugins: [{ name: 'game-surface', setup(builder) {
-    builder.onResolve({ filter: /^(react-native|react-native-safe-area-context|react-native-webview|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|useGameAudio|lingoplay-core|Haptics)$/ }, args => ({
+    builder.onResolve({ filter: /^(react-native|react-native-safe-area-context|react-native-webview|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|useGameAudio|govue-core|Haptics)$/ }, args => ({
       path: `mock:${args.path.split('/').at(-1)}`, external: true,
     }));
   } }],
@@ -38,7 +38,7 @@ async function surface(t, { active = true, exportError = '', audio = { phase: 'i
     useGameAudio: { useGameAudio: () => audio },
     Haptics: { useHaptic: () => () => haptics.push('copy') },
     clipboard: { setString: text => clipboard.push(text) },
-    'lingoplay-core': { aiRequest: async command => {
+    'govue-core': { aiRequest: async command => {
       exports.push(command);
       if (exportError) throw Error(exportError);
       return { text: exported };

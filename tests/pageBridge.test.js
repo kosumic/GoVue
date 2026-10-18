@@ -42,12 +42,12 @@ test('bridge is idempotent, stays off other origins, and seeks only the current 
     const fetch = env.window.fetch;
     const open = env.window.XMLHttpRequest.prototype.open;
     env.window.eval(YOUTUBE_BRIDGE);
-    const bridge = env.window.__lingoplay;
+    const bridge = env.window.__govue;
     assert.equal(bridge.extract, undefined);
     assert.equal(env.window.fetch, fetch, 'playback bridge must not capture caption requests');
     assert.equal(env.window.XMLHttpRequest.prototype.open, open);
     env.window.eval(YOUTUBE_BRIDGE);
-    assert.equal(env.window.__lingoplay, bridge);
+    assert.equal(env.window.__govue, bridge);
     let plays = 0;
     env.window.document.querySelector('video').play = () => { plays++; return Promise.resolve(); };
     env.window.eval(seekScript(videoId, 42.5));
@@ -57,7 +57,7 @@ test('bridge is idempotent, stays off other origins, and seeks only the current 
     assert.equal(env.window.document.querySelector('video').currentTime, 42.5);
     assert.equal(plays, 1);
     other.window.eval(YOUTUBE_BRIDGE);
-    assert.equal(other.window.__lingoplay, undefined);
+    assert.equal(other.window.__govue, undefined);
     assert.doesNotThrow(() => new Function(playbackPositionScript('quote"\nrequest', videoId)));
   } finally { env.close(); other.close(); }
 });
@@ -75,10 +75,10 @@ test('caption taps seek and resume through the current YouTube player, rejecting
     env.window.eval(seekScript(videoId, 24.8));
     assert.deepEqual(actions, [['seek', 24.8, true], ['play']]);
     assert.equal(env.window.document.querySelector('video').currentTime, 0);
-    for (const seconds of [-1, NaN, Infinity]) env.window.__lingoplay.seek(videoId, seconds);
-    env.window.__lingoplay.seek(otherVideoId, 10);
+    for (const seconds of [-1, NaN, Infinity]) env.window.__govue.seek(videoId, seconds);
+    env.window.__govue.seek(otherVideoId, 10);
     env.window.history.pushState({}, '', `/watch?v=${otherVideoId}`);
-    env.window.__lingoplay.seek(videoId, 10);
+    env.window.__govue.seek(videoId, 10);
     assert.equal(actions.length, 2);
   } finally { env.close(); }
 });

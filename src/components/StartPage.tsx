@@ -8,7 +8,7 @@ export function StartPage({ onNavigate, onFocusAddress }: { onNavigate: (url: st
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <View style={styles.mark}><Captions color={colors.accent} size={34} strokeWidth={1.5} /></View>
       <Text style={styles.eyebrow}>YOUR BROWSER, WITH WORDS.</Text>
-      <Text accessibilityRole="header" style={styles.title}>LingoPlay<Text style={styles.dot}>.</Text></Text>
+      <Text accessibilityRole="header" style={styles.title}>GoVue<Text style={styles.dot}>.</Text></Text>
       <Text style={styles.description}>Browse the web. Read along with YouTube.</Text>
       <Pressable accessibilityRole="button" onPress={() => onNavigate(YOUTUBE_HOME)} style={({ pressed }) => [styles.link, pressed && styles.pressed]}>
         <Play size={25} color={colors.ink} strokeWidth={1.6} />

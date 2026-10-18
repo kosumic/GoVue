@@ -1,9 +1,9 @@
 [bindings.kotlin]
-package_name = "io.github.kaminarios.lingoplay.core"
-cdylib_name = "lingoplay_core"
+package_name = "io.github.kaminarios.govue.core"
+cdylib_name = "govue_core"
 android = true
 
 [bindings.swift]
-module_name = "LingoPlayRust"
-ffi_module_name = "LingoPlayRustFFI"
+module_name = "GoVueRust"
+ffi_module_name = "GoVueRustFFI"
 generate_module_map = true

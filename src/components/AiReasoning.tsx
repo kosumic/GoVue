@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 
 export const reasoningName = (value?: string | null) => !value ? 'Default' : value === 'none' ? 'Off' : value === 'xhigh' ? 'Extra high' : value[0].toUpperCase() + value.slice(1);

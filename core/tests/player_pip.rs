@@ -1,11 +1,11 @@
-use lingoplay_core::execute;
+use govue_core::execute;
 use serde_json::{Value, json};
 use std::{fs, time::SystemTime};
 
 #[test]
 fn pip_actions_follow_preferences_queue_and_audio_handoff_without_persisting_window_state() {
     let directory = std::env::temp_dir().join(format!(
-        "lingoplay-pip-{}-{}",
+        "govue-pip-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)

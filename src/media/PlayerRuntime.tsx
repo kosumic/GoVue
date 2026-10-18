@@ -118,7 +118,7 @@ export const PlayerRuntime = forwardRef<PlayerRuntimeHandle>(
             javaScriptEnabled
             cacheEnabled={false}
             webviewDebuggingEnabled={
-              process.env.EXPO_PUBLIC_LINGOPLAY_DEBUG === '1'
+              process.env.EXPO_PUBLIC_GOVUE_DEBUG === '1'
             }
             domStorageEnabled={false}
             sharedCookiesEnabled={false}

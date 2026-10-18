@@ -46,7 +46,7 @@ the same video; fullscreen and mini-player keep one mounted video surface.
 
 LiTube's `extension/Extension.kt` catalog defines nine category switches and
 the skip countdown, without an ad-blocking toggle or SponsorBlock master switch.
-LingoPlay now defines each category row, its label, default and validation in
+GoVue now defines each category row, its label, default and validation in
 Rust. React Native sends individual category edits instead of rebuilding the
 whole selection from its displayed snapshot. Edits share the settings write
 queue; older replies cannot replace a newer category selection, reset or import.
@@ -236,7 +236,7 @@ They passed in the eleventh build's full checks.
   stops playback and releases its retained watch tab.
 - The eighteenth adds page-driven light/dark native colors. Its appearance check
   is pending: Argent's pinch left two synthetic pointers active in Android's
-  input verifier. Both LiTube and LingoPlay then ignored taps. A plain CANCEL
+  input verifier. Both LiTube and GoVue then ignored taps. A plain CANCEL
   does not match the two-pointer stream; the temporary helper was killed by
   Android and removed. Device lock/unlock was requested; no app routing change
   was made for this automation failure.
@@ -361,7 +361,7 @@ These new interactions have no touch-verification claim.
 ### Android publication and visual comparison (2026-10-17)
 
 - Android 10+ download finalization now publishes verified artifacts to the app's
-  `Downloads/LingoPlay` folder. Rust owns filenames, target identity, verification
+  `Downloads/GoVue` folder. Rust owns filenames, target identity, verification
   metadata, and cancellation generations. The native adapter checks MediaStore
   ownership and directory scope, copies bounded chunks, reads them back, and
   compares SHA-256 and length before exposing a finished file.

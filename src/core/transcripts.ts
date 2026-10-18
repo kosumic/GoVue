@@ -1,4 +1,4 @@
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import type { Segment, Transcript } from '../youtube/transcript';
 import { extract } from './extraction';
 

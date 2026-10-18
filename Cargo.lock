@@ -365,6 +365,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "govue-bindgen"
+version = "0.1.0"
+dependencies = [
+ "uniffi",
+]
+
+[[package]]
+name = "govue-core"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "getrandom 0.2.17",
+ "html-escape",
+ "jsonwebtoken",
+ "pulldown-cmark",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tiny_http",
+ "unicode-normalization",
+ "unicode-segmentation",
+ "uniffi",
+ "ureq",
+ "url",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -539,34 +567,6 @@ name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
-
-[[package]]
-name = "lingoplay-bindgen"
-version = "0.1.0"
-dependencies = [
- "uniffi",
-]
-
-[[package]]
-name = "lingoplay-core"
-version = "0.1.0"
-dependencies = [
- "base64",
- "getrandom 0.2.17",
- "html-escape",
- "jsonwebtoken",
- "pulldown-cmark",
- "roxmltree",
- "serde",
- "serde_json",
- "sha2",
- "tiny_http",
- "unicode-normalization",
- "unicode-segmentation",
- "uniffi",
- "ureq",
- "url",
-]
 
 [[package]]
 name = "linux-raw-sys"

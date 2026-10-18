@@ -1,0 +1,30 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'io.github.kaminarios.govue'
+version = '0.1.0'
+
+android {
+  namespace 'io.github.kaminarios.govue.coremodule'
+  defaultConfig { versionCode 1; versionName '0.1.0' }
+  sourceSets.main.java.srcDir '../generated/kotlin'
+  lint { abortOnError true }
+}
+
+dependencies { implementation 'net.java.dev.jna:jna:5.17.0@aar' }
+dependencies { implementation 'com.squareup.okhttp3:okhttp:4.12.0' }
+dependencies { compileOnly 'com.facebook.react:react-android' }
+
+def buildRust = tasks.register('buildRust', Exec) {
+  workingDir '../../..'
+  commandLine 'node', 'scripts/build-core.ts', 'android'
+  inputs.files(fileTree('../../../core'), fileTree('../../../tools/bindgen'), file('../../../Cargo.toml'), file('../../../Cargo.lock'), file('../../../rust-toolchain.toml'), file('../../../.cargo/config.toml'), file('../../../scripts/build-core.ts'))
+  outputs.dir('src/main/jniLibs')
+  outputs.dir('../generated/kotlin')
+}
+tasks.named('preBuild').configure { dependsOn buildRust }
+rootProject.project(':app').tasks.matching {
+  it.name.startsWith('createBundle') && it.name.endsWith('JsAndAssets')
+}.configureEach { dependsOn buildRust }

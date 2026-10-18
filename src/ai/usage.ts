@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 
 export type TokenUsage = {
   inputTokens?: number; outputTokens?: number; uncachedInputTokens?: number;

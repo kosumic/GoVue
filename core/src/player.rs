@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn live_resume_preserves_the_native_window_default() {
         let directory =
-            std::env::temp_dir().join(format!("lingoplay-live-resume-{}", std::process::id()));
+            std::env::temp_dir().join(format!("govue-live-resume-{}", std::process::id()));
         let root = directory.to_str().unwrap();
         assert!(dispatch(&json!({"op":"player_resume","videoId":"M3HKLzjvKPc","position":50000.0,"duration":0,"live":true}),root).unwrap().is_null());
         assert_eq!(dispatch(&json!({"op":"player_resume","videoId":"jNQXAC9IVRw","position":7.5,"duration":19,"live":false}),root).unwrap(), json!(7.5));
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn queue_persistence_validates_batches_and_excludes_source_secrets() {
         let directory = std::env::temp_dir().join(format!(
-            "lingoplay-queue-{}-{}",
+            "govue-queue-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
