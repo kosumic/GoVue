@@ -9,8 +9,6 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const require = createRequire(import.meta.url);
 const placement = {
   x: 12, y: -185, width: 190, height: 106, right: 12, bottom: 68,
-  closeArmed: false, dismiss: false,
-  close: { left: 150, top: 700, width: 96, height: 72 },
 };
 
 async function harness(initial = {}) {
@@ -46,31 +44,26 @@ async function harness(initial = {}) {
     },
     Easing: { bezier: () => null },
     PanResponder: { create: panHandlers => ({ panHandlers }) },
-    StyleSheet: { create: styles => styles, absoluteFill: {} },
-    View: 'View',
   };
   const result = await build({
     entryPoints: ['src/player/useMiniPlayer.tsx'], bundle: true, write: false,
     platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic',
     plugins: [{ name: 'mini-player-edges', setup(builder) {
-      builder.onResolve({ filter: /modules\/govue-core$|^\.\/Haptics$|^\.\/icons$/ },
+      builder.onResolve({ filter: /modules\/govue-core$/ },
         ({ path }) => ({ path, external: true }));
     } }],
   });
   const module = { exports: {} };
   Function('require', 'module', 'exports', result.outputFiles[0].text)(name => {
     if (name === 'react-native') return native;
-    if (name === 'expo-linear-gradient') return { LinearGradient: 'Gradient' };
     if (name.endsWith('modules/govue-core')) return {
       coreRequest: request => new Promise(resolve => calls.push({ request, resolve })),
     };
-    if (name === './Haptics') return { haptic() {} };
-    if (name === './icons') return { Delete: 'Delete' };
     return require(name);
   }, module, module.exports);
   let mini, root;
   let props = {
-    size: { width: 426, height: 860 }, bottomInset: 48, active: false, strength: 0,
+    size: { width: 426, height: 860 }, bottomInset: 48, active: false,
     onDismiss: () => dismissals.push(true), onError: error => errors.push(error),
     ...initial,
   };

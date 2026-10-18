@@ -641,7 +641,6 @@ function Browser() {
     size: frame,
     bottomInset: insets.bottom,
     active: session.mini,
-    strength: media.settings.hapticStrength,
     onDismiss: () => media.closePlayer(false, true),
     onError: () => setNotice('Could not update mini-player placement.'),
   });
@@ -762,7 +761,6 @@ function Browser() {
                   setAiVisible(false);
                 }}
               />
-              {mini.dropTarget}
               {(media.playback || media.preparing) && (
                 <Animated.View
                   pointerEvents={playerHidden ? 'none' : 'auto'}
