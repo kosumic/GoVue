@@ -115,7 +115,7 @@ fn video(url: &Url) -> Option<String> {
     id.filter(|id| crate::video_id(id))
 }
 
-fn page_origin(command: &Value) -> bool {
+fn page_context(command: &Value) -> Option<(Url, Url, Url)> {
     let parse = |key| {
         command[key]
             .as_str()
@@ -125,7 +125,7 @@ fn page_origin(command: &Value) -> bool {
     let (Some(origin), Some(document), Some(known)) =
         (parse("origin"), parse("documentUrl"), parse("knownUrl"))
     else {
-        return false;
+        return None;
     };
     let youtube = |url: &Url| {
         matches!(
@@ -138,10 +138,58 @@ fn page_origin(command: &Value) -> bool {
         || origin.origin() != document.origin()
         || known.origin() != document.origin()
     {
-        return false;
+        return None;
     }
+    Some((origin, document, known))
+}
+
+fn page_origin(command: &Value) -> bool {
+    let Some((origin, document, known)) = page_context(command) else {
+        return false;
+    };
     let bare = origin.path() == "/" && origin.query().is_none() && origin.fragment().is_none();
     video(&document) == video(if bare { &known } else { &origin })
+}
+
+/// Only the current visible document may prepare the selected watch link.
+pub(super) fn preparation_video(command: &Value, root: &str) -> Option<String> {
+    let browsers = BROWSERS.get()?.lock().ok()?;
+    let browser = browsers.get(root)?;
+    let tab = browser
+        .tabs
+        .iter()
+        .find(|tab| Some(tab.id) == command["id"].as_u64() && tab.id == browser.active)
+        .cloned();
+    drop(browsers);
+    let Some(tab) = tab else {
+        let _span = crate::trace::Section::begin(c"GoVue extraction: inactive preparation tab");
+        return None;
+    };
+    if tab.generation == 0 || command["generation"].as_u64() != Some(tab.generation) {
+        let _span = crate::trace::Section::begin(c"GoVue extraction: stale preparation document");
+        return None;
+    }
+    // The selected link can commit its SPA URL before the click message is
+    // delivered. Bind preparation to the document and origin, then correlate
+    // the selected video separately when playback claims the job.
+    if page_context(
+            &json!({"origin":command["origin"],"documentUrl":command["documentUrl"],"knownUrl":tab.url}),
+        ).is_none()
+    {
+        let _span = crate::trace::Section::begin(c"GoVue extraction: invalid preparation origin");
+        return None;
+    }
+    let (target, kind) = address(command["url"].as_str()?).ok()?;
+    let target = Url::parse(&target).ok()?;
+    if kind != "watch"
+        || !matches!(
+            target.host_str(),
+            Some("youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com")
+        )
+    {
+        return None;
+    }
+    video(&target)
 }
 
 fn shared_url(text: &str) -> Result<Value> {
@@ -223,6 +271,14 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let browser = browsers.entry(root.into()).or_default();
+    let previous = (
+        browser.active,
+        browser
+            .tabs
+            .iter()
+            .find(|tab| tab.id == browser.active)
+            .map(|tab| tab.url.clone()),
+    );
     let mut target = Value::Null;
     let op = string(command, "op")?;
     match op {
@@ -374,6 +430,17 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
         }
         _ => return Err("Unknown browser action.".into()),
+    }
+    let selected = browser.tabs.iter().find(|tab| tab.id == browser.active);
+    if previous != (browser.active, selected.map(|tab| tab.url.clone()))
+        || (op == "browser_invalidate" && command["id"].as_u64() == Some(browser.active))
+    {
+        let video = selected
+            .and_then(|tab| address(&tab.url).ok())
+            .filter(|(_, kind)| kind == "watch")
+            .and_then(|(url, _)| Url::parse(&url).ok())
+            .and_then(|url| video(&url));
+        crate::extraction::select_preparation(root, video.as_deref());
     }
     if op != "browser_state" {
         browser.revision += 1;

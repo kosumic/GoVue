@@ -44,6 +44,36 @@ transcript cache. Cancelling or changing videos discards pending UI results and
 releases the Rust job; in-flight HTTPS calls finish within their bounded timeout.
 A browsing-renderer failure does not cancel independent extraction.
 
+Tapping a video card starts media extraction before the watch page renders.
+Rust validates the source tab, document generation, origin and selected watch
+URL before creating one preparation job per native store. Playback takes over
+that same job, including work still in flight, rather than starting another
+watch/player request. A different selection replaces the preparation; navigation
+away cancels it. Explicit refreshes, failed preparations and preparations older
+than 90 seconds start a new extraction. Preparation uses the same standalone
+guest extractor and keeps all signed addresses in memory. Android traces expose
+`GoVue extraction: prepare media`, `claim preparation` and `media` sections for
+checking the handoff without recording addresses or session data.
+Native playback starts from the selected watch URL after preferences load;
+it does not wait for the web player's readiness event. That event still updates
+the embedded surface and provides a fallback trigger without duplicating work.
+Playback extracts guest configuration from a bounded 128 KiB page prefix and
+reuses that configuration and its guest cookies in memory for 90 seconds across
+videos. A missing prefix context falls back to the full page. Transcript loading
+still requests full web caption metadata when it was absent from the prefix;
+that optional data no longer holds up video startup.
+
+The Rust media transport follows at most four CDN redirects per bounded range,
+validating each target as an HTTPS Google Video address. Adapters return the
+Location header without following it themselves. A successful target stays in
+the source's memory for later ranges, so a 302 does not repeatedly request the
+original edge. Redirects preserve the byte bounds; 307/308 also preserve POST.
+Android traces include HTTP status numbers and separate header/body phases,
+plus player preparation and first-frame markers.
+The first upstream media range is at most 32 KiB; later reads grow to the 1 MiB
+cap. The proxy validates that first range before sending success headers, then
+delivers it while downloading later bytes instead of waiting for a full MiB.
+
 Machine-translated captions are requested immediately. If a verified request
 returns 429 while the in-memory guest session is younger than 75 seconds, Rust
 waits for the remaining session age and retries that request once, following the

@@ -12,7 +12,7 @@ final class NativeExtractionHttp: ExtractionHttp, @unchecked Sendable {
     let signal = DispatchSemaphore(value: 0)
     var headers: [ExtractionHeader] = []
     var reply = ExtractionReply(status: 0, body: Data(), headers: [])
-    let task = BoundedHttp(request: input, limit: Int(request.maxBytes) + 1, timeout: 15, responseHeaders: { response in
+    let task = BoundedHttp(request: input, limit: Int(request.maxBytes) + (request.prefixOnly ? 0 : 1), prefixOnly: request.prefixOnly, timeout: 15, responseHeaders: { response in
       if let value = response.value(forHTTPHeaderField: "Set-Cookie") { headers = [ExtractionHeader(name: "Set-Cookie", value: value)] }
     }) { status, body, _ in
       reply = ExtractionReply(status: Int32(status), body: body, headers: headers)

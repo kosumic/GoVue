@@ -79,6 +79,7 @@ export function useMediaBrowser(
   userAgent: string,
 ) {
   const [settings, setSettings] = useState(defaultMediaSettings);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [catalog, setCatalog] = useState<MediaCatalog | null>(null);
   const [busy, setBusy] = useState(false);
@@ -240,9 +241,12 @@ export function useMediaBrowser(
     let active = true;
     mediaSettings()
       .then((value) => {
-        if (active) setSettings(value);
+        if (active) {
+          setSettings(value);
+          setSettingsReady(true);
+        }
       })
-      .catch(() => {});
+      .catch(() => { if (active) setSettingsReady(true); });
     playbackSpeeds()
       .then((value) => {
         if (active) setSpeeds(value);
@@ -251,6 +255,7 @@ export function useMediaBrowser(
     return () => {
       active = false;
       cancelPending();
+      void coreRequest({ op: 'extract_release', requestId: 'prepare:media' }).catch(() => {});
     };
   }, []);
   useEffect(() => {
@@ -273,6 +278,7 @@ export function useMediaBrowser(
         // Retry a service start deferred by Android while this app was hidden.
         player.staysActiveInBackground = settingsRef.current.backgroundPlayback;
         player.showNowPlayingNotification = !remoteState();
+        if (identity.current) autoStartNative(identity.current);
       }
       if (
         state === 'background' &&
@@ -282,7 +288,7 @@ export function useMediaBrowser(
         player.pause();
     });
     return () => subscription.remove();
-  }, [settings.backgroundPlayback, settings.autoPip, player]);
+  }, [settingsReady, settings.backgroundPlayback, settings.adBlock, settings.autoPip, player]);
   useEffect(() => {
     const listener = player.addListener('statusChange', ({ status }) => {
       const current = playbackRef.current;
@@ -327,6 +333,9 @@ export function useMediaBrowser(
     if (playbackRef.current && playbackRef.current.videoId !== videoId)
       closePlayer(false);
   }, [videoId]);
+  useEffect(() => {
+    if (videoId) autoStartNative(videoId);
+  }, [videoId, settingsReady, settings.backgroundPlayback, settings.adBlock, settings.autoPip]);
   useEffect(() => {
     const controller = new AbortController();
     segments.current = [];
@@ -552,6 +561,25 @@ export function useMediaBrowser(
       });
     });
   }
+  function autoStartNative(owner: string) {
+    if (
+      !settingsReady ||
+      identity.current !== owner ||
+      manualWeb.current === owner ||
+      playbackRef.current ||
+      preparation.current ||
+      pending.current ||
+      Date.now() < autoRetryAt.current ||
+      AppState.currentState !== 'active' ||
+      !(settings.backgroundPlayback || settings.adBlock || settings.autoPip)
+    ) return;
+    autoRetryAt.current = Date.now() + 30000;
+    void startNative().catch((failure) => {
+      if (failure instanceof Error && failure.name === 'AbortError') return;
+      if (pageAvailable.current && identity.current === owner)
+        setError(failure instanceof Error ? failure.message : 'Video could not start.');
+    });
+  }
   async function handleMessage(
     raw: string,
     origin: string,
@@ -593,27 +621,7 @@ export function useMediaBrowser(
         (playbackRef.current || preparation.current)
       )
         inject(mediaNativeScript(message.videoId, true));
-      if (
-        message.videoId === identity.current &&
-        manualWeb.current !== identity.current &&
-        !playbackRef.current &&
-        !preparation.current &&
-        !pending.current &&
-        Date.now() >= autoRetryAt.current &&
-        AppState.currentState === 'active' &&
-        (settings.backgroundPlayback || settings.adBlock || settings.autoPip)
-      ) {
-        autoRetryAt.current = Date.now() + 30000;
-        void startNative().catch((failure) => {
-          if (failure instanceof Error && failure.name === 'AbortError') return;
-          if (pageAvailable.current && identity.current === message.videoId)
-            setError(
-              failure instanceof Error
-                ? failure.message
-                : 'Video could not start.',
-            );
-        });
-      }
+      autoStartNative(owner);
       return;
     }
     if (

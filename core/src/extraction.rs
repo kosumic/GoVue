@@ -24,6 +24,7 @@ const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605
 const REQUEST_KEY: &str = "O43z0dpjhgX20SCx4KAo";
 const CACHE_LIFETIME: Duration = Duration::from_secs(90);
 const JOB_LIFETIME: Duration = Duration::from_secs(180);
+const PREPARATION_REQUEST: &str = "prepare:media";
 // On a translated-caption 429, retry once after the guest session has aged.
 // Empirical workaround: https://github.com/yt-dlp/yt-dlp/pull/15709.
 const TRANSLATION_SESSION_AGE: Duration = Duration::from_secs(75);
@@ -32,6 +33,7 @@ type Jobs = HashMap<(String, String), Arc<Job>>;
 static JOBS: OnceLock<Mutex<Jobs>> = OnceLock::new();
 static WORKERS: AtomicUsize = AtomicUsize::new(0);
 static PLAYERS: OnceLock<Mutex<VecDeque<Player>>> = OnceLock::new();
+static CONFIGURATIONS: OnceLock<Mutex<VecDeque<Configuration>>> = OnceLock::new();
 
 #[derive(uniffi::Record)]
 pub struct ExtractionHeader {
@@ -45,6 +47,7 @@ pub struct ExtractionRequest {
     pub headers: Vec<ExtractionHeader>,
     pub body: String,
     pub max_bytes: u32,
+    pub prefix_only: bool,
 }
 #[derive(uniffi::Record)]
 pub struct ExtractionReply {
@@ -75,6 +78,14 @@ struct Player {
     data: Value,
     chapters: Vec<Value>,
     session: Session,
+    web_loaded: bool,
+}
+#[derive(Clone)]
+struct Configuration {
+    root: String,
+    at: Instant,
+    context: Value,
+    session: Session,
 }
 struct Runtime {
     sequence: u32,
@@ -83,6 +94,7 @@ struct Runtime {
 }
 struct Job {
     at: Instant,
+    prepared_video: Option<String>,
     user_agent: String,
     session: Mutex<Session>,
     cancelled: AtomicBool,
@@ -187,13 +199,17 @@ fn allowed_address(raw: &str, interpreter: bool) -> Result<()> {
     }
 }
 
-fn fetch_response(
+fn fetch_response_bounded(
     job: &Job,
     url: &str,
     body: Option<Value>,
     interpreter: bool,
     extra: &[(&str, &str)],
+    limit: usize,
 ) -> Result<ExtractionReply> {
+    if limit == 0 || limit > MAX_BYTES {
+        return Err("Invalid extraction size limit.".into());
+    }
     job.check()?;
     allowed_address(url, interpreter)?;
     let browser_request = interpreter
@@ -253,7 +269,8 @@ fn fetch_response(
         method: method.into(),
         headers,
         body: body.map_or_else(String::new, |b| b.to_string()),
-        max_bytes: u32::try_from(MAX_BYTES).map_err(|_| "Invalid extraction size limit.")?,
+        max_bytes: u32::try_from(limit).map_err(|_| "Invalid extraction size limit.")?,
+        prefix_only: limit < MAX_BYTES,
     };
     let reply = if let Some(http) = HTTP.get() {
         http.request(request)
@@ -286,7 +303,7 @@ fn fetch_response(
                 let mut body = Vec::new();
                 response
                     .into_reader()
-                    .take(MAX_BYTES as u64 + 1)
+                    .take(u64::from(request.max_bytes) + u64::from(!request.prefix_only))
                     .read_to_end(&mut body)
                     .map_err(|_| "YouTube extraction connection failed.")?;
                 ExtractionReply {
@@ -337,6 +354,19 @@ fn fetch_response(
             }
         }
     }
+    if reply.body.len() > limit + usize::from(limit == MAX_BYTES) {
+        return Err("YouTube extraction response is too large.".into());
+    }
+    Ok(reply)
+}
+fn fetch_response(
+    job: &Job,
+    url: &str,
+    body: Option<Value>,
+    interpreter: bool,
+    extra: &[(&str, &str)],
+) -> Result<ExtractionReply> {
+    let reply = fetch_response_bounded(job, url, body, interpreter, extra, MAX_BYTES)?;
     if reply.body.len() > MAX_BYTES {
         return Err("YouTube extraction response is too large.".into());
     }
@@ -442,35 +472,89 @@ fn chapters(data: &Value) -> Vec<Value> {
     }
     result
 }
-fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
-    {
-        let players = PLAYERS
-            .get_or_init(Default::default)
+fn configuration_context(html: &str) -> Option<Value> {
+    page_json(html, "ytcfg.set(")
+        .map(|config| config["INNERTUBE_CONTEXT"].clone())
+        .filter(|context| context["client"].is_object())
+        .or_else(|| {
+            page_json(html, "\"INNERTUBE_CONTEXT\":")
+                .filter(|context| context["client"].is_object())
+        })
+}
+
+fn configuration(
+    job: &Job,
+    root: &str,
+    id: &str,
+    fresh: bool,
+    need_page: bool,
+) -> Result<(Value, Option<String>)> {
+    let cached = CONFIGURATIONS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "Extractor configuration unavailable.")?
+        .iter()
+        .find(|config| config.root == root)
+        .cloned();
+    if let Some(cached) = cached {
+        let mut session = job
+            .session
             .lock()
-            .map_err(|_| "Extractor cache unavailable.")?;
-        if let Some(cached) = players.iter().find(|p| p.root == root && p.id == id) {
-            (*job
-                .session
-                .lock()
-                .map_err(|_| "Extraction session unavailable.")?)
-            .clone_from(&cached.session);
-            if !fresh && cached.at.elapsed() < CACHE_LIFETIME {
-                return Ok(cached.clone());
-            }
+            .map_err(|_| "Extraction session unavailable.")?;
+        // A player refresh may already have restored newer cookies and session
+        // age. Keep them so configuration reuse cannot reset caption retries.
+        if session.cookies.is_empty() {
+            session.clone_from(&cached.session);
+        }
+        drop(session);
+        if !fresh && !need_page && cached.at.elapsed() < CACHE_LIFETIME {
+            let _span = crate::trace::Section::begin(c"GoVue extraction: reuse configuration");
+            return Ok((cached.context, None));
         }
     }
-    // Fetch and parse JSON configuration as data. This does not initialize a
-    // browser, run page scripts, click controls, or capture player requests.
-    let html = fetch(
-        job,
-        &format!("{ORIGIN}/watch?v={id}&hl=en"),
-        None,
-        false,
-        &[],
-    )?;
-    let config = page_json(&html, "ytcfg.set(")
-        .ok_or("YouTube did not provide extraction configuration.")?;
-    let context = config["INNERTUBE_CONTEXT"].clone();
+    let address = format!("{ORIGIN}/watch?v={id}&hl=en");
+    let mut html = String::new();
+    if !need_page {
+        let _span = crate::trace::Section::begin(c"GoVue extraction: configuration prefix");
+        let reply = fetch_response_bounded(job, &address, None, false, &[], 131_072)?;
+        if reply.status != 200 {
+            return Err(format!(
+                "YouTube extraction request failed (HTTP {}).",
+                reply.status
+            ));
+        }
+        // The trailing UTF-8 code point may be cut off. Only a complete JSON
+        // context before that boundary is accepted; no page code is evaluated.
+        html = String::from_utf8_lossy(&reply.body).into_owned();
+    }
+    if need_page || configuration_context(&html).is_none() {
+        html = fetch(job, &address, None, false, &[])?;
+    }
+    let context =
+        configuration_context(&html).ok_or("YouTube did not provide extraction configuration.")?;
+    let config = Configuration {
+        root: root.into(),
+        at: Instant::now(),
+        context: context.clone(),
+        session: job
+            .session
+            .lock()
+            .map_err(|_| "Extraction session unavailable.")?
+            .clone(),
+    };
+    job.check()?;
+    let mut configurations = CONFIGURATIONS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "Extractor configuration unavailable.")?;
+    configurations.retain(|config| config.root != root && config.at.elapsed() < CACHE_LIFETIME);
+    configurations.push_front(config);
+    configurations.truncate(3);
+    drop(configurations);
+    Ok((context, Some(html)))
+}
+
+fn native_player(job: &Job, id: &str, context: Value) -> Result<Value> {
     let mut client = context["client"].clone();
     if !client.is_object() {
         return Err("YouTube did not provide a client context.".into());
@@ -488,7 +572,7 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
     }
     let mut native_context = context;
     native_context["client"] = client;
-    let mut data = json_response(&fetch(
+    let data = json_response(&fetch(
         job,
         &format!("{ORIGIN}/youtubei/v1/player?prettyPrint=false"),
         Some(
@@ -509,23 +593,50 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
     if data["videoDetails"]["videoId"] != id {
         return Err("YouTube returned another video's metadata.".into());
     }
+    Ok(data)
+}
+
+fn player(job: &Job, root: &str, id: &str, fresh: bool, need_page: bool) -> Result<Player> {
+    {
+        let players = PLAYERS
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| "Extractor cache unavailable.")?;
+        if let Some(cached) = players.iter().find(|p| p.root == root && p.id == id) {
+            job.session
+                .lock()
+                .map_err(|_| "Extraction session unavailable.")?
+                .clone_from(&cached.session);
+            if !fresh && cached.at.elapsed() < CACHE_LIFETIME && (!need_page || cached.web_loaded) {
+                return Ok(cached.clone());
+            }
+        }
+    }
+    let (context, html) = configuration(job, root, id, fresh, need_page)?;
+    let mut data = match native_player(job, id, context) {
+        Err(_) if html.is_none() => return player(job, root, id, true, need_page),
+        result => result?,
+    };
+    let html = html.as_deref().unwrap_or("");
     // Web subtitle addresses require WebPO tokens. Keep the web client's
     // caption metadata paired with that token context, independently of the
     // native client used for direct media streams.
-    if let Some(web) = page_json(&html, "var ytInitialPlayerResponse = ")
-        .or_else(|| page_json(&html, "ytInitialPlayerResponse="))
-        .filter(|web| web["videoDetails"]["videoId"] == id && web["captions"].is_object())
-    {
+    let web = page_json(html, "var ytInitialPlayerResponse = ")
+        .or_else(|| page_json(html, "ytInitialPlayerResponse="))
+        .filter(|web| web["videoDetails"]["videoId"] == id);
+    let web_loaded = need_page || web.is_some();
+    if let Some(web) = web.filter(|web| web["captions"].is_object()) {
         data["captions"] = web["captions"].clone();
     }
-    let initial = page_json(&html, "var ytInitialData = ")
-        .or_else(|| page_json(&html, "ytInitialData="))
+    let initial = page_json(html, "var ytInitialData = ")
+        .or_else(|| page_json(html, "ytInitialData="))
         .unwrap_or(Value::Null);
     let result = Player {
         root: root.into(),
         id: id.into(),
         at: Instant::now(),
         data,
+        web_loaded,
         chapters: chapters(&initial),
         session: job
             .session
@@ -686,7 +797,7 @@ fn transcript(
             return Ok(saved);
         }
     }
-    let player = player(job, root, id, fresh)?;
+    let player = player(job, root, id, fresh, true)?;
     let source_id = track
         .strip_prefix("translate:")
         .and_then(|rest| rest.split_once(':'))
@@ -762,10 +873,11 @@ fn transcript(
     Ok(json!(data))
 }
 fn catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value> {
+    let _span = crate::trace::Section::begin(c"GoVue extraction: media");
     if !fresh && let Some(cached) = media::cached_catalog(root, id) {
         return Ok(cached);
     }
-    let player = player(job, root, id, fresh)?;
+    let player = player(job, root, id, fresh, false)?;
     let data = &player.data;
     let mut formats = Vec::new();
     for list in ["formats", "adaptiveFormats"] {
@@ -811,7 +923,48 @@ fn catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value> {
     Ok(result)
 }
 
+/// Navigation keeps only work for the selected video; a newer click replaces it.
+pub(super) fn select_preparation(root: &str, video: Option<&str>) {
+    let Some(mut jobs) = JOBS.get().and_then(|jobs| jobs.lock().ok()) else {
+        return;
+    };
+    let key = (root.to_owned(), PREPARATION_REQUEST.to_owned());
+    if jobs
+        .get(&key)
+        .is_some_and(|job| job.prepared_video.as_deref() != video)
+        && let Some(job) = jobs.remove(&key)
+    {
+        let _span = crate::trace::Section::begin(c"GoVue extraction: discard preparation");
+        job.cancel();
+    }
+}
+
+fn claim_preparation(jobs: &mut Jobs, root: &str, id: &str, request: &str, fresh: bool) -> bool {
+    let key = (root.to_owned(), PREPARATION_REQUEST.to_owned());
+    if jobs
+        .get(&key)
+        .is_none_or(|job| job.prepared_video.as_deref() != Some(id))
+    {
+        return false;
+    }
+    let Some(job) = jobs.remove(&key) else {
+        return false;
+    };
+    let failed = job
+        .result
+        .lock()
+        .map_or(true, |result| result.as_ref().is_some_and(Result::is_err));
+    if fresh || failed || job.check().is_err() || job.at.elapsed() >= CACHE_LIFETIME {
+        job.cancel();
+        return false;
+    }
+    let _span = crate::trace::Section::begin(c"GoVue extraction: claim preparation");
+    jobs.insert((root.into(), request.into()), job);
+    true
+}
+
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
+    let op = string(command, "op")?;
     let request = string(command, "requestId")?;
     if request.is_empty()
         || request.len() > 150
@@ -821,6 +974,21 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     {
         return Err("Invalid extraction request identity.".into());
     }
+    if request == PREPARATION_REQUEST && !matches!(op, "extract_prepare" | "extract_release") {
+        return Err("Reserved extraction request identity.".into());
+    }
+    let selected = if op == "extract_prepare" {
+        let _span = crate::trace::Section::begin(c"GoVue extraction: prepare media");
+        if request != PREPARATION_REQUEST {
+            return Err("Invalid media preparation identity.".into());
+        }
+        let Some(id) = crate::browser::preparation_video(command, root) else {
+            return Ok(json!({"prepared":false}));
+        };
+        Some(id)
+    } else {
+        None
+    };
     let key = (root.to_owned(), request.to_owned());
     let mut jobs = JOBS
         .get_or_init(Default::default)
@@ -834,10 +1002,19 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             true
         }
     });
-    match string(command, "op")? {
-        "extract_start" => {
-            let id = string(command, "videoId")?;
-            let kind = string(command, "kind")?;
+    match op {
+        "extract_start" | "extract_prepare" => {
+            let preparing = selected.is_some();
+            let id = if let Some(id) = &selected {
+                id.as_str()
+            } else {
+                string(command, "videoId")?
+            };
+            let kind = if preparing {
+                "media"
+            } else {
+                string(command, "kind")?
+            };
             let track = command["trackId"].as_str().unwrap_or("default");
             let audio_key = command["audioKey"].as_str().unwrap_or("");
             let user_agent = command["userAgent"]
@@ -854,7 +1031,18 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             {
                 return Err("Invalid extraction request.".into());
             }
-            if jobs.contains_key(&key) || jobs.len() >= 8 {
+            if !preparing && jobs.contains_key(&key) {
+                return Err("Too many active YouTube extractions.".into());
+            }
+            if kind == "media"
+                && claim_preparation(&mut jobs, root, id, request, command["fresh"] == true)
+            {
+                return Ok(json!({"done":false,"prepared":true}));
+            }
+            if preparing && let Some(previous) = jobs.remove(&key) {
+                previous.cancel();
+            }
+            if jobs.len() >= 8 {
                 return Err("Too many active YouTube extractions.".into());
             }
             if WORKERS
@@ -867,6 +1055,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
             let job = Arc::new(Job {
                 at: Instant::now(),
+                prepared_video: selected.clone(),
                 user_agent: user_agent.into(),
                 session: Mutex::new(Session {
                     cookies: HashMap::new(),
@@ -982,6 +1171,7 @@ mod tests {
             at: Instant::now()
                 .checked_sub(Duration::from_secs(100))
                 .unwrap(),
+            prepared_video: None,
             user_agent: UA.into(),
             session: Mutex::new(Session {
                 cookies: HashMap::new(),

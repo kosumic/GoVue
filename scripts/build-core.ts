@@ -9,7 +9,8 @@ const platform = process.argv[2] || 'host';
 const run = (command: string, args: string[], extra: ExecFileSyncOptions = {}) => execFileSync(command, args, { cwd: root, stdio: 'inherit', env: { ...process.env, CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS || '2' }, ...extra });
 const lib = process.platform === 'darwin' ? 'libgovue_core.dylib' : 'libgovue_core.so';
 
-run('cargo', ['build', '--locked', '--release', '-p', 'govue-core', '-p', 'govue-bindgen']);
+// Generate bindings from the host library; the host CLI is not a mobile input.
+run('cargo', ['build', '--locked', '--release', '-p', 'govue-core', '-p', 'govue-bindgen', '--lib', '--bin', 'govue-bindgen']);
 for (const language of ['kotlin', 'swift']) {
   const output = join(moduleRoot, language === 'kotlin' ? 'generated/kotlin' : 'ios/generated');
   mkdirSync(output, { recursive: true });

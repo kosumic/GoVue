@@ -377,6 +377,20 @@ function patchPlayer(before: string, after: string) {
     throw Error('Expo Video player changed; review playback diagnostics.');
   playerSource = playerSource.replace(before, after);
 }
+const sourceTiming = `    android.os.Trace.beginSection("GoVue playback: prepare")
+    android.os.Trace.endSection()
+    govueSourceAt = android.os.SystemClock.elapsedRealtime()`;
+const firstFrameTiming = `        govueFirstFrameMs = (android.os.SystemClock.elapsedRealtime() - govueSourceAt).coerceAtLeast(0).also {
+          android.os.Trace.beginSection("GoVue playback: first frame")
+          android.os.Trace.endSection()
+        }`;
+// Upgrade an already patched install as well as a fresh expo-video checkout.
+if (!playerSource.includes(sourceTiming)) playerSource = playerSource.replace(
+  '    govueSourceAt = android.os.SystemClock.elapsedRealtime()', sourceTiming,
+);
+if (!playerSource.includes(firstFrameTiming)) playerSource = playerSource.replace(
+  '        govueFirstFrameMs = (android.os.SystemClock.elapsedRealtime() - govueSourceAt).coerceAtLeast(0)', firstFrameTiming,
+);
 patchPlayer(
   '  private val analyticsListener = object : AnalyticsListener {',
   `  var govueSourceAt: Long = 0L
@@ -398,13 +412,13 @@ patchPlayer(
     }
     override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
       if (govueCurrentEvent(eventTime) && govueFirstFrameMs == null && govueSourceAt > 0)
-        govueFirstFrameMs = (android.os.SystemClock.elapsedRealtime() - govueSourceAt).coerceAtLeast(0)
+${firstFrameTiming}
     }`,
 );
 patchPlayer(
   '  fun prepare() {\n    availableVideoTracks = listOf()',
   `  fun prepare() {
-    govueSourceAt = android.os.SystemClock.elapsedRealtime()
+${sourceTiming}
     govueFirstFrameMs = null
     govueVideoDecoder = null
     govueAudioDecoder = null
