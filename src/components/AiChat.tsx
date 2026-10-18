@@ -16,6 +16,8 @@ import { useCopyFeedback } from './useCopyFeedback';
 import { ChatExpansionContext, useChatViewport, type ChatViewportStore } from './useChatViewport';
 import { ChatInputSelection } from './ChatInputSelection';
 import { SelectableChatText } from './SelectableChatText';
+import { useChatFind, type ChatFindController } from '../ai/useChatFind';
+import { ChatFindBar } from './ChatSearch';
 
 function UserPrompt({ content, onEdit, disabled }: { content: string; onEdit: () => void; disabled: boolean }) {
   const colors = useThemeColors();
@@ -65,31 +67,37 @@ const Message = memo(function Message({ message, last, busy, onRetry, retryDisab
   </Animated.View>;
 });
 
-function ChatThread({ chatId, messages, viewports, jumpRequest, reduceMotion, empty, renderMessage }: {
+function ChatThread({ chatId, messages, viewports, jumpRequest, reduceMotion, empty, renderMessage, search, onCloseFind }: {
   chatId: string; messages: ChatMessage[]; viewports: ChatViewportStore; jumpRequest: number; reduceMotion: boolean;
   empty: ReactElement; renderMessage: (message: ChatMessage, index: number) => ReactElement;
+  search?: ChatFindController; onCloseFind: () => void;
 }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
-  const viewport = useChatViewport(chatId, messages, viewports);
+  const viewport = useChatViewport(chatId, messages, viewports, !!search);
   const previousJump = useRef(jumpRequest);
   useEffect(() => {
     if (previousJump.current !== jumpRequest) viewport.jumpToLatest();
     previousJump.current = jumpRequest;
   }, [jumpRequest, viewport.jumpToLatest]);
+  const hit = search?.hit;
+  useEffect(() => {
+    if (hit?.messageId) viewport.revealMessage(hit.messageId);
+  }, [hit?.messageId, hit?.offset, search?.results.query, search?.navigation, viewport.revealMessage]);
   return <ChatExpansionContext.Provider value={viewport.expansion}>
+    {search && <ChatFindBar search={search} onClose={onCloseFind} />}
     <View collapsable={false} pointerEvents={viewport.ready ? 'auto' : 'none'} accessibilityElementsHidden={!viewport.ready} importantForAccessibility={viewport.ready ? 'auto' : 'no-hide-descendants'} style={[styles.thread, { opacity: viewport.ready ? 1 : 0 }]}>
       <FlatList ref={viewport.list} data={messages} keyExtractor={m => m.id} {...viewport.listProps}
         contentContainerStyle={[styles.messages, !messages.length && styles.emptyMessages]}
         keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" removeClippedSubviews={false}
         initialNumToRender={10} maxToRenderPerBatch={8} windowSize={7}
-        ListEmptyComponent={empty} renderItem={({ item, index }) => renderMessage(item, index)} />
+        ListEmptyComponent={empty} extraData={hit?.messageId} renderItem={({ item, index }) => <View style={item.id === hit?.messageId ? styles.searchHit : undefined}>{renderMessage(item, index)}</View>} />
       {viewport.showJump && <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => viewport.jumpToLatest(!reduceMotion)} style={styles.jump}><ArrowDown size={20} color={colors.ink} /></Pressable>}
     </View>
   </ChatExpansionContext.Provider>;
 }
 
-export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, viewports, onBeforeGameAudio, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
+export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, viewports, findQuery, onCloseFind = () => {}, onBeforeGameAudio, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
   chat: ChatController;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -100,6 +108,8 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   contextReady?: boolean;
   voiceEnabled?: boolean;
   viewports?: ChatViewportStore;
+  findQuery?: string;
+  onCloseFind?: () => void;
   onBeforeGameAudio?: () => Promise<void> | void;
   onSend: (editMessageId?: string) => void | Promise<boolean>;
   onRetry: (messageId: string) => void;
@@ -122,6 +132,8 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   const [editing, setEditing] = useState<{ id: string; originalDraft: string } | null>(null);
   const [activeGameId, setActiveGameId] = useState<string | null>(null);
   const messages = chat.conversation?.messages ?? [];
+  const findOpen = findQuery !== undefined;
+  const search = useChatFind(chat.conversation?.id, messages, findOpen && !chat.loading, findQuery ?? '');
   const latestGameId = messages.flatMap(message => message.games ?? []).at(-1)?.id ?? null;
   useEffect(() => { setActiveGameId(latestGameId); }, [chat.conversation?.id, latestGameId]);
   const voice = useVoiceInput({ enabled: voiceEnabled && !loading && contextReady, chatId: chat.conversation?.id, transcript: attachment ?? availableTranscript, draft, onDraftChange });
@@ -157,6 +169,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   return <View style={styles.workspace}>
     <ChatInputSelection.Provider value={loading ? undefined : addSelectionToInput}>
     <ChatThread key={chat.conversation?.id ?? 'new'} chatId={chat.conversation?.id ?? 'new'} messages={messages} viewports={viewports ?? localViewports.current} jumpRequest={jumpRequest} reduceMotion={reduceMotion}
+        search={findOpen ? search : undefined} onCloseFind={onCloseFind}
         empty={loading ? <View style={styles.welcome}><ActivityIndicator color={colors.accent} /></View> : <View style={styles.welcome}>
           <Text accessibilityRole="header" style={styles.welcomeTitle}>How can I help?</Text>
           <Text style={styles.welcomeHelp}>{connected ? 'Ask a question or explore a video.' : 'Connect a model to start a conversation.'}</Text>
@@ -173,7 +186,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
     </ChatInputSelection.Provider>
     {!!chat.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{chat.error}</Text>}
     {!!speech.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{speech.error}</Text>}
-    <View style={styles.composerDock}>
+    {!findOpen && <View style={styles.composerDock}>
       {editing && <View style={styles.editing}>
         <View style={styles.attachmentText}><Text style={styles.attachmentTitle}>Editing message</Text><Text style={styles.attachmentHelp}>Sending replaces later messages and replies.</Text></View>
         <Pressable accessibilityRole="button" accessibilityLabel="Cancel edit" disabled={chat.busy} onPress={cancelEdit} style={styles.messageAction}><X size={17} color={colors.muted} /></Pressable>
@@ -206,12 +219,13 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
       </View>
       {!!voice.error && <Text accessibilityRole="alert" style={styles.error}>{voice.error}</Text>}
       {voice.needsSettings && <Pressable accessibilityRole="button" onPress={() => { void Linking.openSettings(); }} style={styles.messageAction}><Text style={styles.actionText}>Open Settings</Text></Pressable>}
-    </View>
+    </View>}
   </View>;
 }
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   workspace: { flex: 1 }, thread: { flex: 1 }, messages: { width: '100%', maxWidth: 800, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 24, paddingBottom: 24, gap: 28 }, emptyMessages: { flexGrow: 1 },
+  searchHit: { backgroundColor: colors.accentSoft, borderRadius: 12 },
   message: { width: '100%' }, userMessage: { alignItems: 'flex-end' },
   // Native Markdown can overmeasure an auto-width code block. Assign its width
   // so Fabric accepts the measurement and the prompt stays visible.

@@ -23,7 +23,7 @@ export function useChatExpansion(id: string): [boolean, (value: boolean) => void
 }
 
 /** One mounted conversation owns this hook; the small checkpoints survive its list. */
-export function useChatViewport(chatId: string, messages: ChatMessage[], store: ChatViewportStore) {
+export function useChatViewport(chatId: string, messages: ChatMessage[], store: ChatViewportStore, searching = false) {
   const list = useRef<FlatList<ChatMessage>>(null);
   const saved = useRef(store.get(chatId));
   const followEnd = useRef(saved.current?.followEnd ?? true);
@@ -44,6 +44,8 @@ export function useChatViewport(chatId: string, messages: ChatMessage[], store: 
   const frame = useRef<number | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alignRef = useRef<() => void>(() => {});
+  const pendingReveal = useRef<{ id: string; attempts: number } | null>(null);
+  const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const save = useCallback(() => {
     if (!readyRef.current) return;
@@ -68,6 +70,25 @@ export function useChatViewport(chatId: string, messages: ChatMessage[], store: 
     const g = geometry.current;
     if (g.viewport <= 0 || (messages.length && g.height <= 0)) return;
     const maximum = Math.max(0, g.height - g.viewport);
+    const reveal = pendingReveal.current;
+    if (reveal) {
+      const index = currentMessages.current.findIndex(message => message.id === reveal.id);
+      const layout = layouts.current.get(reveal.id);
+      if (index < 0) pendingReveal.current = null;
+      else if (layout) {
+        const target = Math.max(0, Math.min(maximum, layout.y - 8));
+        list.current?.scrollToOffset({ offset: target, animated: false });
+        if (Math.abs(g.offset - target) <= POSITION_EPSILON) {
+          pendingReveal.current = null;
+          readyRef.current = true; setReady(true); updateAway(); save();
+        }
+        return;
+      } else if (reveal.attempts < 12) {
+        reveal.attempts++;
+        list.current?.scrollToIndex({ index, animated: false, viewPosition: 0, viewOffset: 8 });
+        return;
+      } else pendingReveal.current = null;
+    }
     if (readyRef.current) {
       if (followEnd.current && interaction.current === 'idle') list.current?.scrollToOffset({ offset: maximum, animated: false });
       updateAway();
@@ -112,8 +133,19 @@ export function useChatViewport(chatId: string, messages: ChatMessage[], store: 
     save();
     if (frame.current !== null) cancelAnimationFrame(frame.current);
     if (idleTimer.current !== null) clearTimeout(idleTimer.current);
+    if (revealTimer.current !== null) clearTimeout(revealTimer.current);
   }, [save]);
   useEffect(scheduleAlign, [messages.length, scheduleAlign]);
+  useLayoutEffect(() => {
+    if (searching) { followEnd.current = false; updateAway(); save(); }
+    else pendingReveal.current = null;
+  }, [searching, save]);
+
+  const revealMessage = useCallback((id: string) => {
+    followEnd.current = false; interaction.current = 'idle';
+    pendingReveal.current = { id, attempts: 0 };
+    scheduleAlign();
+  }, [scheduleAlign]);
 
   function onScroll({ nativeEvent: e }: NativeSyntheticEvent<NativeScrollEvent>) {
     const maximum = Math.max(0, e.contentSize.height - e.layoutMeasurement.height);
@@ -126,7 +158,7 @@ export function useChatViewport(chatId: string, messages: ChatMessage[], store: 
       lastUserOffset.current = offset;
     }
     updateAway();
-    if (!readyRef.current) scheduleAlign();
+    if (!readyRef.current || pendingReveal.current) scheduleAlign();
     else save();
   }
   function beginScroll() {
@@ -141,12 +173,13 @@ export function useChatViewport(chatId: string, messages: ChatMessage[], store: 
     }, SCROLL_IDLE_MS);
   }
   function jumpToLatest(animated = false) {
+    pendingReveal.current = null;
     followEnd.current = true; interaction.current = 'idle'; setAway(false);
     if (!readyRef.current) { saved.current = undefined; scheduleAlign(); }
     list.current?.scrollToEnd({ animated });
     save();
   }
-  return { list, ready, showJump: ready && away && !scrolling, jumpToLatest,
+  return { list, ready, showJump: ready && away && !scrolling, jumpToLatest, revealMessage,
     expansion: useMemo(() => ({ expanded, setExpanded }), [expanded, setExpanded]),
     listProps: {
       CellRendererComponent,
@@ -157,7 +190,13 @@ export function useChatViewport(chatId: string, messages: ChatMessage[], store: 
       onScroll,
       onLayout: (event: { nativeEvent: { layout: { height: number } } }) => { geometry.current.viewport = event.nativeEvent.layout.height; scheduleAlign(); },
       onContentSizeChange: (_width: number, height: number) => { geometry.current.height = height; scheduleAlign(); },
-      onScrollBeginDrag: (event: NativeSyntheticEvent<NativeScrollEvent>) => { beginScroll(); interaction.current = 'drag'; lastUserOffset.current = event.nativeEvent.contentOffset.y; },
+      onScrollToIndexFailed: ({ averageItemLength, index }: { averageItemLength: number; index: number }) => {
+        if (!pendingReveal.current) return;
+        list.current?.scrollToOffset({ offset: averageItemLength * index, animated: false });
+        if (revealTimer.current !== null) clearTimeout(revealTimer.current);
+        revealTimer.current = setTimeout(() => { revealTimer.current = null; scheduleAlign(); }, 100);
+      },
+      onScrollBeginDrag: (event: NativeSyntheticEvent<NativeScrollEvent>) => { pendingReveal.current = null; beginScroll(); interaction.current = 'drag'; lastUserOffset.current = event.nativeEvent.contentOffset.y; },
       onScrollEndDrag: (event: NativeSyntheticEvent<NativeScrollEvent>) => { onScroll(event); interaction.current = 'awaiting'; endScroll(); },
       onMomentumScrollBegin: () => { if (interaction.current === 'awaiting') { beginScroll(); interaction.current = 'momentum'; lastUserOffset.current = geometry.current.offset; } },
       onMomentumScrollEnd: (event: NativeSyntheticEvent<NativeScrollEvent>) => { onScroll(event); endScroll(); },

@@ -63,6 +63,12 @@ struct Message {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Conversation {
     id: String,
+    #[serde(default)]
+    pinned: bool,
+    #[serde(default)]
+    archived: bool,
+    #[serde(default)]
+    title_edited: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     video_id: Option<String>,
     title: String,
@@ -315,6 +321,9 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
         let p = selected.as_deref().and_then(|id| provider(root, id).ok());
         Conversation {
             id: format!("video_{id}"),
+            pinned: false,
+            archived: false,
+            title_edited: false,
             video_id: Some(id.into()),
             title: c["title"]
                 .as_str()
@@ -340,7 +349,7 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
             return Err("This transcript belongs to a different video.".into());
         }
         chat.transcript = transcript;
-        if chat.messages.is_empty() {
+        if chat.messages.is_empty() && !chat.title_edited {
             chat.title = chat
                 .transcript
                 .as_ref()
@@ -646,6 +655,9 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         let p = provider(&root, string(&c, "id")?)?;
         Conversation {
             id: random()?,
+            pinned: false,
+            archived: false,
+            title_edited: false,
             video_id: None,
             title: String::new(),
             provider_id: p.id,
@@ -735,7 +747,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         .map(|index| chat.messages[index].id.clone());
     if let Some(index) = edit {
         chat.messages.truncate(index);
-        if index == 0 && chat.video_id.is_none() {
+        if index == 0 && chat.video_id.is_none() && !chat.title_edited {
             chat.title.clear();
         }
     } else if let Some(index) = retry_prompt {
@@ -1082,9 +1094,72 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         "ai_game_export" => game_export(&c, &root),
         "ai_chat_speech_hints" => speech_hints(&c, &root),
         "ai_usage" => usage_report(&c, &root),
-        "ai_chats" => Ok(
-            json!({"chats":visible_chats(&root)?.iter().map(|chat| json!({"id":chat.id,"videoId":chat.video_id.as_ref().or_else(|| chat.transcript.as_ref().map(|t| &t.video_id)),"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title)})).collect::<Vec<_>>()}),
-        ),
+        "ai_chats" => {
+            let query = search::query(&c)?;
+            let archived = c.get("archived").map_or(Ok(false), |value| {
+                value.as_bool().ok_or("Invalid archive filter.")
+            })?;
+            let mut rows = visible_chats(&root)?;
+            rows.sort_by_key(|chat| !chat.pinned);
+            let chats = rows.iter().filter(|chat| chat.archived == archived).filter_map(|chat| {
+                let hit = if query.is_empty() { None } else {
+                    search::first(&chat.title, &query)
+                        .or_else(|| chat.transcript.as_ref().and_then(|t| search::first(&t.title, &query)))
+                        .or_else(|| chat.messages.iter().find_map(|message| {
+                            search::first(&message.content, &query).map(|mut hit| {
+                                hit.message_id = Some(message.id.clone()); hit.role = Some(message.role.clone()); hit
+                            })
+                        }))
+                };
+                if !query.is_empty() && hit.is_none() { return None; }
+                Some(json!({"id":chat.id,"videoId":chat.video_id.as_ref().or_else(|| chat.transcript.as_ref().map(|t| &t.video_id)),"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title),"pinned":chat.pinned,"archived":chat.archived,"searchMatch":hit}))
+            }).collect::<Vec<_>>();
+            Ok(json!({"query":query,"chats":chats}))
+        }
+        "ai_chat_update" => {
+            let mut chat = read(&root, string(&c, "chatId")?)?;
+            if let Some(value) = c.get("title") {
+                let title = value.as_str().ok_or("Invalid chat name.")?.trim();
+                if title.is_empty()
+                    || title.chars().count() > 200
+                    || title.chars().any(char::is_control)
+                {
+                    return Err("Enter a chat name of 1–200 characters.".into());
+                }
+                chat.title = title.into();
+                chat.title_edited = true;
+            }
+            if let Some(value) = c.get("pinned") {
+                chat.pinned = value.as_bool().ok_or("Invalid pin setting.")?;
+            }
+            if let Some(value) = c.get("archived") {
+                chat.archived = value.as_bool().ok_or("Invalid archive setting.")?;
+            }
+            save(&root, &chat)?;
+            presentation(&chat)
+        }
+        "ai_chat_find" => {
+            let mut chat = read(&root, string(&c, "chatId")?)?;
+            // Include the currently rendered reply without persisting partial output or queries.
+            if let Some(job) = chat.active_task.as_ref().and_then(|id| {
+                jobs()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(id)
+                    .cloned()
+            }) && let Some(message) =
+                chat.messages.last_mut().filter(|m| m.status == "streaming")
+            {
+                let state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                message.content = state["text"].as_str().unwrap_or_default().into();
+            }
+            search::find(
+                &c,
+                chat.messages
+                    .iter()
+                    .map(|m| (m.id.as_str(), m.role.as_str(), m.content.as_str())),
+            )
+        }
         "ai_chat_video_open" => presentation(&open_video(&root, &c)?),
         "ai_chat_model" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;

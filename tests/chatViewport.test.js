@@ -17,20 +17,21 @@ Function('require', 'module', 'exports', bundle.outputFiles[0].text)(name => nam
 const messages = [{ id: 'one' }, { id: 'two' }, { id: 'three' }];
 const scroll = (y, height = 1200) => ({ nativeEvent: { contentSize: { height }, layoutMeasurement: { height: 400 }, contentOffset: { y } } });
 
-async function harness(t, store = new Map(), rows = [{ y: 0, height: 400 }, { y: 400, height: 400 }, { y: 800, height: 400 }]) {
+async function harness(t, store = new Map(), rows = [{ y: 0, height: 400 }, { y: 400, height: 400 }, { y: 800, height: 400 }], unmeasured = new Set()) {
   let viewport, root;
   const positions = [];
-  const list = { scrollToOffset: value => positions.push(value.offset), scrollToEnd: () => positions.push('end') };
+  const indices = [];
+  const list = { scrollToOffset: value => positions.push(value.offset), scrollToEnd: () => positions.push('end'), scrollToIndex: value => indices.push(value.index) };
   function Probe() { viewport = module.exports.useChatViewport('chat', messages, store); viewport.list.current = list; return null; }
   await act(async () => { root = create(React.createElement(Probe)); });
   t.after(() => act(async () => root.unmount()));
   const invoke = (name, ...args) => act(async () => { viewport.listProps[name](...args); });
   await act(async () => {
-    messages.forEach((item, i) => viewport.listProps.CellRendererComponent({ item }).props.onLayout({ nativeEvent: { layout: rows[i] } }));
+    messages.forEach((item, i) => { if (!unmeasured.has(item.id)) viewport.listProps.CellRendererComponent({ item }).props.onLayout({ nativeEvent: { layout: rows[i] } }); });
     viewport.listProps.onLayout({ nativeEvent: { layout: { height: 400 } } });
     viewport.listProps.onContentSizeChange(400, rows.at(-1).y + rows.at(-1).height);
   });
-  return { value: () => viewport, positions, invoke, store };
+  return { value: () => viewport, positions, indices, invoke, store };
 }
 
 test('programmatic scroll and layout growth preserve follow mode; drag and user momentum control it', async t => {
@@ -81,4 +82,35 @@ test('restoration uses the message anchor after layout changes and retains expan
   await env.invoke('onScrollBeginDrag', scroll(700, 1300));
   await env.invoke('onScroll', scroll(880, 1300));
   assert.equal(store.get('chat').followEnd, true, 'scrolling down near the end opts back in');
+});
+
+test('revealing a search result suspends following until Latest is requested', async t => {
+  const env = await harness(t);
+  await env.invoke('onScroll', scroll(800));
+  await act(() => env.value().revealMessage('one'));
+  assert.equal(env.positions.at(-1), 0);
+  await env.invoke('onScroll', scroll(0));
+  assert.equal(env.store.get('chat').followEnd, false);
+  const count = env.positions.length;
+  await env.invoke('onContentSizeChange', 400, 1600);
+  assert.equal(env.positions.length, count, 'stream growth leaves the selected message in place');
+  await act(() => env.value().jumpToLatest());
+  assert.equal(env.positions.at(-1), 'end');
+  assert.equal(env.store.get('chat').followEnd, true);
+});
+
+test('search can reveal an unmeasured virtualized message and refine its actual position', async t => {
+  const env = await harness(t, new Map(), undefined, new Set(['two']));
+  await env.invoke('onScroll', scroll(800));
+  await act(() => env.value().revealMessage('two'));
+  assert.equal(env.indices.at(-1), 1);
+  await env.invoke('onScrollToIndexFailed', { averageItemLength: 400, index: 1 });
+  assert.equal(env.positions.at(-1), 400);
+  await act(() => env.value().listProps.CellRendererComponent({ item: messages[1] }).props.onLayout({ nativeEvent: { layout: { y: 450, height: 400 } } }));
+  assert.equal(env.positions.at(-1), 442);
+  await env.invoke('onScroll', scroll(442));
+  assert.equal(env.store.get('chat').followEnd, false);
+  const count = env.positions.length;
+  await env.invoke('onContentSizeChange', 400, 1600);
+  assert.equal(env.positions.length, count);
 });

@@ -3,6 +3,7 @@ import { aiRequest } from '../../modules/lingoplay-core';
 import type { MessageUsageDetails, TokenUsage } from './usage';
 import type { GameAction, LearningGame } from './games';
 import { applyChatUpdate, type ChatStream, type ChatUpdate } from './chatUpdates';
+import type { ChatSearchHit } from './useChatFind';
 
 export type ActivityStatus = 'preparing' | 'running' | 'completed' | 'failed' | 'stopped';
 export type ChatBlock =
@@ -12,8 +13,8 @@ export type ChatBlock =
 
 export type ChatTranscript = { videoId: string; trackId: string; title: string; language: string };
 export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; games?: LearningGame[]; blocks?: ChatBlock[]; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; usageDetails?: MessageUsageDetails; model?: string; modelName?: string; providerLabel?: string; completedAt?: number };
-export type Conversation = { id: string; videoId?: string | null; title: string; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null };
-export type SavedChat = Pick<Conversation, 'id' | 'videoId' | 'title' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string };
+export type Conversation = { id: string; videoId?: string | null; title: string; pinned?: boolean; archived?: boolean; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null };
+export type SavedChat = Pick<Conversation, 'id' | 'videoId' | 'title' | 'pinned' | 'archived' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string; searchMatch?: ChatSearchHit | null };
 type Started = { taskId: string; conversation: Conversation };
 
 export function useChats(visible: boolean, contextId: string) {
@@ -228,6 +229,13 @@ export function useChats(visible: boolean, contextId: string) {
     try { await aiRequest({ op: 'ai_chat_delete', chatId: id }); await refresh(); }
     catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : 'Could not delete this chat.'); }
   }
+  async function change(id: string, values: { title?: string; pinned?: boolean; archived?: boolean }) {
+    const saved = await aiRequest<Conversation>({ op: 'ai_chat_update', chatId: id, ...values });
+    if (!mounted.current) return;
+    // Keep an in-flight reply; metadata changes must not replace its newer text snapshot.
+    if (current.current?.id === id) update({ ...current.current, title: saved.title, pinned: saved.pinned, archived: saved.archived });
+    await refresh();
+  }
   useEffect(() => {
     mounted.current = true;
     return () => { stop(); mounted.current = false; };
@@ -254,6 +262,6 @@ export function useChats(visible: boolean, contextId: string) {
     if (previousContext.current === contextId) return;
     previousContext.current = contextId; stop();
   }, [contextId]);
-  return { conversation, history, busy, loading, ready, error, settingsBusy, gameAction, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, openVideo, selectModel, remove, newChat, refresh };
+  return { conversation, history, busy, loading, ready, error, settingsBusy, gameAction, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, openVideo, selectModel, remove, change, newChat, refresh };
 }
 export type ChatController = ReturnType<typeof useChats>;

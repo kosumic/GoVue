@@ -24,6 +24,7 @@ mod connections;
 mod conversations;
 mod games;
 mod replay;
+mod search;
 mod tools;
 mod updates;
 mod usage;
@@ -1931,6 +1932,8 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         "ai_word_audio" => word_assistance::audio(&c, &root),
         "ai_game_audio_release" => games::audio::release(string(&c, "token")?),
         "ai_chats"
+        | "ai_chat_find"
+        | "ai_chat_update"
         | "ai_chat_get"
         | "ai_chat_delete"
         | "ai_chat_send"
