@@ -6,9 +6,11 @@ import { applyChatUpdate, type ChatStream, type ChatUpdate } from './chatUpdates
 import type { ChatSearchHit } from './useChatFind';
 
 export type ActivityStatus = 'preparing' | 'running' | 'completed' | 'failed' | 'stopped';
+export type PlanStep = { step: string; status: 'pending' | 'in_progress' | 'completed' };
 export type ChatBlock =
-  | { id: string; kind: 'text'; content: string; status: ActivityStatus }
+  | { id: string; kind: 'text'; content: string; status: ActivityStatus; phase?: 'commentary' | 'final_answer' | 'partial_answer' }
   | { id: string; kind: 'reasoning'; content: string; status: ActivityStatus }
+  | { id: string; kind: 'plan'; steps: PlanStep[]; explanation?: string; status: ActivityStatus }
   | { id: string; kind: 'tool'; callId: string; name: string; status: ActivityStatus; startedAt: number; durationMs: number; gameId?: string; title?: string; error?: string };
 
 export type ChatTranscript = { videoId: string; trackId: string; title: string; language: string };

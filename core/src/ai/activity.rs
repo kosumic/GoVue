@@ -4,6 +4,14 @@ use super::*;
 const MAX_BLOCKS: usize = 256;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Phase {
+    Commentary,
+    FinalAnswer,
+    PartialAnswer,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) enum Status {
     Preparing,
@@ -30,10 +38,19 @@ pub(super) enum Block {
         id: String,
         content: String,
         status: Status,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<Phase>,
     },
     Reasoning {
         id: String,
         content: String,
+        status: Status,
+    },
+    Plan {
+        id: String,
+        steps: Vec<plan::Step>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        explanation: Option<String>,
         status: Status,
     },
     Tool {
@@ -56,10 +73,19 @@ impl Block {
         match self {
             Self::Text { status, .. }
             | Self::Reasoning { status, .. }
+            | Self::Plan { status, .. }
             | Self::Tool { status, .. } => status,
         }
     }
     fn close(&mut self, next: Status) {
+        // Ending a response cannot claim unfinished model work is complete.
+        let next = if next == Status::Completed
+            && matches!(self, Self::Plan { steps, .. } if steps.iter().any(|s| s.status != plan::StepStatus::Completed))
+        {
+            Status::Stopped
+        } else {
+            next
+        };
         let status = self.status_mut();
         if status.active() {
             *status = next;
@@ -79,12 +105,27 @@ impl Block {
                 id,
                 content,
                 status,
+                ..
             }
             | Self::Reasoning {
                 id,
                 content,
                 status,
             } => valid_id(id) && content.len() <= MAX_OUTPUT && *status != Status::Preparing,
+            Self::Plan {
+                id,
+                steps,
+                explanation,
+                status,
+            } => {
+                valid_id(id)
+                    && plan::valid(steps, explanation.as_deref())
+                    && *status != Status::Preparing
+                    && (*status != Status::Completed
+                        || steps
+                            .iter()
+                            .all(|s| s.status == plan::StepStatus::Completed))
+            }
             Self::Tool {
                 id,
                 call_id,
@@ -119,7 +160,7 @@ pub(super) fn valid(blocks: &[Block]) -> bool {
                 Block::Text { content, .. } | Block::Reasoning { content, .. } => {
                     Some(content.len())
                 }
-                Block::Tool { .. } => None,
+                Block::Tool { .. } | Block::Plan { .. } => None,
             })
             .sum::<usize>()
             <= MAX_OUTPUT * 2
@@ -144,32 +185,75 @@ pub(super) struct Tape {
     pub blocks: Vec<Block>,
 }
 impl Tape {
+    pub fn plan(&mut self, steps: Vec<plan::Step>, explanation: Option<String>) -> Result<()> {
+        let status = if steps
+            .iter()
+            .all(|s| s.status == plan::StepStatus::Completed)
+        {
+            Status::Completed
+        } else {
+            Status::Running
+        };
+        if let Some(Block::Plan {
+            steps: saved,
+            explanation: note,
+            status: current,
+            ..
+        }) = self
+            .blocks
+            .iter_mut()
+            .find(|b| matches!(b, Block::Plan { .. }))
+        {
+            *saved = steps;
+            *note = explanation;
+            *current = status;
+        } else {
+            self.close_output();
+            self.room()?;
+            self.blocks.push(Block::Plan {
+                id: format!("activity-{}", self.blocks.len()),
+                steps,
+                explanation,
+                status,
+            });
+        }
+        Ok(())
+    }
     pub fn close_output(&mut self) {
         if let Some(block @ (Block::Text { .. } | Block::Reasoning { .. })) = self.blocks.last_mut()
         {
             block.close(Status::Completed);
         }
     }
-    pub fn output(&mut self, reasoning: bool, delta: &str) -> Result<()> {
+    pub fn phase(&mut self, phase: Option<Phase>) {
+        if phase.is_some()
+            && let Some(Block::Text { phase: saved, .. }) = self.blocks.last_mut()
+        {
+            *saved = phase;
+        }
+    }
+    pub fn output(&mut self, reasoning: bool, delta: &str, phase: Option<Phase>) -> Result<()> {
         if delta.is_empty() {
             return Ok(());
         }
-        let same = matches!(
-            (self.blocks.last(), reasoning),
+        let same = match (self.blocks.last(), reasoning) {
             (
                 Some(Block::Text {
                     status: Status::Running,
+                    phase: saved,
                     ..
                 }),
-                false
-            ) | (
+                false,
+            ) => *saved == phase,
+            (
                 Some(Block::Reasoning {
                     status: Status::Running,
                     ..
                 }),
-                true
-            )
-        );
+                true,
+            ) => true,
+            _ => false,
+        };
         if !same {
             self.close_output();
             self.room()?;
@@ -185,6 +269,7 @@ impl Tape {
                     id,
                     content: String::new(),
                     status: Status::Running,
+                    phase,
                 }
             });
         }

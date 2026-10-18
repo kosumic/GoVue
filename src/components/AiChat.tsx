@@ -5,7 +5,7 @@ import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats';
 import { AiMarkdown } from './AiMarkdown';
 import { AiReasoning } from './AiReasoning';
-import { ReasoningActivity, ToolActivity } from './AiActivity';
+import { PlanActivity, ReasoningActivity, ToolActivity } from './AiActivity';
 import { useVoiceInput } from '../ai/useVoiceInput';
 import { useResponseSpeech } from '../ai/useExampleSpeech';
 import { stopCaptionAudio } from '../ai/useGameAudio';
@@ -53,12 +53,14 @@ const Message = memo(function Message({ message, last, busy, onRetry, retryDisab
       {blocks.length ? blocks.map(block => <View key={block.id}>
         {block.kind === 'text' ? <AiMarkdown content={block.content} streaming={streaming && block.status === 'running'} />
           : block.kind === 'reasoning' ? <ReasoningActivity id={`${message.id}:${block.id}`} content={block.content} active={streaming && block.status === 'running'} />
+          : block.kind === 'plan' ? <PlanActivity block={block} messageStatus={message.status} busy={busy} />
+          : block.name === 'update_plan' && block.status !== 'failed' ? null
           : <><ToolActivity block={block} messageStatus={message.status} busy={busy} />{message.games?.filter(game => game.id === block.gameId).map(gameCard)}</>}
       </View>) : <>
         {!!message.reasoning && <ReasoningActivity id={`${message.id}:reasoning`} content={message.reasoning} active={streaming && !message.content} />}
         {!!message.content && <AiMarkdown content={message.content} streaming={streaming} />}
       </>}
-      {streaming && (blocks.length ? blocks.at(-1)?.kind === 'tool' && !blocks.some(block => block.status === 'preparing' || block.status === 'running') : !message.content && !message.reasoning) && <View accessibilityLiveRegion="polite" style={styles.thinking}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Thinking…</Text></View>}
+      {streaming && (blocks.length ? !blocks.some(block => block.kind !== 'plan' && (block.status === 'preparing' || block.status === 'running')) : !message.content && !message.reasoning) && <View accessibilityLiveRegion="polite" style={styles.thinking}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Thinking…</Text></View>}
       {message.games?.filter(game => !linkedGames.has(game.id)).map(gameCard)}
       {message.error && <Text accessibilityRole="alert" style={styles.error}>{message.error}</Text>}
       {message.status === 'stopped' && !message.error && <Text style={styles.muted}>Response stopped</Text>}

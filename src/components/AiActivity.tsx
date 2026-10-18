@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { Brain, Check, ChevronDown, ChevronRight, CircleAlert, Gamepad2, Square } from 'lucide-react-native';
+import { Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, Gamepad2, Square } from 'lucide-react-native';
 import type { ChatBlock } from '../ai/useChats';
 import { PlayerSheet } from '../player/PlayerSheet';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -24,6 +24,25 @@ export function ReasoningActivity({ content, active, id = 'reasoning' }: { conte
 }
 
 type ToolBlock = Extract<ChatBlock, { kind: 'tool' }>;
+export function PlanActivity({ block, messageStatus, busy }: { block: Extract<ChatBlock, { kind: 'plan' }>; messageStatus: string; busy: boolean }) {
+  const colors = useThemeColors();
+  const s = useThemeStyles(makeStyles);
+  const active = block.status === 'running' && messageStatus === 'streaming' && busy;
+  const completed = block.steps.filter(step => step.status === 'completed').length;
+  const label = block.status === 'completed' ? 'Plan complete' : block.status === 'failed' || messageStatus === 'failed' ? 'Plan interrupted'
+    : block.status === 'stopped' || !active ? 'Plan unfinished' : 'Plan';
+  return <View style={s.plan}>
+    <View style={s.planHeader} accessibilityLiveRegion="polite"><Text accessibilityRole="header" style={s.planTitle}>{label}</Text><Text style={s.label}>{completed}/{block.steps.length}</Text></View>
+    {!!block.explanation && <Text style={s.label}>{block.explanation}</Text>}
+    {block.steps.map((step, index) => <View key={index} accessible style={s.planStep} accessibilityLabel={`${step.step}: ${step.status === 'completed' ? 'completed' : step.status === 'in_progress' ? active ? 'in progress' : 'unfinished' : 'pending'}`}>
+      {step.status === 'completed' ? <Check size={15} color={colors.action} />
+        : step.status === 'in_progress' && active ? <Circle size={15} color={colors.accent} strokeWidth={3} />
+        : <Circle size={15} color={colors.muted} />}
+      <Text style={[s.planText, step.status === 'completed' && s.planDone, step.status === 'in_progress' && active && s.planCurrent]}>{step.step}</Text>
+    </View>)}
+  </View>;
+}
+
 export function ToolActivity({ block, messageStatus, busy }: { block: ToolBlock; messageStatus: string; busy: boolean }) {
   const colors = useThemeColors();
   const s = useThemeStyles(makeStyles);
@@ -35,7 +54,8 @@ export function ToolActivity({ block, messageStatus, busy }: { block: ToolBlock;
   const exercise = block.name === 'create_interactive_game';
   const listing = block.name === 'list_interactive_games';
   const reading = block.name === 'read_interactive_game';
-  const label = active ? (exercise ? 'Creating exercise…' : listing ? 'Finding saved games…' : reading ? 'Reading saved game…' : 'Running tool…')
+  const planning = block.name === 'update_plan';
+  const label = active ? (exercise ? block.status === 'preparing' ? 'Generating exercise…' : 'Validating exercise…' : planning ? 'Updating plan…' : listing ? 'Finding saved games…' : reading ? 'Reading saved game…' : 'Running tool…')
     : status === 'completed' ? (exercise ? 'Exercise ready' : listing ? 'Saved games found' : reading ? 'Saved game read' : 'Tool completed')
     : status === 'failed' ? (exercise ? 'Exercise creation failed' : 'Tool failed')
     : (exercise ? 'Exercise creation stopped' : 'Tool stopped');
@@ -65,6 +85,9 @@ export function ToolActivity({ block, messageStatus, busy }: { block: ToolBlock;
 }
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  plan: { marginVertical: 10, paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.line, gap: 9 },
+  planHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 }, planTitle: { color: colors.ink, fontSize: 13, fontWeight: '600', lineHeight: 20 },
+  planStep: { flexDirection: 'row', alignItems: 'flex-start', gap: 9 }, planText: { flex: 1, color: colors.ink, fontSize: 13, lineHeight: 20 }, planDone: { color: colors.muted }, planCurrent: { color: colors.accent, fontWeight: '600' },
   reasoning: { marginBottom: 8 }, reasoningHeader: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 8, minHeight: 44 },
   label: { color: colors.muted, fontSize: 13, lineHeight: 20 }, expanded: { transform: [{ rotate: '180deg' }] },
   reasoningBody: { maxHeight: 240, paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.line, marginBottom: 8 },
