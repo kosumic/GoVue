@@ -125,6 +125,12 @@ speech module and microphone permissions are included. Hint loading falls back
 to draft vocabulary after 1.5 seconds. Android finishes on a pause; iOS supports
 continuous dictation until stopped.
 
+Each assistant response has a **Read** button in its footer. It reads the response
+with the device's default text-to-speech voice and becomes **Stop** during playback.
+Reading pauses video and caption audio, skips Markdown formatting and link targets,
+and stops when you leave the conversation, background the app, or start dictation.
+Long responses are split into speech requests by the Rust core.
+
 Signed media/caption URLs and raw responses stay in memory. Persisted queues,
 history and settings contain only validated, non-secret metadata. The local
 native playback transport binds to loopback. Cast uses a separate, revocable

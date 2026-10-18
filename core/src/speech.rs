@@ -1,4 +1,6 @@
-//! In-memory dictation state, text joining, and bounded recognition vocabulary.
+//! Device speech preparation, in-memory dictation, and recognition vocabulary.
+pub(crate) mod reading;
+
 use crate::{Result, string};
 use serde::Serialize;
 use serde_json::{Value, json};
