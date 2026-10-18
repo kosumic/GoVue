@@ -475,12 +475,28 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
             json!({"op":"ai_chat_send","id":id,"chatId":chat["id"],"prompt":"How did I do?","focusGameId":game["id"]}),
         );
         assert_eq!(wait(root, &next)["status"], "completed");
-        let input = backend.requests.lock().unwrap().last().unwrap().to_string();
+        let request = backend.requests.lock().unwrap().last().unwrap().clone();
+        let input = request.to_string();
         assert!(input.contains("game_activity"));
         assert!(input.contains("submit"));
+        let field = match protocol {
+            "responses" => "input",
+            "gemini" => "contents",
+            _ => "messages",
+        };
+        let current = request[field]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .to_string();
         assert!(
-            !input.contains("<button id=choice>"),
-            "game source is not replayed into model context"
+            input.contains("<button id=choice>"),
+            "retain the original tool call in memory for an unchanged prompt prefix"
+        );
+        assert!(
+            current.contains("game_activity") && !current.contains("<button id=choice>"),
+            "new game activity contains progress without duplicating game source"
         );
         let restored = ok(root, json!({"op":"ai_chat_get","chatId":chat["id"]}));
         assert_eq!(

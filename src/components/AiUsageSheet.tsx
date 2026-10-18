@@ -82,7 +82,8 @@ export function AiUsageSheet({ visible, onClose, chatId = null }: { visible: boo
         {report.stats.replyCount === 0 && <Text style={s.help}>No provider-reported token usage has been recorded for these saved chats yet.</Text>}
         <Text style={s.help}>Provider-reported counts from saved replies. Cache tokens are included in input once. Deleted chats are excluded.</Text>
         {report.stats.unreportedReplies > 0 && <Text style={s.help}>{report.stats.unreportedReplies} {report.stats.unreportedReplies === 1 ? 'reply has' : 'replies have'} no reported token counts.</Text>}
-        {report.stats.legacyUsage && <Text style={s.help}>Older replies may not include cache details, completion dates, or output speed.</Text>}
+        <Text style={s.help}>Cache hit rate uses only replies with reported input and cache counts.</Text>
+        {report.stats.legacyUsage && <Text style={s.help}>Some replies may not include cache details, completion dates, or output speed.</Text>}
         {report.providers.map(provider => <Section key={provider.id} title={provider.label}>{provider.models.map(model => <ModelRow key={model.key} model={model} />)}</Section>)}
         {!selected && report.chats.length > 0 && <Section title="By conversation">
           {report.chats.map(chat => <SheetRow key={chat.id} title={chat.title || 'Untitled chat'} detail={`${chat.providerLabel} · ${chat.model}`} trailing={<ChevronRight size={20} color={colors.muted} />} onPress={() => setSelected(chat.id)} />)}

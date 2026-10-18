@@ -118,7 +118,8 @@ impl Counter {
             .copied()
             .find(|n| *n > 0)
             .or_else(|| cache_fields.iter().flatten().copied().next());
-        let created = count(&value["cache_creation_input_tokens"]);
+        let created = count(&value["cache_creation_input_tokens"])
+            .or_else(|| count(&value["input_tokens_details"]["cache_write_tokens"]));
         let reasoning = count(&value["output_tokens_details"]["reasoning_tokens"])
             .or_else(|| count(&value["completion_tokens_details"]["reasoning_tokens"]))
             .or_else(|| count(&value["thoughtsTokenCount"]));
@@ -129,7 +130,7 @@ impl Counter {
         self.cache_read = cached.or(self.cache_read);
         self.cache_write = created.or(self.cache_write);
         self.reasoning = reasoning.or(self.reasoning);
-        if kind != "anthropic" {
+        if !matches!(kind, "anthropic" | "responses") {
             self.cache_write = None;
         }
     }
@@ -149,9 +150,13 @@ impl Counter {
                 value["latestContextTokens"] = json!(total);
                 // Ignore impossible cache subsets without inflating the prompt.
                 if read <= total && write <= total - read {
-                    value["uncachedInputTokens"] = json!(total - read - write);
-                    value["cacheReadTokens"] = json!(read);
-                    value["cacheCreationTokens"] = json!(write);
+                    if self.cache_read.is_some() {
+                        value["uncachedInputTokens"] = json!(total - read - write);
+                        value["cacheReadTokens"] = json!(read);
+                    }
+                    if self.cache_write.is_some() {
+                        value["cacheCreationTokens"] = json!(write);
+                    }
                 }
             }
         }
@@ -199,6 +204,8 @@ struct Stats {
     legacy: bool,
     stream_ms: u64,
     stream_output: u64,
+    cache_input: u64,
+    cache_read: u64,
 }
 
 fn add(a: u64, b: u64) -> Result<u64> {
@@ -228,6 +235,14 @@ impl Stats {
                 self.counts.insert(name.into(), sum);
             }
         }
+        if let (Some(input), Some(read)) = (
+            count(&turn.usage["inputTokens"]).filter(|n| *n > 0),
+            count(&turn.usage["cacheReadTokens"]),
+        ) && read <= input
+        {
+            self.cache_input = add(self.cache_input, input)?;
+            self.cache_read = add(self.cache_read, read)?;
+        }
         if let (Some(ms), Some(output)) = (
             count(&turn.usage["streamMs"]).filter(|n| *n > 0),
             count(&turn.usage["outputTokens"]).filter(|n| *n > 0),
@@ -246,9 +261,8 @@ impl Stats {
         }
         let input = self.counts.get("inputTokens").copied().unwrap_or(0);
         let output = self.counts.get("outputTokens").copied().unwrap_or(0);
-        let cached = self.counts.get("cacheReadTokens").copied().unwrap_or(0);
-        value["cacheHitRate"] = json!(if input > 0 && cached > 0 {
-            Some(cached as f64 / input as f64 * 100.0)
+        value["cacheHitRate"] = json!(if self.cache_input > 0 {
+            Some(self.cache_read as f64 / self.cache_input as f64 * 100.0)
         } else {
             None
         });

@@ -78,6 +78,14 @@ breakdowns, cache hit rates and output speed. Open a conversation for its contex
 and reasoning details. Missing provider counts are shown as unavailable; older
 replies may lack cache, timing and completion-date metadata. These are local
 saved-history statistics, not the provider's billing or subscription quota.
+Unreported cache counts appear as unknown, and cache hit rates use only replies
+with both input and cache counts. Earlier request messages keep their original
+normalized text; unchanged transcripts are attached once. Provider tool and
+reasoning items are replayed from a bounded memory cache and never saved to disk.
+Restarting the app or evicting that cache falls back to normalized chat history
+and may start a new provider cache prefix.
+Both ChatGPT account connections keep a stable conversation identity in the
+prompt-cache key and session headers across turns and tool calls.
 Choose **ChatGPT / Codex** for account sign-in or **OpenAI API** for an API key.
 The alternative **ChatGPT plan sharing** connection is under **Advanced connections**.
 Earlier feature documentation remains in
