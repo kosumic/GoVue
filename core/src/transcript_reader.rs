@@ -153,5 +153,7 @@ pub(super) fn dispatch(
             })
         });
     }
-    Ok(json!({ "rows": rows, "total": total }))
+    Ok(
+        json!({ "rows": rows, "total": total, "trackChoices": crate::caption_tracks::choices(primary) }),
+    )
 }

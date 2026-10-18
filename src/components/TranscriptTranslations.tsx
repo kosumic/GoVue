@@ -4,28 +4,31 @@ import { useThemeStyles, type ThemeColors } from '../theme';
 import type { CaptionTrack } from '../youtube/transcript';
 import { IconButton } from './IconButton';
 
-export function TranscriptTranslations({ visible, tracks, selected, onSelect, onClose }: {
+export function TranscriptTranslations({ visible, kind, tracks, selected, onSelect, onClose }: {
   visible: boolean;
+  kind: 'captions' | 'machine';
   tracks: CaptionTrack[];
   selected: string[];
   onSelect: (id: string) => void;
   onClose: () => void;
 }) {
   const styles = useThemeStyles(makeStyles);
+  const title = kind === 'captions' ? 'Caption translations' : 'Machine translations';
+  const closeLabel = kind === 'captions' ? 'Close caption translations' : 'Close machine translations';
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
     <View style={styles.backdrop}>
-      <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close translation languages" onPress={onClose} />
+      <Pressable style={StyleSheet.absoluteFill} accessibilityLabel={closeLabel} onPress={onClose} />
       <View style={styles.sheet} accessibilityViewIsModal>
-        <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>Translate captions</Text>
-          <IconButton icon={X} label="Close translation languages" onPress={onClose} /></View>
-        <Text style={styles.help}>YouTube machine translations{selected.length >= 2 ? ' · Remove a selected language before adding another.' : ' · Select a language to compare with the original.'}</Text>
+        <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>{title}</Text>
+          <IconButton icon={X} label={closeLabel} onPress={onClose} /></View>
+        <Text style={styles.help}>{kind === 'captions' ? 'Caption tracks supplied with this video' : 'Automatic captions and YouTube machine translations'}{selected.length >= 2 ? ' · Remove a selected language before adding another.' : ' · Select a language to compare with the source.'}</Text>
         <FlatList data={tracks} keyExtractor={track => track.id} contentContainerStyle={styles.list}
           renderItem={({ item }) => {
             const checked = selected.includes(item.id);
             const disabled = !checked && selected.length >= 2;
             return <Pressable accessibilityRole="checkbox" accessibilityState={{ checked, disabled }} disabled={disabled}
               onPress={() => { onSelect(item.id); onClose(); }} style={[styles.language, disabled && styles.disabled]}>
-              <Text style={styles.label}>{checked ? '✓ ' : ''}{item.label}</Text>
+              <Text style={styles.label}>{checked ? '✓ ' : ''}{item.label}{item.automatic && !item.translatedFrom ? ' · Auto' : ''}</Text>
             </Pressable>;
           }} />
       </View>

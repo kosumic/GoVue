@@ -1,5 +1,5 @@
 import { coreRequest } from '../../modules/govue-core';
-import type { Segment, Transcript } from '../youtube/transcript';
+import type { CaptionTrack, Segment, Transcript } from '../youtube/transcript';
 import { extract } from './extraction';
 
 export function extractTranscript(videoId: string, trackId = 'default', signal?: AbortSignal, fresh = false, audioKey = '') {
@@ -11,7 +11,10 @@ export function restoreTranscript(videoId: string, trackId?: string, audioKey = 
 }
 
 export type TranscriptRow = { start: number; lines: { track: number; index: number }[] };
-export type TranscriptReader = { rows: TranscriptRow[]; total: number };
+export type TranscriptReader = {
+  rows: TranscriptRow[]; total: number;
+  trackChoices: { sourceTracks: CaptionTrack[]; captionTracks: CaptionTrack[]; translations: CaptionTrack[] };
+};
 
 export function readTranscripts(data: Transcript, comparison: Transcript | null, query: string) {
   return coreRequest<TranscriptReader>({ op: 'transcript_reader', videoId: data.videoId, trackId: data.trackId, comparisonTrackId: comparison?.trackId, query });
