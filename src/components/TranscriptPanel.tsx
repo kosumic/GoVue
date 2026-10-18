@@ -37,6 +37,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const [query, setQuery] = useState('');
+  const [searchVisible, setSearchVisible] = useState(false);
   const [copied, setCopied] = useState(false);
   const [wordFeedback, setWordFeedback] = useState('');
   const [translationsVisible, setTranslationsVisible] = useState(false);
@@ -137,6 +138,8 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
       <View style={styles.heading}>
         <View style={styles.headingText}><Text accessibilityRole="header" numberOfLines={1} style={styles.title}>Transcript</Text>
           <Text numberOfLines={1} style={styles.subtitle}>{cached ? 'Saved · ' : ''}{data?.title || 'YouTube captions'}</Text></View>
+        <IconButton compact icon={Search} label={searchVisible ? 'Close transcript search' : 'Search transcript'} active={searchVisible} disabled={!data || loading || !!error}
+          onPress={() => { setSearchVisible(visible => !visible); setQuery(''); }} />
         {onExtract && <IconButton compact icon={RotateCw} label="Refresh transcript" disabled={loading} onPress={() => { setCopied(false); onExtract(); }} />}
         <IconButton compact icon={Info} label="Caption details" disabled={!data || loading} onPress={() => {
           if (data) void captionDetails(data).then(details => Alert.alert(`${data.language} captions`, details))
@@ -166,10 +169,17 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
         <View style={styles.empty}><Text style={styles.emptyTitle}>Transcript unavailable</Text><Text accessibilityRole="alert" style={styles.help}>{error}</Text>
           {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable>}</View>
       ) : data ? <>
-        {onPauseAfterLine && <View style={styles.pauseRow}>
-          <Text style={styles.pauseLabel}>Pause after each line</Text>
-          <Switch accessibilityLabel="Pause after each transcript line" accessibilityHint="Resume playback when you are ready for the next line"
-            value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
+        {(onPauseAfterLine || (canPlay && !query.trim())) && <View style={styles.playbackControls}>
+          {onPauseAfterLine && <View style={styles.pauseControl}>
+            <Text style={styles.pauseLabel}>Pause after each line</Text>
+            <Switch accessibilityLabel="Pause after each transcript line" accessibilityHint="Resume playback when you are ready for the next line"
+              value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
+          </View>}
+          {canPlay && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
+            onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
+            <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
+            <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
+          </Pressable>}
         </View>}
         {onSelectTrack && <>
           <Text style={styles.trackHelp}>{selectedTracks.length}/2 languages · {selectedTracks.length === 2 ? 'Tap a selected language to remove it' : data.tracks.length > 1 ? 'Select another language to compare' : 'Only one language available'}</Text>
@@ -191,18 +201,10 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
         {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={styles.trackText}>Loading comparison…</Text></View>}
         {!!comparisonError && <View style={styles.comparisonStatus}><Text accessibilityRole="alert" style={styles.comparisonError}>{comparisonError}</Text>
           {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()}><Text style={styles.selectedText}>Retry</Text></Pressable>}</View>}
-        <View style={styles.search}><Search size={16} color={colors.muted} /><TextInput accessibilityLabel="Search transcript" placeholder="Find in transcript" placeholderTextColor={colors.muted}
+        {searchVisible && <View style={styles.search}><Search size={16} color={colors.muted} /><TextInput autoFocus accessibilityLabel="Search transcript" placeholder="Find in transcript" placeholderTextColor={colors.muted}
           value={query} onChangeText={setQuery} style={styles.searchInput} />
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
-          {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>
-        <View style={styles.languageRow}>
-          <Text style={styles.language}>{query.trim() ? `Search results for “${query.trim()}”` : [data.language, comparison?.language].filter(Boolean).join(' + ')}{canPlay ? onSeek ? ' · Tap a word or line to play' : ' · Tap a line to play' : ''} · Hold a word to translate</Text>
-          {canPlay && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
-            onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
-            <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
-            <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
-          </Pressable>}
-        </View>
+          {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>}
         <FlatList ref={list} data={rows} extraData={position} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={styles.list}
           onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
@@ -248,8 +250,9 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   activeWord: { backgroundColor: colors.accent, color: colors.background, fontWeight: '700' },
   speakerSeparator: { color: colors.muted },
-  pauseRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, minHeight: 48 },
-  pauseLabel: { flex: 1, color: colors.ink, fontSize: 13 },
+  playbackControls: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, minHeight: 48 },
+  pauseControl: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pauseLabel: { flexShrink: 1, color: colors.ink, fontSize: 13 },
   panel: { flex: 1, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.line },
   heading: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 4, paddingVertical: 8 },
   headingText: { flex: 1, minWidth: 0, gap: 3 },
@@ -277,8 +280,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   searchInput: { flex: 1, paddingVertical: 11, color: colors.ink, fontSize: 13 },
   count: { color: colors.muted, fontSize: 11 },
   list: { paddingHorizontal: 20, paddingBottom: 24 },
-  languageRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 20, marginTop: 8, marginBottom: 6 },
-  language: { flex: 1, color: colors.muted, fontSize: 10 },
   follow: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 44, paddingHorizontal: 8, borderRadius: 8 },
   following: { backgroundColor: colors.accentSoft },
   followText: { fontSize: 11, color: colors.muted },
