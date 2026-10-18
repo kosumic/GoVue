@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::fs;
 
 #[test]
-fn large_mini_players_reach_the_close_target_without_storing_drag_or_dismiss_frames() {
+fn mini_players_stay_in_bounds_and_dock_on_release_without_storing_drag_frames() {
     let directory = std::env::temp_dir().join(format!(
         "govue-mini-{}-{}",
         std::process::id(),
@@ -31,21 +31,24 @@ fn large_mini_players_reach_the_close_target_without_storing_drag_or_dismiss_fra
     assert_eq!(initial["value"]["bottom"], 44.0);
     let file = directory.join("media/mini-player.json");
     assert!(!file.exists());
-    // At maximum phone width, reaching the target requires partial off-screen
-    // movement; clamping to the window bottom would make dismissal unreachable.
+    // Dragging through the former close target stays within the workspace and
+    // releasing docks the player instead of dismissing it.
     let drag = call(json!({"mode":"drag","frame":{"width":320,"x":-43,"y":82}}));
-    assert_eq!(drag["value"]["closeArmed"], true);
-    assert_eq!(drag["value"]["y"], 82.0);
+    assert_eq!(drag["ok"], true);
+    assert_eq!(drag["value"]["x"], -43.0);
+    assert_eq!(drag["value"]["y"], 44.0);
     assert!(!file.exists());
-    let dismissed = call(json!({"mode":"release","frame":{"width":320,"x":-43,"y":82}}));
-    assert_eq!(dismissed["value"]["dismiss"], true);
-    assert!(!file.exists());
-    let cancelled = call(
-        json!({"mode":"settle","frame":{"width":320,"x":-43,"y":82,"url":"https://example.com/private"}}),
+    let released = call(
+        json!({"mode":"release","frame":{"width":320,"x":-43,"y":82,"url":"https://example.com/private"}}),
     );
-    assert_eq!(cancelled["value"]["dismiss"], false);
-    assert_eq!(cancelled["value"]["y"], 44.0);
-    assert_eq!(call(json!({}))["value"]["width"], 320.0);
+    assert_eq!(released["ok"], true);
+    assert_eq!(released["value"]["x"], -98.0);
+    assert_eq!(released["value"]["y"], 44.0);
+    assert_eq!(
+        call(json!({}))["value"],
+        released["value"],
+        "The released placement survives reopening the mini-player"
+    );
     let stored = fs::read_to_string(&file).unwrap();
     assert!(!stored.contains("url"));
     assert!(!stored.contains("close"));

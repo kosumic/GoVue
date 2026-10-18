@@ -18,6 +18,9 @@ Content plan: YouTube browser, embedded/fullscreen/mini player, player menus,
 queue, extension settings, downloads, settings backup, and About.
 Interaction thesis: controls fade on inactivity; menus dismiss and return to
 the same video; fullscreen and mini-player keep one mounted video surface.
+The mini-player keeps its close button, dragging, resizing, and edge docking.
+The owner requested removing LiTube's bottom drag-to-close target on 2026-10-18;
+releasing a drag now keeps the player open and within the workspace.
 
 ## Acceptance inventory
 

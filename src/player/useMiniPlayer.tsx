@@ -1,18 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Animated, Easing, PanResponder, StyleSheet, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { Animated, Easing, PanResponder } from 'react-native';
 import { coreRequest } from '../../modules/govue-core';
-import { Delete } from './icons';
-import { haptic } from './Haptics';
 
 type Frame = { x: number; y: number; width: number };
 type Layout = Frame & {
   height: number;
   right: number;
   bottom: number;
-  closeArmed: boolean;
-  dismiss: boolean;
-  close: { left: number; top: number; width: number; height: number };
 };
 type Mode = 'drag' | 'release' | 'settle';
 type Request = {
@@ -27,14 +21,12 @@ export function useMiniPlayer({
   size,
   bottomInset,
   active,
-  strength,
   onDismiss,
   onError,
 }: {
   size: { width: number; height: number };
   bottomInset: number;
   active: boolean;
-  strength: number;
   onDismiss: () => void;
   onError: (error: unknown) => void;
 }) {
@@ -45,19 +37,12 @@ export function useMiniPlayer({
     height: 106,
     right: 12,
     bottom: 68,
-    closeArmed: false,
-    dismiss: false,
-    close: { left: 0, top: 0, width: 96, height: 72 },
   });
   const frame = useRef(layout);
   const motion = useRef(new Animated.ValueXY()).current;
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
-  const [dragging, setDragging] = useState(false);
-  const [armed, setArmed] = useState(false);
-  const draggingRef = useRef(false),
-    armedRef = useRef(false),
-    closing = useRef(false);
+  const closing = useRef(false);
   const generation = useRef(0),
     mounted = useRef(true);
   const pending = useRef<Request | null>(null),
@@ -69,50 +54,21 @@ export function useMiniPlayer({
     size,
     bottomInset,
     active,
-    strength,
     onDismiss,
     onError,
   });
-  latest.current = { size, bottomInset, active, strength, onDismiss, onError };
+  latest.current = { size, bottomInset, active, onDismiss, onError };
   const apply = (next: Layout, request: Request) => {
     frame.current = next;
     // Coordinate ticks travel through animated values without rendering the browser.
     setLayout((previous) =>
       (['width', 'height', 'right', 'bottom'] as const).every(
         (key) => previous[key] === next[key],
-      ) &&
-      previous.close.left === next.close.left &&
-      previous.close.top === next.close.top
+      )
         ? previous
         : next,
     );
-    if (next.closeArmed && !armedRef.current && draggingRef.current)
-      haptic(latest.current.strength);
-    armedRef.current = next.closeArmed;
-    setArmed(next.closeArmed);
-    if (next.dismiss) {
-      closing.current = true;
-      motion.setValue({ x: next.x, y: next.y });
-      Animated.parallel([
-        Animated.timing(scale, {
-          toValue: 0.1,
-          duration: 240,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacity, {
-          toValue: 0,
-          duration: 240,
-          useNativeDriver: true,
-        }),
-      ]).start(({ finished }) => {
-        if (
-          finished &&
-          mounted.current &&
-          request.generation === generation.current
-        )
-          latest.current.onDismiss();
-      });
-    } else if (request.mode === 'drag') {
+    if (request.mode === 'drag') {
       motion.setValue({ x: next.x, y: next.y });
     } else {
       Animated.timing(motion, {
@@ -166,8 +122,6 @@ export function useMiniPlayer({
   };
   const finish = (cancelled: boolean) => {
     holding.current = false;
-    draggingRef.current = false;
-    setDragging(false);
     if (!origin.current || !latest.current.active || closing.current) return;
     const pinch = origin.current.pinch > 0;
     origin.current = null;
@@ -203,8 +157,6 @@ export function useMiniPlayer({
             : 0;
         origin.current = null;
         desired.current = null;
-        draggingRef.current = !pinch;
-        setDragging(!pinch);
         motion.stopAnimation((position) => {
           if (
             !latest.current.active ||
@@ -221,8 +173,6 @@ export function useMiniPlayer({
         if (!start || closing.current) return;
         const points = event.nativeEvent.touches;
         if (points.length > 1) {
-          draggingRef.current = false;
-          setDragging(false);
           const distance = Math.hypot(
             points[1].pageX - points[0].pageX,
             points[1].pageY - points[0].pageY,
@@ -272,8 +222,6 @@ export function useMiniPlayer({
     pending.current = null;
     origin.current = null;
     holding.current = false;
-    draggingRef.current = false;
-    setDragging(false);
     closing.current = false;
     motion.stopAnimation();
     scale.stopAnimation();
@@ -296,12 +244,24 @@ export function useMiniPlayer({
       pending.current = null;
       holding.current = false;
       origin.current = null;
-      draggingRef.current = false;
-      setDragging(false);
-      apply(
-        { ...frame.current, dismiss: true },
-        { mode: 'release', generation: generation.current },
-      );
+      closing.current = true;
+      const owner = generation.current;
+      motion.stopAnimation();
+      Animated.parallel([
+        Animated.timing(scale, {
+          toValue: 0.1,
+          duration: 240,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 240,
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished && mounted.current && owner === generation.current)
+          latest.current.onDismiss();
+      });
     },
     panHandlers: responder.panHandlers,
     style: {
@@ -323,41 +283,5 @@ export function useMiniPlayer({
         { scale },
       ],
     },
-    dropTarget: active && dragging && (
-      <View
-        pointerEvents="none"
-        style={s.drop}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-      >
-        <LinearGradient
-          colors={
-            armed ? ['#ff00008f', '#ff0000b8'] : ['#6060608f', '#606060b8']
-          }
-          style={s.shade}
-        />
-        <View style={[s.target, layout.close]}>
-          <Delete size={36} color={armed ? 'white' : '#fffffff2'} />
-        </View>
-      </View>
-    ),
   };
 }
-
-const s = StyleSheet.create({
-  drop: { ...StyleSheet.absoluteFill, zIndex: 1 },
-  shade: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 156,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-  },
-  target: {
-    position: 'absolute',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
