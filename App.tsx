@@ -224,6 +224,7 @@ function Browser() {
     media,
     mediaView,
     navigate,
+    media.playback?.offline ? media.playback.videoId : watch?.videoId ?? null,
     !!watch &&
       browser.activeId === watch.id &&
       !page &&

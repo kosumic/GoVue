@@ -38,6 +38,7 @@ export function usePlayerSession(
   media: ReturnType<typeof useMediaBrowser>,
   webView: React.RefObject<WebView | null>,
   navigate: (url: string) => void,
+  videoId: string | null,
   watchVisible = true,
   chatVisible = false,
 ) {
@@ -48,7 +49,7 @@ export function usePlayerSession(
   const mini = minimized || (chatVisible && !!media.playback && media.settings.miniPlayer);
   const [locked, setLocked] = useState(false);
   const [pip, setPip] = useState(false);
-  const transcript = usePlayerTranscript(media.playback?.videoId ?? null, undefined, media.settings.audioKey);
+  const transcript = usePlayerTranscript(videoId, undefined, media.settings.audioKey);
   useEffect(() => {
     if (mini || pip || locked) transcript.close();
   }, [mini, pip, locked, transcript.close]);
