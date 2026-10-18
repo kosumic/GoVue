@@ -81,7 +81,9 @@ export function usePlayerTranscript(videoId: string | null, initial?: Transcript
         updateRequest({ videoId, audioKey, trackIds: selected.length ? selected : ['default'], fresh: false });
     },
     extract: () => {
-      if (videoId) updateRequest({ videoId, audioKey, trackIds: data ? [data.trackId, ...selected.slice(1)] : selected.length ? selected : ['default'], fresh: true });
+      // Retrying a comparison reuses the primary and its guest session. An
+      // explicit refresh after a successful load still bypasses saved data.
+      if (videoId) updateRequest({ videoId, audioKey, trackIds: data ? [data.trackId, ...selected.slice(1)] : selected.length ? selected : ['default'], fresh: !current?.error });
     },
     selectTrack: (trackId: string) => {
       if (!data || !request) return;

@@ -44,6 +44,17 @@ transcript cache. Cancelling or changing videos discards pending UI results and
 releases the Rust job; in-flight HTTPS calls finish within their bounded timeout.
 A browsing-renderer failure does not cancel independent extraction.
 
+Machine-translated captions wait until the in-memory guest session is at least
+75 seconds old before requesting text, following the
+[yt-dlp session-age workaround](https://github.com/yt-dlp/yt-dlp/pull/15709).
+Original captions load immediately. Refreshing player metadata reuses the cached
+guest cookies and their age; changing the visitor cookie resets that age.
+The wait is cancellable and extraction jobs allow up to 180 seconds so the wait
+does not consume the verification/network budget. Unmarked caption requests
+that return 403 or 429 attempt verification once. If a verified translation
+still returns 429, the reader reports the temporary limit and preserves the
+original transcript for Retry. Guest cookies and age remain in memory only.
+
 This initial standalone extractor uses a guest VISIONOS client. Sign-in-required
 videos and videos unavailable to that client fail explicitly. Formats requiring
 signature/throttle evaluation are not selected. There is no page fallback.

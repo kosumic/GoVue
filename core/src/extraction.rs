@@ -22,7 +22,11 @@ use url::Url;
 const ORIGIN: &str = "https://www.youtube.com";
 const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 const REQUEST_KEY: &str = "O43z0dpjhgX20SCx4KAo";
-const LIFETIME: Duration = Duration::from_secs(90);
+const CACHE_LIFETIME: Duration = Duration::from_secs(90);
+const JOB_LIFETIME: Duration = Duration::from_secs(180);
+// YouTube rejects translations from new guest sessions even with a valid PO
+// token. See https://github.com/yt-dlp/yt-dlp/pull/15709.
+const TRANSLATION_SESSION_AGE: Duration = Duration::from_secs(75);
 static HTTP: OnceLock<Box<dyn ExtractionHttp>> = OnceLock::new();
 type Jobs = HashMap<(String, String), Arc<Job>>;
 static JOBS: OnceLock<Mutex<Jobs>> = OnceLock::new();
@@ -59,13 +63,18 @@ pub fn install_extraction_http(backend: Box<dyn ExtractionHttp>) {
 }
 
 #[derive(Clone)]
+struct Session {
+    cookies: HashMap<String, String>,
+    since: Instant,
+}
+#[derive(Clone)]
 struct Player {
     root: String,
     id: String,
     at: Instant,
     data: Value,
     chapters: Vec<Value>,
-    cookies: HashMap<String, String>,
+    session: Session,
 }
 struct Runtime {
     sequence: u32,
@@ -75,7 +84,7 @@ struct Runtime {
 struct Job {
     at: Instant,
     user_agent: String,
-    cookies: Mutex<HashMap<String, String>>,
+    session: Mutex<Session>,
     cancelled: AtomicBool,
     result: Mutex<Option<Result<Value>>>,
     runtime: Mutex<Runtime>,
@@ -85,7 +94,7 @@ impl Job {
     fn check(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Acquire) {
             Err("Extraction cancelled.".into())
-        } else if self.at.elapsed() >= LIFETIME {
+        } else if self.at.elapsed() >= JOB_LIFETIME {
             Err("YouTube extraction timed out.".into())
         } else {
             Ok(())
@@ -94,6 +103,24 @@ impl Job {
     fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
         self.wake.notify_all();
+    }
+    fn wait_until(&self, until: Instant) -> Result<()> {
+        let mut state = self
+            .runtime
+            .lock()
+            .map_err(|_| "Token runtime unavailable.")?;
+        loop {
+            self.check()?;
+            let remaining = until.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(());
+            }
+            state = self
+                .wake
+                .wait_timeout(state, remaining.min(Duration::from_millis(250)))
+                .map_err(|_| "Token runtime unavailable.")?
+                .0;
+        }
     }
     fn evaluate(&self, mut task: Value) -> Result<String> {
         self.check()?;
@@ -160,13 +187,13 @@ fn allowed_address(raw: &str, interpreter: bool) -> Result<()> {
     }
 }
 
-fn fetch(
+fn fetch_response(
     job: &Job,
     url: &str,
     body: Option<Value>,
     interpreter: bool,
     extra: &[(&str, &str)],
-) -> Result<String> {
+) -> Result<ExtractionReply> {
     job.check()?;
     allowed_address(url, interpreter)?;
     let browser_request = interpreter
@@ -195,14 +222,15 @@ fn fetch(
     }
     let method = if body.is_some() { "POST" } else { "GET" };
     if !interpreter {
-        let cookies = job
-            .cookies
+        let session = job
+            .session
             .lock()
             .map_err(|_| "Extraction session unavailable.")?;
-        if !cookies.is_empty() {
+        if !session.cookies.is_empty() {
             headers.push(ExtractionHeader {
                 name: "Cookie".into(),
-                value: cookies
+                value: session
+                    .cookies
                     .iter()
                     .map(|(name, value)| format!("{name}={value}"))
                     .collect::<Vec<_>>()
@@ -272,8 +300,8 @@ fn fetch(
     };
     job.check()?;
     if !interpreter {
-        let mut cookies = job
-            .cookies
+        let mut session = job
+            .session
             .lock()
             .map_err(|_| "Extraction session unavailable.")?;
         for header in reply
@@ -294,9 +322,17 @@ fn fetch(
                         .bytes()
                         .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
                     && !value.chars().any(char::is_control)
-                    && (cookies.len() < 20 || cookies.contains_key(name))
+                    && (session.cookies.len() < 20 || session.cookies.contains_key(name))
                 {
-                    cookies.insert(name.into(), value.into());
+                    if name == "VISITOR_INFO1_LIVE"
+                        && session
+                            .cookies
+                            .get(name)
+                            .is_none_or(|previous| previous != value)
+                    {
+                        session.since = Instant::now();
+                    }
+                    session.cookies.insert(name.into(), value.into());
                 }
             }
         }
@@ -304,6 +340,9 @@ fn fetch(
     if reply.body.len() > MAX_BYTES {
         return Err("YouTube extraction response is too large.".into());
     }
+    Ok(reply)
+}
+fn response_text(reply: ExtractionReply) -> Result<String> {
     if reply.status != 200 {
         return Err(format!(
             "YouTube extraction request failed (HTTP {}).",
@@ -311,6 +350,35 @@ fn fetch(
         ));
     }
     String::from_utf8(reply.body).map_err(|_| "Unreadable YouTube extraction response.".into())
+}
+fn fetch(
+    job: &Job,
+    url: &str,
+    body: Option<Value>,
+    interpreter: bool,
+    extra: &[(&str, &str)],
+) -> Result<String> {
+    response_text(fetch_response(job, url, body, interpreter, extra)?)
+}
+fn caption_source(job: &Job, url: &str, verified: bool, translated: bool) -> Result<String> {
+    if translated {
+        let since = job
+            .session
+            .lock()
+            .map_err(|_| "Extraction session unavailable.")?
+            .since;
+        job.wait_until(since + TRANSLATION_SESSION_AGE)?;
+    }
+    let reply = fetch_response(job, url, None, false, &[])?;
+    if !verified && matches!(reply.status, 403 | 429) {
+        // An unmarked caption URL can still require verification. Allow the
+        // existing token flow once, without retrying the same request in a loop.
+        return Ok(String::new());
+    }
+    if reply.status == 429 && translated {
+        return Err("YouTube is temporarily limiting translated captions. Keep watching and try again shortly.".into());
+    }
+    response_text(reply)
 }
 fn json_response(raw: &str) -> Result<Value> {
     serde_json::from_str(raw).map_err(|_| "Unreadable YouTube extraction data.".into())
@@ -371,21 +439,20 @@ fn chapters(data: &Value) -> Vec<Value> {
     result
 }
 fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
-    if !fresh {
+    {
         let players = PLAYERS
             .get_or_init(Default::default)
             .lock()
             .map_err(|_| "Extractor cache unavailable.")?;
-        if let Some(cached) = players
-            .iter()
-            .find(|p| p.root == root && p.id == id && p.at.elapsed() < LIFETIME)
-        {
+        if let Some(cached) = players.iter().find(|p| p.root == root && p.id == id) {
             (*job
-                .cookies
+                .session
                 .lock()
                 .map_err(|_| "Extraction session unavailable.")?)
-            .clone_from(&cached.cookies);
-            return Ok(cached.clone());
+            .clone_from(&cached.session);
+            if !fresh && cached.at.elapsed() < CACHE_LIFETIME {
+                return Ok(cached.clone());
+            }
         }
     }
     // Fetch and parse JSON configuration as data. This does not initialize a
@@ -456,8 +523,8 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
         at: Instant::now(),
         data,
         chapters: chapters(&initial),
-        cookies: job
-            .cookies
+        session: job
+            .session
             .lock()
             .map_err(|_| "Extraction session unavailable.")?
             .clone(),
@@ -467,7 +534,7 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| "Extractor cache unavailable.")?;
-    players.retain(|p| p.at.elapsed() < LIFETIME && !(p.root == root && p.id == id));
+    players.retain(|p| p.at.elapsed() < CACHE_LIFETIME && !(p.root == root && p.id == id));
     players.push_front(result.clone());
     players.truncate(3);
     drop(players);
@@ -640,9 +707,10 @@ fn transcript(
         .position(|t| t.id == source_id)
         .ok_or("This caption source is unavailable.")?;
     let raw = string(&list["captionTracks"][index], "baseUrl")?;
+    let translated = selected.translated_from.is_some();
     let address_for = |proof| -> Result<String> {
         let mut address = caption_address(raw, id, proof)?;
-        if selected.translated_from.is_some() {
+        if translated {
             address.push('&');
             address.push_str(
                 &url::form_urlencoded::Serializer::new(String::new())
@@ -660,11 +728,11 @@ fn transcript(
     let mut source = if requires_token {
         String::new()
     } else {
-        fetch(job, &address, None, false, &[])?
+        caption_source(job, &address, false, translated)?
     };
     if source.trim().is_empty() {
         let proof = token(job, &player)?;
-        source = fetch(job, &address_for(Some(&proof))?, None, false, &[])?;
+        source = caption_source(job, &address_for(Some(&proof))?, true, translated)?;
     }
     if source.trim().is_empty() {
         return Err("YouTube returned no caption text after verification.".into());
@@ -755,7 +823,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .lock()
         .map_err(|_| "Extractor busy.")?;
     jobs.retain(|_, job| {
-        if job.at.elapsed() >= LIFETIME {
+        if job.at.elapsed() >= JOB_LIFETIME {
             job.cancel();
             false
         } else {
@@ -796,7 +864,10 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             let job = Arc::new(Job {
                 at: Instant::now(),
                 user_agent: user_agent.into(),
-                cookies: Mutex::new(HashMap::new()),
+                session: Mutex::new(Session {
+                    cookies: HashMap::new(),
+                    since: Instant::now(),
+                }),
                 cancelled: AtomicBool::new(false),
                 result: Mutex::new(None),
                 runtime: Mutex::new(Runtime {
@@ -902,6 +973,36 @@ mod tests {
     use std::{fs, sync::atomic::AtomicUsize};
 
     #[test]
+    fn translation_wait_is_cancellable_and_has_its_own_job_budget() {
+        let job = Arc::new(Job {
+            at: Instant::now()
+                .checked_sub(Duration::from_secs(100))
+                .unwrap(),
+            user_agent: UA.into(),
+            session: Mutex::new(Session {
+                cookies: HashMap::new(),
+                since: Instant::now(),
+            }),
+            cancelled: AtomicBool::new(false),
+            result: Mutex::new(None),
+            runtime: Mutex::new(Runtime {
+                sequence: 0,
+                task: None,
+                reply: None,
+            }),
+            wake: Condvar::new(),
+        });
+        assert!(job.check().is_ok());
+        assert!(job.wait_until(Instant::now()).is_ok());
+        let waiting = job.clone();
+        let worker =
+            thread::spawn(move || waiting.wait_until(Instant::now() + TRANSLATION_SESSION_AGE));
+        thread::sleep(Duration::from_millis(10));
+        job.cancel();
+        assert_eq!(worker.join().unwrap().unwrap_err(), "Extraction cancelled.");
+    }
+
+    #[test]
     fn caption_addresses_preserve_signatures_and_enforce_video_and_origin() {
         let raw = "https://www.youtube.com/api/timedtext?v=abcdefghijk&signature=A%2fb+C&lang=en&fmt=srv3&xosf=1";
         let address = caption_address(raw, "abcdefghijk", Some("proof+/=")).unwrap();
@@ -943,79 +1044,108 @@ mod tests {
         assert!(parse_challenge(&json!({})).is_err());
     }
 
-    #[test]
-    fn standalone_jobs_extract_media_and_protected_captions_without_page_fallback() {
-        const ID: &str = "abcdefghijk";
-        const SOURCE: &str = "https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en&exp=xpe&signature=never-persist";
-        struct Http(Arc<AtomicUsize>);
-        impl ExtractionHttp for Http {
-            fn request(&self, request: ExtractionRequest) -> ExtractionReply {
-                self.0.fetch_add(1, Ordering::Relaxed);
-                let url = Url::parse(&request.url).unwrap();
-                let mut headers = vec![];
-                let body = match url.path() {
-                    "/watch" => {
-                        assert_eq!(request.method, "GET");
-                        headers.push(ExtractionHeader {
-                            name: "Set-Cookie".into(),
-                            value: "YSC=guest-only; Secure; HttpOnly; Path=/".into(),
-                        });
-                        format!(
-                            "ytcfg.set({});var ytInitialPlayerResponse = {};",
-                            json!({"INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"fixture","visitorData":"never-persist-visitor"}}}),
-                            json!({"videoDetails":{"videoId":ID},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"vssId":".en","languageCode":"en","name":{"simpleText":"English"},"baseUrl":SOURCE,"isTranslatable":true}],
+    const ID: &str = "abcdefghijk";
+    const SOURCE: &str = "https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en&exp=xpe&signature=never-persist";
+    struct Http {
+        count: Arc<AtomicUsize>,
+        unverified_status: Arc<AtomicUsize>,
+        translated_status: Arc<AtomicUsize>,
+    }
+    impl ExtractionHttp for Http {
+        fn request(&self, request: ExtractionRequest) -> ExtractionReply {
+            self.count.fetch_add(1, Ordering::Relaxed);
+            let url = Url::parse(&request.url).unwrap();
+            let mut headers = vec![];
+            let body = match url.path() {
+                "/watch" => {
+                    assert_eq!(request.method, "GET");
+                    headers.push(ExtractionHeader {
+                        name: "Set-Cookie".into(),
+                        value: "YSC=guest-only; Secure; HttpOnly; Path=/".into(),
+                    });
+                    headers.push(ExtractionHeader {
+                        name: "Set-Cookie".into(),
+                        value: "VISITOR_INFO1_LIVE=guest-visitor; Secure; HttpOnly; Path=/".into(),
+                    });
+                    format!(
+                        "ytcfg.set({});var ytInitialPlayerResponse = {};",
+                        json!({"INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"fixture","visitorData":"never-persist-visitor"}}}),
+                        json!({"videoDetails":{"videoId":ID},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"vssId":".en","languageCode":"en","name":{"simpleText":"English"},"baseUrl":SOURCE,"isTranslatable":true}],
                                 "audioTracks":[{"audioTrackId":"en.4","captionTrackIndices":[0],"defaultCaptionTrackIndex":0}],
                                 "translationLanguages":[{"languageCode":"es","languageName":{"simpleText":"Spanish"}}]}}})
-                        )
-                    }
-                    "/youtubei/v1/player" => {
-                        assert!(request.headers.iter().any(|header| header.name == "Cookie"
-                            && header.value.contains("YSC=guest-only")));
-                        let input: Value = serde_json::from_str(&request.body).unwrap();
-                        assert_eq!(input["videoId"], ID);
-                        assert_eq!(input["context"]["client"]["clientName"], "VISIONOS");
-                        json!({"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":ID,"title":"Fixture","author":"Author","lengthSeconds":"10"},
+                    )
+                }
+                "/youtubei/v1/player" => {
+                    assert!(
+                        request.headers.iter().any(|header| header.name == "Cookie"
+                            && header.value.contains("YSC=guest-only"))
+                    );
+                    let input: Value = serde_json::from_str(&request.body).unwrap();
+                    assert_eq!(input["videoId"], ID);
+                    assert_eq!(input["context"]["client"]["clientName"], "VISIONOS");
+                    json!({"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":ID,"title":"Fixture","author":"Author","lengthSeconds":"10"},
                             "streamingData":{"adaptiveFormats":[{"itag":140,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","url":"https://r1.googlevideo.com/videoplayback?sig=never-persist","contentLength":"2048","bitrate":64000},
                             {"itag":141,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","url":"https://r1.googlevideo.com/videoplayback?n=unsolved","contentLength":"2048"}]}}).to_string()
-                    }
-                    "/api/jnn/v1/Create" => {
-                        assert_eq!(
-                            serde_json::from_str::<Value>(&request.body).unwrap(),
-                            json!([REQUEST_KEY])
-                        );
-                        json!([[null, ["interpreter"], [], null, "program", "botguard"]])
-                            .to_string()
-                    }
-                    "/api/jnn/v1/GenerateIT" => {
-                        assert_eq!(
-                            serde_json::from_str::<Value>(&request.body).unwrap(),
-                            json!([REQUEST_KEY, "snapshot"])
-                        );
-                        json!(["integrity", "43200", null, null]).to_string()
-                    }
-                    "/api/timedtext" => {
-                        let query: HashMap<_, _> = url.query_pairs().collect();
-                        assert_eq!(query["pot"], "proof");
-                        assert_eq!(query["potc"], "1");
-                        assert_eq!(query["c"], "WEB");
-                        assert_eq!(query["signature"], "never-persist");
-                        if let Some(language) = query.get("tlang") {
-                            assert_eq!(language, "es");
-                            return ExtractionReply { status:200, headers, body:json!({"events":[{"tStartMs":0,"dDurationMs":2000,"segs":[{"utf8":"Hola","tOffsetMs":0,"acAsrConf":0}]}]}).to_string().into_bytes() };
-                        }
-                        json!({"events":[{"tStartMs":3000,"dDurationMs":1000,"segs":[{"utf8":" Ｗorld "}]},{"tStartMs":0,"dDurationMs":2000,"segs":[{"utf8":"Hello\n there"}]}]}).to_string()
-                    }
-                    path => panic!("Unexpected request / page fallback: {path}"),
-                };
-                ExtractionReply {
-                    status: 200,
-                    body: body.into_bytes(),
-                    headers,
                 }
+                "/api/jnn/v1/Create" => {
+                    assert_eq!(
+                        serde_json::from_str::<Value>(&request.body).unwrap(),
+                        json!([REQUEST_KEY])
+                    );
+                    json!([[null, ["interpreter"], [], null, "program", "botguard"]]).to_string()
+                }
+                "/api/jnn/v1/GenerateIT" => {
+                    assert_eq!(
+                        serde_json::from_str::<Value>(&request.body).unwrap(),
+                        json!([REQUEST_KEY, "snapshot"])
+                    );
+                    json!(["integrity", "43200", null, null]).to_string()
+                }
+                "/api/timedtext" => {
+                    let query: HashMap<_, _> = url.query_pairs().collect();
+                    let status = if !query.contains_key("pot") {
+                        self.unverified_status.load(Ordering::Relaxed)
+                    } else if query.contains_key("tlang") {
+                        self.translated_status.load(Ordering::Relaxed)
+                    } else {
+                        200
+                    };
+                    if status != 200 {
+                        return ExtractionReply {
+                            status: i32::try_from(status).unwrap(),
+                            headers,
+                            body: Vec::new(),
+                        };
+                    }
+                    assert_eq!(query["pot"], "proof");
+                    assert_eq!(query["potc"], "1");
+                    assert_eq!(query["c"], "WEB");
+                    assert_eq!(query["signature"], "never-persist");
+                    if let Some(language) = query.get("tlang") {
+                        assert_eq!(language, "es");
+                        return ExtractionReply { status:200, headers, body:json!({"events":[{"tStartMs":0,"dDurationMs":2000,"segs":[{"utf8":"Hola","tOffsetMs":0,"acAsrConf":0}]}]}).to_string().into_bytes() };
+                    }
+                    json!({"events":[{"tStartMs":3000,"dDurationMs":1000,"segs":[{"utf8":" Ｗorld "}]},{"tStartMs":0,"dDurationMs":2000,"segs":[{"utf8":"Hello\n there"}]}]}).to_string()
+                }
+                path => panic!("Unexpected request / page fallback: {path}"),
+            };
+            ExtractionReply {
+                status: 200,
+                body: body.into_bytes(),
+                headers,
             }
         }
+    }
+    #[test]
+    fn standalone_jobs_extract_media_and_protected_captions_without_page_fallback() {
         let count = Arc::new(AtomicUsize::new(0));
-        install_extraction_http(Box::new(Http(count.clone())));
+        let unverified_status = Arc::new(AtomicUsize::new(403));
+        let translated_status = Arc::new(AtomicUsize::new(429));
+        install_extraction_http(Box::new(Http {
+            count: count.clone(),
+            unverified_status: unverified_status.clone(),
+            translated_status: translated_status.clone(),
+        }));
         let root = std::env::temp_dir().join(format!("govue-extraction-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let call = |command: Value| -> Value {
@@ -1033,7 +1163,7 @@ mod tests {
                 true
             );
         };
-        let wait = |request: &str, solve: bool| -> Value {
+        let wait = |request: &str, solve: bool| -> Result<Value> {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 assert!(Instant::now() < deadline, "Extractor job stalled");
@@ -1041,12 +1171,14 @@ mod tests {
                 assert_eq!(result["ok"], true, "{result}");
                 let value = &result["value"];
                 if value["done"] == true {
-                    assert!(value["error"].is_null(), "{result}");
-                    return value["value"].clone();
+                    return match value["error"].as_str() {
+                        Some(error) => Err(error.into()),
+                        None => Ok(value["value"].clone()),
+                    };
                 }
                 if !value["task"].is_null() {
                     if !solve {
-                        return value["task"].clone();
+                        return Ok(value["task"].clone());
                     }
                     let task = &value["task"];
                     assert_eq!(
@@ -1072,16 +1204,16 @@ mod tests {
             }
         };
         start("media", "media:1", true);
-        let catalog = wait("media:1", true);
+        let catalog = wait("media:1", true).unwrap();
         assert_eq!(catalog["streams"].as_array().unwrap().len(), 1);
         assert_eq!(catalog["subtitles"][0]["id"], ".en");
         start("transcript", "captions:1", false);
-        let transcript = wait("captions:1", true);
+        let transcript = wait("captions:1", true).unwrap();
         assert_eq!(transcript["segments"][0]["text"], "Hello\nthere");
         assert_eq!(transcript["segments"][1]["text"], "World");
         let requests = count.load(Ordering::Relaxed);
         start("transcript", "cached:1", false);
-        assert_eq!(wait("cached:1", true), transcript);
+        assert_eq!(wait("cached:1", true).unwrap(), transcript);
         assert_eq!(count.load(Ordering::Relaxed), requests);
         let files = fs::read_dir(&root)
             .unwrap()
@@ -1092,6 +1224,7 @@ mod tests {
         for secret in [
             "never-persist",
             "guest-only",
+            "guest-visitor",
             "captionSource",
             "baseUrl",
             "proof",
@@ -1100,13 +1233,49 @@ mod tests {
         ] {
             assert!(!stored.contains(secret), "Persisted {secret}");
         }
+        let translation_started = Instant::now();
+        {
+            let mut players = PLAYERS.get().unwrap().lock().unwrap();
+            let cached = players
+                .iter_mut()
+                .find(|p| p.id == ID && p.root == root.to_string_lossy())
+                .unwrap();
+            // Exercise the actual wait without making the fixture take 75s.
+            cached.session.since = translation_started
+                .checked_sub(TRANSLATION_SESSION_AGE)
+                .unwrap()
+                + Duration::from_millis(30);
+            drop(players);
+        }
+        let before_translation = count.load(Ordering::Relaxed);
         assert_eq!(
             call(
-                json!({"op":"extract_start","kind":"transcript","requestId":"translated:1","videoId":ID,"trackId":"translate:es:.en","audioKey":"en.4"})
+                json!({"op":"extract_start","kind":"transcript","requestId":"translated:limited","videoId":ID,"trackId":"translate:es:.en","audioKey":"en.4"})
             )["ok"],
             true
         );
-        let translated = wait("translated:1", true);
+        assert!(
+            wait("translated:limited", true)
+                .unwrap_err()
+                .contains("temporarily limiting translated captions")
+        );
+        assert!(translation_started.elapsed() >= Duration::from_millis(30));
+        assert_eq!(count.load(Ordering::Relaxed) - before_translation, 3);
+        assert_eq!(
+            call(json!({"op":"restore","videoId":ID,"trackId":".en"}))["value"],
+            transcript
+        );
+        call(json!({"op":"extract_release","requestId":"translated:limited"}));
+        translated_status.store(200, Ordering::Relaxed);
+        // A refresh must preserve the aged visitor session even when the
+        // watch document sends the same visitor cookie again.
+        assert_eq!(
+            call(
+                json!({"op":"extract_start","kind":"transcript","requestId":"translated:1","videoId":ID,"trackId":"translate:es:.en","audioKey":"en.4","fresh":true})
+            )["ok"],
+            true
+        );
+        let translated = wait("translated:1", true).unwrap();
         assert_eq!(translated["segments"][0]["text"], "Hola");
         assert_eq!(translated["trackId"], "translate:es:.en");
         assert_eq!(translated["trackMetadata"]["defaultAudioTrackId"], "en.4");
@@ -1116,7 +1285,7 @@ mod tests {
             translated
         );
         start("transcript", "cancelled:1", true);
-        assert_eq!(wait("cancelled:1", false)["stage"], "snapshot");
+        assert_eq!(wait("cancelled:1", false).unwrap()["stage"], "snapshot");
         assert_eq!(call(json!({"op":"info"}))["ok"], true);
         assert_eq!(
             call(json!({"op":"extract_release","requestId":"cancelled:1"}))["ok"],
@@ -1129,6 +1298,40 @@ mod tests {
         );
         for request in ["media:1", "captions:1", "cached:1", "translated:1"] {
             call(json!({"op":"extract_release","requestId":request}));
+        }
+        // Missing exp hints must still allow exactly one verification attempt;
+        // unrelated server failures must not start a challenge.
+        for status in [403, 429, 500] {
+            let track = format!(".probe{status}");
+            {
+                let mut players = PLAYERS.get().unwrap().lock().unwrap();
+                let cached = players
+                    .iter_mut()
+                    .find(|p| p.id == ID && p.root == root.to_string_lossy())
+                    .unwrap();
+                cached.data["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"][0]["vssId"] =
+                    json!(track);
+                cached.data["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"][0]["baseUrl"] =
+                    json!(SOURCE.replace("&exp=xpe", ""));
+                drop(players);
+            }
+            unverified_status.store(status, Ordering::Relaxed);
+            let before = count.load(Ordering::Relaxed);
+            assert_eq!(
+                call(
+                    json!({"op":"extract_start","kind":"transcript","requestId":"unmarked","videoId":ID,"trackId":track})
+                )["ok"],
+                true
+            );
+            let result = wait("unmarked", true);
+            if status == 500 {
+                assert!(result.unwrap_err().contains("HTTP 500"));
+                assert_eq!(count.load(Ordering::Relaxed) - before, 1);
+            } else {
+                assert_eq!(result.unwrap()["segments"][0]["text"], "Hello\nthere");
+                assert_eq!(count.load(Ordering::Relaxed) - before, 4);
+            }
+            call(json!({"op":"extract_release","requestId":"unmarked"}));
         }
         fs::remove_dir_all(root).unwrap();
     }

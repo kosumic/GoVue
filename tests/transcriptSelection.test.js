@@ -75,6 +75,38 @@ test('a failed comparison preserves the primary transcript and removing it clear
   assert.equal(env.reader().comparisonError, null);
 });
 
+test('retrying a limited comparison preserves the primary and only requests the missing track', async t => {
+  const env = await harness(); t.after(env.unmount);
+  const primary = env.reader().data;
+  env.replies.push(['.en', '.ja']);
+  await act(async () => { env.reader().selectTrack('.ja'); });
+  await act(async () => { env.extractions[0].reject(Error('YouTube is temporarily limiting translated captions.')); });
+  const restores = env.restores.length;
+  await act(async () => { env.reader().extract(); });
+  assert.equal(env.reader().data, primary);
+  assert.equal(env.reader().loading, false);
+  assert.equal(env.reader().comparisonLoading, true);
+  assert.equal(env.reader().comparisonError, null);
+  assert.equal(env.restores.length, restores + 1);
+  assert.equal(env.restores.at(-1).trackId, '.ja');
+  assert.equal(env.extractions.length, 2);
+  assert.equal(env.extractions[1].trackId, '.ja');
+  assert.equal(env.extractions[1].fresh, false);
+  await act(async () => { env.extractions[1].resolve(transcript(first, '.ja')); });
+  assert.equal(env.reader().data, primary);
+  assert.equal(env.reader().comparison.trackId, '.ja');
+  assert.equal(env.reader().comparisonLoading, false);
+});
+
+test('refreshing a successful transcript still bypasses saved captions', async t => {
+  const env = await harness(); t.after(env.unmount);
+  await act(async () => { env.reader().extract(); });
+  assert.equal(env.extractions.length, 1);
+  assert.equal(env.extractions[0].trackId, '.en');
+  assert.equal(env.extractions[0].fresh, true);
+  await act(async () => { env.extractions[0].resolve(transcript(first)); });
+});
+
 test('closing or navigating prevents late selection and extraction from reopening an old reader', async t => {
   const env = await harness(); t.after(env.unmount);
   const pending = deferred();
