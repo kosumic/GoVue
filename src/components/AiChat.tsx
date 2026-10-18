@@ -12,13 +12,15 @@ import type { GameAction } from '../ai/games';
 import { AiMessageDetails } from './AiMessageDetails';
 import { useCopyFeedback } from './useCopyFeedback';
 import { ChatExpansionContext, useChatViewport, type ChatViewportStore } from './useChatViewport';
+import { ChatInputSelection } from './ChatInputSelection';
+import { SelectableChatText } from './SelectableChatText';
 
 function UserPrompt({ content, onEdit, disabled }: { content: string; onEdit: () => void; disabled: boolean }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const { copied, copyText } = useCopyFeedback();
-  return <View style={styles.userMessage}>
-    <Pressable accessibilityLabel="Copy prompt" onLongPress={() => copyText(content)} style={styles.userBubble}><Text selectable style={styles.userText}>{content}</Text></Pressable>
+  return <View style={[styles.message, styles.userMessage]}>
+    <View style={styles.userBubble}><SelectableChatText text={content} /></View>
     <View style={styles.userActions}>
     <Pressable accessibilityRole="button" accessibilityLabel="Edit message" disabled={disabled} onPress={onEdit} style={[styles.messageAction, disabled && styles.disabled]}><Pencil size={16} color={colors.muted} /></Pressable>
     <Pressable accessibilityRole="button" accessibilityLabel={copied ? 'Prompt copied' : 'Copy prompt'} accessibilityLiveRegion="polite" onPress={() => copyText(content)} style={styles.messageAction}>
@@ -133,6 +135,11 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
     onDraftChange(message.content); setShowReasoning(false); input.current?.focus();
   }
   function cancelEdit() { if (editing) onDraftChange(editing.originalDraft); setEditing(null); }
+  function addSelectionToInput(text: string) {
+    if (loading || !text.trim()) return;
+    voice.changeDraft(`${draft}${draft && !draft.endsWith('\n') ? '\n\n' : ''}${text}`.slice(0, 8000));
+    setShowReasoning(false); input.current?.focus();
+  }
   function send() {
     setJumpRequest(value => value + 1); setShowReasoning(false);
     const id = editing?.id;
@@ -140,6 +147,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   }
   const canSend = contextReady && connected && !!draft.trim() && !loading && !chat.settingsBusy && !voice.active;
   return <View style={styles.workspace}>
+    <ChatInputSelection.Provider value={loading ? undefined : addSelectionToInput}>
     <ChatThread key={chat.conversation?.id ?? 'new'} chatId={chat.conversation?.id ?? 'new'} messages={messages} viewports={viewports ?? localViewports.current} jumpRequest={jumpRequest} reduceMotion={reduceMotion}
         empty={loading ? <View style={styles.welcome}><ActivityIndicator color={colors.accent} /></View> : <View style={styles.welcome}>
           <Text accessibilityRole="header" style={styles.welcomeTitle}>How can I help?</Text>
@@ -153,6 +161,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
           chatId={chat.conversation?.id ?? ''} activeGameId={activeGameId} onActiveGame={setActiveGameId} gamesEnabled={voiceEnabled && contextReady && !loading && !voice.active}
           onGameAction={chat.gameAction} onBeforeGameAudio={onBeforeGameAudio} />}
       />
+    </ChatInputSelection.Provider>
     {!!chat.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{chat.error}</Text>}
     <View style={styles.composerDock}>
       {editing && <View style={styles.editing}>
@@ -195,7 +204,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   workspace: { flex: 1 }, thread: { flex: 1 }, messages: { width: '100%', maxWidth: 800, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 24, paddingBottom: 24, gap: 28 }, emptyMessages: { flexGrow: 1 },
   message: { width: '100%' }, userMessage: { alignItems: 'flex-end' },
   userBubble: { maxWidth: '88%', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 24, backgroundColor: colors.raised },
-  userText: { color: colors.ink, fontSize: 16, lineHeight: 25 },
   userActions: { flexDirection: 'row', alignSelf: 'flex-end' }, editing: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.action },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 32 }, muted: { fontSize: 13, color: colors.muted, lineHeight: 20 },
   messageAction: { minWidth: 44, minHeight: 44, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, actionText: { color: colors.muted, fontSize: 12 },

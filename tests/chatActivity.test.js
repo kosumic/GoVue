@@ -13,6 +13,7 @@ const noop = () => {};
 const copiedTexts = [], hapticEvents = [];
 const colors = new Proxy({}, { get: () => '#777777' });
 const native = {
+  Platform: { OS: 'android' },
   View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ScrollView: 'ScrollView', ActivityIndicator: 'ActivityIndicator',
   StyleSheet: { create: value => value, hairlineWidth: 1 },
   useWindowDimensions: () => ({ width: 400, height: 800 }),
@@ -25,6 +26,7 @@ const native = {
 };
 const mocks = {
   'react-native': native,
+  'react-native-enriched-markdown': { EnrichedMarkdownText: props => h('SelectableText', props) },
   'lucide-react-native': new Proxy({}, { get: (_, name) => props => h(`Icon${String(name)}`, props) }),
   '@react-native-clipboard/clipboard': { setString: value => copiedTexts.push(value) },
   theme: { useThemeColors: () => colors, useThemeStyles: factory => factory(colors) },
@@ -38,7 +40,7 @@ const mocks = {
 };
 const bundled = await build({ entryPoints: ['src/components/AiChat.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
   plugins: [{ name: 'activity-ui', setup(builder) {
-    builder.onResolve({ filter: /^(react-native|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|AiMarkdown|AiReasoning|LearningGameCard|useVoiceInput|PlayerSheet|Haptics|lingoplay-core)$/ }, args => {
+    builder.onResolve({ filter: /^(react-native|react-native-enriched-markdown|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|AiMarkdown|AiReasoning|LearningGameCard|useVoiceInput|PlayerSheet|Haptics|lingoplay-core)$/ }, args => {
       const key = mocks[args.path] ? args.path : args.path.split('/').at(-1);
       return { path: `mock:${key}`, external: true };
     });
