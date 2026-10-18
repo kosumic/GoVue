@@ -2,14 +2,26 @@
 use crate::{Result, media};
 use serde_json::{Value, json};
 
+const CATEGORIES: [(&str, &str); 9] = [
+    ("sponsor", "Skip sponsors"),
+    ("selfpromo", "Skip self-promotion"),
+    ("interaction", "Skip engagement reminders"),
+    ("intro", "Skip intros"),
+    ("outro", "Skip outros"),
+    ("preview", "Skip previews"),
+    ("music_offtopic", "Skip non-music sections"),
+    ("filler", "Skip off-topic sections"),
+    ("poi_highlight", "Skip highlights"),
+];
+
 pub(crate) fn defaults() -> Value {
     let mut value = json!({"adBlock":true,"sponsorBlock":true,"backgroundPlayback":true,"autoPip":true,
         "pauseAfterLine":false,"playbackSpeed":1.0,"qualityHeight":0,"qualityFps":0,
         "rememberPosition":true,"rememberQuality":true,"rememberSpeed":false,"rememberResize":false,
         "useOriginalTitle":false,"showDislikes":true,"showLikes":true,"hideShorts":false,"miniPlayer":true,
         "sponsorCountdown":true,"hapticStrength":30,"resizeMode":"fit","audioKey":"","subtitleKey":"",
-        "subtitleStyle":{"scale":1.0,"vertical":1.0,"horizontal":0.0,"background":"semi","bold":false,"color":"#FFFFFF"},
-        "categories":["sponsor","selfpromo","interaction","intro","outro","preview","music_offtopic","filler","poi_highlight"]});
+        "subtitleStyle":{"scale":1.0,"vertical":1.0,"horizontal":0.0,"background":"semi","bold":false,"color":"#FFFFFF"}});
+    value["categories"] = json!(CATEGORIES.iter().map(|(id, _)| *id).collect::<Vec<_>>());
     for mode in ["Windowed", "Fullscreen"] {
         for gesture in [
             "Tap",
@@ -44,23 +56,10 @@ fn checked(key: &str, value: &Value) -> Result<Value> {
                     .all(|c| c.is_alphanumeric() || "_-.|:".contains(c))
         }),
         "categories" => value.as_array().is_some_and(|items| {
-            items.len() <= 9
-                && items.iter().all(|v| {
-                    matches!(
-                        v.as_str(),
-                        Some(
-                            "sponsor"
-                                | "selfpromo"
-                                | "interaction"
-                                | "intro"
-                                | "outro"
-                                | "preview"
-                                | "music_offtopic"
-                                | "filler"
-                                | "poi_highlight"
-                        )
-                    )
-                })
+            items.len() <= CATEGORIES.len()
+                && items
+                    .iter()
+                    .all(|v| CATEGORIES.iter().any(|(id, _)| v == id))
         }),
         "subtitleStyle" => {
             let mut style = defaults()["subtitleStyle"].clone();
@@ -122,7 +121,34 @@ pub(crate) fn settings(command: &Value, root: &str) -> Result<Value> {
             }
         }
     }
-    if command["settings"].is_object() || command["reset"] == true {
+    if let Some(category) = command.get("category") {
+        let id = category["id"]
+            .as_str()
+            .ok_or("Invalid SponsorBlock category.")?;
+        let enabled = category["enabled"]
+            .as_bool()
+            .ok_or("Invalid SponsorBlock category switch.")?;
+        if !CATEGORIES.iter().any(|(known, _)| *known == id) {
+            return Err("Invalid SponsorBlock category.".into());
+        }
+        // Old backups can disable the hidden master switch. Their effective
+        // category selection is empty until an individual category is enabled.
+        let mut categories = if result["sponsorBlock"] == true {
+            result["categories"].as_array().cloned().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        categories.retain(|value| value != id);
+        if enabled {
+            categories.push(json!(id));
+        }
+        result["categories"] = json!(categories);
+        result["sponsorBlock"] = json!(true);
+    }
+    if command["settings"].is_object()
+        || command["reset"] == true
+        || command.get("category").is_some()
+    {
         media::write(root, "settings.json", &result)?;
     }
     Ok(result)
@@ -130,6 +156,11 @@ pub(crate) fn settings(command: &Value, root: &str) -> Result<Value> {
 
 pub(crate) fn catalog() -> Value {
     let toggle = |key: &str, title: &str| json!({"key":key,"title":title});
+    let mut categories: Vec<Value> = CATEGORIES
+        .iter()
+        .map(|(id, title)| json!({"id":id,"category":id,"title":title,"kind":"category"}))
+        .collect();
+    categories.push(toggle("sponsorCountdown", "Sponsor skip countdown"));
     let gesture = |mode: &str, title: &str| {
         json!({"id":mode,"title":title,"children":[
         toggle(&format!("gestureTap{mode}"),"Single tap"),toggle(&format!("gestureDoubleTap{mode}"),"Double tap"),
@@ -142,7 +173,7 @@ pub(crate) fn catalog() -> Value {
         {"id":"player","title":"Playback","children":[toggle("rememberPosition","Remember position"),toggle("rememberQuality","Remember video quality"),toggle("rememberSpeed","Remember speed"),toggle("rememberResize","Remember resize mode"),toggle("useOriginalTitle","Use original title")]},
         {"id":"gesture","title":"Gestures","children":[gesture("Windowed","In embedded player"),gesture("Fullscreen","In fullscreen")]},
         {"id":"background","title":"Background & mini player","children":[toggle("autoPip","Picture-in-picture"),toggle("miniPlayer","In-app mini player"),toggle("backgroundPlayback","Background playback")]},
-        {"id":"sponsorblock","title":"SponsorBlock","children":[{"key":"categories","title":"Skip categories","kind":"categories"},toggle("sponsorCountdown","Sponsor skip countdown")]},
+        {"id":"sponsorblock","title":"SponsorBlock","children":categories},
         {"id":"ai","title":"AI","summary":"Providers and models","kind":"nav"},
         {"id":"data","title":"Backup & restore","kind":"nav"},
         {"id":"downloads","title":"Downloads","kind":"nav"}

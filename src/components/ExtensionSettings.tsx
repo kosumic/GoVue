@@ -44,6 +44,7 @@ import { LanguageSettings } from './LanguageSettings';
 type Node = {
   id?: string;
   key?: keyof MediaSettings;
+  category?: string;
   title: string;
   summary?: string;
   kind?: string;
@@ -59,21 +60,11 @@ const iconMap = {
   downloads: Download,
   ai: Sparkles,
 };
-const categoryNames: Record<string, string> = {
-  sponsor: 'Skip sponsors',
-  selfpromo: 'Skip self-promotion',
-  interaction: 'Skip engagement reminders',
-  intro: 'Skip intros',
-  outro: 'Skip outros',
-  preview: 'Skip previews',
-  music_offtopic: 'Skip non-music sections',
-  filler: 'Skip off-topic sections',
-  poi_highlight: 'Skip highlights',
-};
 export function ExtensionSettings({
   page,
   settings,
   onSettings,
+  onCategoryChange,
   onClose,
   onNavigate,
   onClearCache,
@@ -81,6 +72,7 @@ export function ExtensionSettings({
   page: 'settings' | 'ai' | 'data' | 'about';
   settings: MediaSettings;
   onSettings: (s: Partial<MediaSettings>) => void;
+  onCategoryChange: (category: string, enabled: boolean) => void;
   onClose: () => void;
   onNavigate: (page: 'settings' | 'ai' | 'data' | 'about' | 'library') => void;
   onClearCache: () => void;
@@ -212,40 +204,24 @@ export function ExtensionSettings({
           />
         </View>
       );
-    if (node.kind === 'categories')
+    if (node.kind === 'category' && node.category) {
+      const category = node.category;
+      const selected = settings.sponsorBlock && settings.categories.includes(category);
       return (
-        <View key={key}>
-          {Object.entries(categoryNames).map(([category, title]) => {
-            const selected =
-              settings.sponsorBlock && settings.categories.includes(category);
-            const change = (enabled: boolean) => {
-              const categories = settings.sponsorBlock
-                ? settings.categories
-                : [];
-              onSettings({
-                sponsorBlock: true,
-                categories: enabled
-                  ? [...categories.filter((v) => v !== category), category]
-                  : categories.filter((v) => v !== category),
-              });
-            };
-            return (
-              <SheetRow
-                key={category}
-                title={title}
-                onPress={() => change(!selected)}
-                trailing={
-                  <Switch
-                    accessibilityLabel={title}
-                    value={selected}
-                    onValueChange={change}
-                  />
-                }
-              />
-            );
-          })}
-        </View>
+        <SheetRow
+          key={key}
+          title={node.title}
+          onPress={() => onCategoryChange(category, !selected)}
+          trailing={
+            <Switch
+              accessibilityLabel={node.title}
+              value={selected}
+              onValueChange={(enabled) => onCategoryChange(category, enabled)}
+            />
+          }
+        />
       );
+    }
     if (!node.key) return null;
     const field = node.key;
     const enabled = settings[field] === true;

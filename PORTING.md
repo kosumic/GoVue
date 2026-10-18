@@ -42,6 +42,23 @@ the same video; fullscreen and mini-player keep one mounted video surface.
 
 ## Evidence
 
+### SponsorBlock settings (2026-10-17)
+
+LiTube's `extension/Extension.kt` catalog defines nine category switches and
+the skip countdown, without an ad-blocking toggle or SponsorBlock master switch.
+LingoPlay now defines each category row, its label, default and validation in
+Rust. React Native sends individual category edits instead of rebuilding the
+whole selection from its displayed snapshot. Edits share the settings write
+queue; older replies cannot replace a newer category selection, reset or import.
+Backups from the old sheet with SponsorBlock disabled remain effectively off
+until a category is selected.
+
+`npm run check` and `npx expo install --check` pass. A separate ARM64 Android
+verification app using the real settings screen and media hook built and
+installed successfully. Live switch and persistence verification is pending
+because the Pixel's lock screen covers the app; no new fixture tests were added
+before that live check.
+
 ### Transcript and video chats (2026-10-17)
 
 Live Pixel 9 Pro checks confirmed Chat in the YouTube bottom bar, the full-screen
