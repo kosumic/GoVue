@@ -7,6 +7,8 @@ import { AiMarkdown } from './AiMarkdown';
 import { AiReasoning } from './AiReasoning';
 import { ReasoningActivity, ToolActivity } from './AiActivity';
 import { useVoiceInput } from '../ai/useVoiceInput';
+import { useResponseSpeech } from '../ai/useExampleSpeech';
+import { stopCaptionAudio } from '../ai/useGameAudio';
 import { LearningGameCard } from './LearningGameCard';
 import type { GameAction } from '../ai/games';
 import { AiMessageDetails } from './AiMessageDetails';
@@ -30,7 +32,7 @@ function UserPrompt({ content, onEdit, disabled }: { content: string; onEdit: ()
   </View>;
 }
 
-const Message = memo(function Message({ message, last, busy, onRetry, retryDisabled, onEdit, editDisabled, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; retryDisabled: boolean; onEdit: () => void; editDisabled: boolean; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void }) {
+const Message = memo(function Message({ message, last, busy, onRetry, retryDisabled, onEdit, editDisabled, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio, reading, readDisabled, onRead }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; retryDisabled: boolean; onEdit: () => void; editDisabled: boolean; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void; reading: boolean; readDisabled: boolean; onRead: () => void }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const entrance = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
@@ -58,7 +60,7 @@ const Message = memo(function Message({ message, last, busy, onRetry, retryDisab
       {message.games?.filter(game => !linkedGames.has(game.id)).map(gameCard)}
       {message.error && <Text accessibilityRole="alert" style={styles.error}>{message.error}</Text>}
       {message.status === 'stopped' && !message.error && <Text style={styles.muted}>Response stopped</Text>}
-      <AiMessageDetails message={message} last={last} retryDisabled={retryDisabled} onRetry={onRetry} />
+      <AiMessageDetails message={message} last={last} retryDisabled={retryDisabled} onRetry={onRetry} reading={reading} readDisabled={readDisabled} onRead={onRead} />
     </>}
   </Animated.View>;
 });
@@ -123,6 +125,12 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   const latestGameId = messages.flatMap(message => message.games ?? []).at(-1)?.id ?? null;
   useEffect(() => { setActiveGameId(latestGameId); }, [chat.conversation?.id, latestGameId]);
   const voice = useVoiceInput({ enabled: voiceEnabled && !loading && contextReady, chatId: chat.conversation?.id, transcript: attachment ?? availableTranscript, draft, onDraftChange });
+  const readEnabled = voiceEnabled && contextReady && !loading && !voice.active;
+  const speech = useResponseSpeech(JSON.stringify([chat.conversation?.id, readEnabled]), async () => { stopCaptionAudio(); await onBeforeGameAudio?.(); });
+  useEffect(() => {
+    if (speech.active && !messages.some(message => message.id === speech.active && message.status !== 'streaming')) void speech.stop();
+  }, [messages, speech.active, speech.stop]);
+  async function beforeGameAudio() { await speech.stop(); await onBeforeGameAudio?.(); }
   useEffect(() => {
     void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
@@ -159,10 +167,12 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
         </View>}
         renderMessage={(item, index) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={() => onRetry(item.id)} retryDisabled={chat.busy || loading || chat.settingsBusy || !connected || !contextReady} onEdit={() => edit(item)} editDisabled={chat.busy || loading || chat.settingsBusy} reduceMotion={reduceMotion}
           chatId={chat.conversation?.id ?? ''} activeGameId={activeGameId} onActiveGame={setActiveGameId} gamesEnabled={voiceEnabled && contextReady && !loading && !voice.active}
-          onGameAction={chat.gameAction} onBeforeGameAudio={onBeforeGameAudio} />}
+          onGameAction={chat.gameAction} onBeforeGameAudio={beforeGameAudio} reading={speech.active === item.id} readDisabled={!readEnabled}
+          onRead={() => { if (speech.active === item.id) void speech.stop(); else void speech.speak(item.id, item.content); }} />}
       />
     </ChatInputSelection.Provider>
     {!!chat.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{chat.error}</Text>}
+    {!!speech.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{speech.error}</Text>}
     <View style={styles.composerDock}>
       {editing && <View style={styles.editing}>
         <View style={styles.attachmentText}><Text style={styles.attachmentTitle}>Editing message</Text><Text style={styles.attachmentHelp}>Sending replaces later messages and replies.</Text></View>
@@ -184,7 +194,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
           <Pressable accessibilityRole="button" accessibilityLabel={`Reasoning effort: ${reasoning}`} accessibilityHint="Changes apply to your next message" accessibilityState={{ expanded: showReasoning, disabled: !connected || loading || chat.settingsBusy }} disabled={!connected || loading || chat.settingsBusy} onPress={() => setShowReasoning(!showReasoning)} style={[styles.reasoningButton, (!connected || loading || chat.settingsBusy) && styles.disabled]}><Brain size={16} color={colors.accent} /><Text numberOfLines={1} style={styles.reasoningText}>{reasoning}</Text><ChevronDown size={12} color={colors.muted} style={showReasoning ? styles.expanded : undefined} /></Pressable>
           <View style={styles.spacer} />
           <Pressable accessibilityRole="button" accessibilityLabel={voice.active ? 'Stop voice input' : 'Start voice input'} accessibilityHint="Dictate a message using words from this chat and transcript as hints" accessibilityState={{ selected: voice.active, disabled: voice.disabled }}
-            disabled={voice.disabled} onPress={() => { input.current?.blur(); voice.toggle(); }} style={[styles.attachButton, voice.active && styles.voiceActive, voice.disabled && styles.disabled]}>
+            disabled={voice.disabled} onPress={() => { input.current?.blur(); void speech.stop(); voice.toggle(); }} style={[styles.attachButton, voice.active && styles.voiceActive, voice.disabled && styles.disabled]}>
             {voice.phase === 'preparing' || voice.phase === 'finishing' ? <ActivityIndicator size="small" color={colors.accent} /> : voice.active ? <Square size={18} fill={colors.accent} color={colors.accent} /> : <Mic size={22} color={colors.ink} />}
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={chat.busy ? 'Stop response' : editing ? 'Send edited message' : 'Send message'} disabled={!chat.busy && !canSend}

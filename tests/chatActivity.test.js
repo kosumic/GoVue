@@ -34,13 +34,15 @@ const mocks = {
   AiReasoning: { AiReasoning: () => null },
   LearningGameCard: { LearningGameCard: props => h('GameCard', { gameId: props.game.id, active: props.active, enabled: props.enabled, onActivate: props.onActivate, onDeactivate: props.onDeactivate }) },
   useVoiceInput: { useVoiceInput: ({ onDraftChange }) => ({ active: false, disabled: true, phase: 'idle', interimText: '', changeDraft: onDraftChange, toggle: noop }) },
+  useExampleSpeech: { useResponseSpeech: () => ({ active: null, error: '', speak: noop, stop: async () => {} }) },
+  useGameAudio: { stopCaptionAudio: noop },
   PlayerSheet: { PlayerSheet: ({ visible, children, title }) => visible ? h('Sheet', { title }, children) : null },
   Haptics: { useHaptic: () => () => hapticEvents.push('copy') },
   'lingoplay-core': { aiRequest: noop },
 };
 const bundled = await build({ entryPoints: ['src/components/AiChat.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
   plugins: [{ name: 'activity-ui', setup(builder) {
-    builder.onResolve({ filter: /^(react-native|react-native-enriched-markdown|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|AiMarkdown|AiReasoning|LearningGameCard|useVoiceInput|PlayerSheet|Haptics|lingoplay-core)$/ }, args => {
+    builder.onResolve({ filter: /^(react-native|react-native-enriched-markdown|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|AiMarkdown|AiReasoning|LearningGameCard|useVoiceInput|useExampleSpeech|useGameAudio|PlayerSheet|Haptics|lingoplay-core)$/ }, args => {
       const key = mocks[args.path] ? args.path : args.path.split('/').at(-1);
       return { path: `mock:${key}`, external: true };
     });

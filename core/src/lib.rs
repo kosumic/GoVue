@@ -409,6 +409,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     if op == "language_choices" {
         return language_catalog::choices(&command);
     }
+    if op == "response_speech" {
+        return speech::reading::plan(&command);
+    }
     if op.starts_with("media_") || op.starts_with("sponsor_") || op.starts_with("downloads_") {
         return media::dispatch(&command, root);
     }
