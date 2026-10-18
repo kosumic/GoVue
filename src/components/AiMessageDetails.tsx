@@ -31,7 +31,7 @@ export function AiMessageDetails({ message, last, retryDisabled, onRetry }: { me
   const tokens = details?.totalTokens != null ? `${formatTokens(details.totalTokens)} tokens`
     : usage?.inputTokens != null || usage?.outputTokens != null ? `${formatTokens(usage?.inputTokens)} in / ${formatTokens(usage?.outputTokens)} out` : message.status === 'streaming' ? 'Responding…' : 'Usage not reported';
   const streamTime = usage?.streamMs ? `${Number((usage.streamMs / 1000).toFixed(1))}s` : undefined;
-  const summary = [message.modelName || message.model, tokens, streamTime ? `${streamTime} streaming` : null].filter(Boolean).join(' · ');
+  const summary = [message.modelName || message.model, tokens, streamTime ? `Stream duration: ${streamTime}` : null].filter(Boolean).join(' · ');
   const disabled = retryDisabled || message.status === 'streaming';
   return <View style={s.footer}>
     <View style={s.row}>
@@ -54,7 +54,7 @@ export function AiMessageDetails({ message, last, retryDisabled, onRetry }: { me
       {TOKEN_FIELDS.map(([field, label]) => <Detail key={field} label={label} value={usage?.[field] == null ? undefined : usage[field].toLocaleString()} />)}
       <Detail label="Total tokens" value={details?.totalTokens?.toLocaleString()} />
       <Detail label="Cache" value={cacheLabel} />
-      <Detail label="Streaming time" value={streamTime} />
+      <Detail label="Stream duration" value={streamTime} />
       <Detail label="Output speed" value={details?.outputTokensPerSecond == null ? undefined : `${details.outputTokensPerSecond.toFixed(1)} tok/s`} />
       {usage?.inputTokens == null && usage?.outputTokens == null && <Text style={s.label}>{message.status === 'streaming' ? 'Token counts appear when reported by the provider.' : 'The provider did not report token counts for this response.'}</Text>}
       {(usage?.cacheReadTokens != null || usage?.reasoningTokens != null) && <Text style={s.label}>Cache tokens are included in input. Reasoning tokens are included in output.</Text>}
