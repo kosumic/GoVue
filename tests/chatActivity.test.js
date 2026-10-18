@@ -69,6 +69,38 @@ async function render(t, message, busy = false) {
 }
 const labels = root => root.root.findAllByType('Text').map(node => node.children.join(''));
 
+test('sending while busy queues without stopping and undelivered messages can be resent after stop', async t => {
+  let sends = 0, stops = 0;
+  const resends = [];
+  const value = props({ ...reply([text('progress', 'Working')]), status: 'streaming' }, true);
+  value.draft = 'Use Spanish.';
+  value.onSend = async () => { sends++; return true; };
+  value.chat.stop = () => { stops++; };
+  value.chat.send = (...args) => { resends.push(args); return Promise.resolve(true); };
+  value.chat.conversation.providerId = 'fixture';
+  value.chat.conversation.transcript = null;
+  let root;
+  await act(async () => { root = create(h(AiChat, value)); });
+  t.after(() => act(async () => root.unmount()));
+  const button = label => root.root.findAllByType('Pressable').find(n => n.props.accessibilityLabel === label);
+  assert.equal(button('Queue message').props.disabled, false);
+  await act(async () => button('Queue message').props.onPress());
+  assert.equal(sends, 1);
+  assert.equal(stops, 0);
+  value.chat.conversation.pendingMessages = [{ id: 'queued', content: 'Use Spanish.' }];
+  await act(async () => root.update(h(AiChat, { ...value, draft: '' })));
+  assert.equal(button('Queued message').props.disabled, true);
+  assert.equal(button('Queue message').props.disabled, true);
+  await act(async () => button('Stop response').props.onPress());
+  assert.equal(stops, 1);
+  await act(async () => root.update(h(AiChat, { ...value, chat: { ...value.chat, busy: false }, draft: '' })));
+  assert.equal(button('Send queued message').props.disabled, false);
+  await act(async () => button('Send queued message').props.onPress());
+  assert.equal(resends[0][0], 'fixture');
+  assert.equal(resends[0][1], 'Use Spanish.');
+  assert.equal(resends[0].at(-1), 'queued');
+});
+
 test('ordered activity renders each answer segment and its exercise at the tool position, with details behind a tap', async t => {
   const { root } = await render(t, reply([reasoning('completed'), text('before', 'Before'), tool, text('after', 'After')]));
   assert.deepEqual(root.root.findAll(node => node.type === 'Markdown' || node.type === 'GameCard').map(node => node.type === 'Markdown' ? node.props.content : node.props.gameId), ['Before', 'game', 'After']);

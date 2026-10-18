@@ -1241,6 +1241,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if !state["text"].as_str().unwrap_or_default().is_empty()
                     || state["gameCommitted"] == true
+                    || state["steeringCommitted"] == true
                     || job.pending().is_err()
                     || (!group.fallback_on_any_error
                         && status != 429
@@ -1589,7 +1590,9 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
     if tools_enabled {
         tools::install(&mut body, protocol);
     }
-    for round in 0..5 {
+    let mut turn = c.clone();
+    let mut round = 0;
+    loop {
         job.pending()?;
         if body.to_string().len() > 900_000
             || limit.is_some_and(|n| body.to_string().len() as u64 + max_output.unwrap_or(4096) > n)
@@ -1609,12 +1612,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         let calls = response["tools"]["calls"]
             .as_array()
             .ok_or("Missing tool calls.")?;
-        if calls.is_empty() {
-            tools::continue_with(&mut body, protocol, &response, Vec::new())?;
-            replay::remember(p, c, job, protocol, &body);
-            return Ok(response);
-        }
-        if !tools_enabled || round == 4 || calls.len() > 3 {
+        if !calls.is_empty() && (!tools_enabled || round == 4 || calls.len() > 3) {
             return Err("The assistant exceeded this turn's tool limit.".into());
         }
         let mut results = Vec::new();
@@ -1649,6 +1647,17 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             results.push(json!({"id":call["id"],"providerId":call["providerId"],"name":call["name"],"output":result.unwrap_or_else(|error| json!({"error":error}))}));
         }
         tools::continue_with(&mut body, protocol, &response, results)?;
+        if let Some((content, reply_id)) = conversations::steer(job, calls.is_empty())? {
+            tools::append_user(&mut body, protocol, &content)?;
+            turn["replyId"] = json!(reply_id);
+            round = 0;
+            continue;
+        }
+        if calls.is_empty() {
+            replay::remember(p, &turn, job, protocol, &body);
+            return Ok(response);
+        }
+        round += 1;
         let mut state = job
             .state
             .lock()
@@ -1669,7 +1678,6 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             state["usage"].clone()
         };
     }
-    Err("The assistant could not complete its tool request.".into())
 }
 
 fn verify_identity(token: &str, client: &str, nonce: &str, job: &Arc<Job>) -> Result<Value> {
@@ -2162,7 +2170,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                     .blocks,
                 activity::Status::Stopped,
             );
-            conversations::interrupt(&job)?;
+            let interrupted = conversations::interrupt(&job)?;
             job.publish_activity();
             if c["op"] == "ai_cancel" {
                 job.state
@@ -2175,7 +2183,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .remove(id);
             }
-            Ok(Value::Null)
+            Ok(interrupted)
         }
         _ => Err("Unsupported AI operation.".into()),
     }

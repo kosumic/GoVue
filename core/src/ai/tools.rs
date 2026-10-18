@@ -296,6 +296,32 @@ pub(super) fn install(body: &mut Value, protocol: &str) {
     }
 }
 
+pub(super) fn append_user(body: &mut Value, protocol: &str, content: &str) -> Result<()> {
+    let rows = body[replay::field(protocol)]
+        .as_array_mut()
+        .ok_or("Invalid conversation continuation.")?;
+    if matches!(protocol, "anthropic" | "gemini")
+        && let Some(last) = rows.last_mut().filter(|last| last["role"] == "user")
+    {
+        let (field, part) = if protocol == "gemini" {
+            ("parts", json!({"text":content}))
+        } else {
+            ("content", json!({"type":"text","text":content}))
+        };
+        last[field]
+            .as_array_mut()
+            .ok_or("Invalid tool result content.")?
+            .push(part);
+    } else {
+        rows.push(if protocol == "gemini" {
+            json!({"role":"user","parts":[{"text":content}]})
+        } else {
+            json!({"role":"user","content":content})
+        });
+    }
+    Ok(())
+}
+
 pub(super) fn continue_with(
     body: &mut Value,
     protocol: &str,

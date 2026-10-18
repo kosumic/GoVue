@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, type ReactElement } from 'react';
-import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ArrowDown, ArrowUp, Brain, Captions, Check, ChevronDown, ChevronRight, Copy, MessageCircle, Mic, Pencil, Plus, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats';
@@ -187,6 +187,10 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
     {!!chat.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{chat.error}</Text>}
     {!!speech.error && <Text accessibilityRole="alert" style={[styles.error, styles.composerError]}>{speech.error}</Text>}
     {!findOpen && <View style={styles.composerDock}>
+      {!!chat.conversation?.pendingMessages?.length && <ScrollView style={styles.pendingMessages} contentContainerStyle={styles.pendingContent} keyboardShouldPersistTaps="handled">{chat.conversation.pendingMessages.map(message => <Pressable key={message.id} accessibilityRole="button" accessibilityLabel={chat.busy ? 'Queued message' : 'Send queued message'}
+        disabled={chat.busy || loading || !contextReady || !connected || chat.settingsBusy} onPress={() => { const current = chat.conversation; if (current) void chat.send(current.providerId, message.content, current.transcript, undefined, false, undefined, undefined, undefined, message.id); }} style={styles.attachment}>
+        <View style={styles.attachmentText}><Text style={styles.attachmentTitle}>{chat.busy ? 'Queued · steers after tool results' : 'Not sent · tap to send'}</Text><Text numberOfLines={2} style={styles.attachmentHelp}>{message.content}</Text></View>
+      </Pressable>)}</ScrollView>}
       {editing && <View style={styles.editing}>
         <View style={styles.attachmentText}><Text style={styles.attachmentTitle}>Editing message</Text><Text style={styles.attachmentHelp}>Sending replaces later messages and replies.</Text></View>
         <Pressable accessibilityRole="button" accessibilityLabel="Cancel edit" disabled={chat.busy} onPress={cancelEdit} style={styles.messageAction}><X size={17} color={colors.muted} /></Pressable>
@@ -210,9 +214,10 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
             disabled={voice.disabled} onPress={() => { input.current?.blur(); void speech.stop(); voice.toggle(); }} style={[styles.attachButton, voice.active && styles.voiceActive, voice.disabled && styles.disabled]}>
             {voice.phase === 'preparing' || voice.phase === 'finishing' ? <ActivityIndicator size="small" color={colors.accent} /> : voice.active ? <Square size={18} fill={colors.accent} color={colors.accent} /> : <Mic size={22} color={colors.ink} />}
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel={chat.busy ? 'Stop response' : editing ? 'Send edited message' : 'Send message'} disabled={!chat.busy && !canSend}
-            onPress={chat.busy ? chat.stop : send} style={({ pressed }) => [styles.send, (!chat.busy && !canSend || pressed) && styles.disabled]}>
-            {chat.busy ? <Square size={16} fill={colors.surface} color={colors.surface} /> : <ArrowUp size={22} strokeWidth={2.3} color={colors.surface} />}
+          {chat.busy && <Pressable accessibilityRole="button" accessibilityLabel="Stop response" onPress={chat.stop} style={styles.attachButton}><Square size={18} color={colors.ink} /></Pressable>}
+          <Pressable accessibilityRole="button" accessibilityLabel={chat.busy ? 'Queue message' : editing ? 'Send edited message' : 'Send message'} accessibilityHint={chat.busy ? 'Steer the assistant after the next tool results' : undefined} disabled={!canSend || !!editing && chat.busy}
+            onPress={send} style={({ pressed }) => [styles.send, (!canSend || !!editing && chat.busy || pressed) && styles.disabled]}>
+            <ArrowUp size={22} strokeWidth={2.3} color={colors.surface} />
           </Pressable>
         </View>
         {voice.active && <Text accessibilityLiveRegion="polite" style={styles.voiceStatus}>{voice.phase === 'preparing' ? 'Starting voice input…' : voice.phase === 'finishing' ? 'Finishing voice input…' : 'Listening… Tap the microphone to finish.'}</Text>}
@@ -238,6 +243,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   welcomeTitle: { color: colors.ink, fontSize: 28, fontWeight: '600', letterSpacing: -0.7 }, welcomeHelp: { color: colors.muted, fontSize: 14, lineHeight: 22, textAlign: 'center', maxWidth: 260 },
   suggestions: { marginTop: 16, gap: 4 }, suggestion: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, paddingHorizontal: 14 }, suggestionText: { color: colors.ink, fontSize: 14 },
   connect: { marginTop: 8, minHeight: 46, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.accent }, connectText: { color: colors.surface, fontSize: 14, fontWeight: '600' },
+  pendingMessages: { maxHeight: 160, flexGrow: 0 }, pendingContent: { gap: 8 },
   composerDock: { width: '100%', maxWidth: 800, alignSelf: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10, gap: 8 }, composer: { backgroundColor: colors.raised, borderRadius: 28, paddingBottom: 7 },
   input: { color: colors.ink, fontSize: 16, lineHeight: 24, minHeight: 56, maxHeight: 160, textAlignVertical: 'top', paddingTop: 18, paddingBottom: 10, paddingHorizontal: 18 },
   composerTools: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 7, paddingRight: 7, gap: 10 }, spacer: { flex: 1 },

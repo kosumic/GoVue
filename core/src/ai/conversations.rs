@@ -59,6 +59,42 @@ struct Message {
     #[serde(default)]
     max_output_tokens: Option<u64>,
 }
+impl Message {
+    fn new(role: &str, content: String) -> Result<Self> {
+        Ok(Self {
+            id: random()?,
+            role: role.into(),
+            content,
+            prepared_input: None,
+            games: Vec::new(),
+            blocks: Vec::new(),
+            status: if role == "user" {
+                "completed"
+            } else {
+                "streaming"
+            }
+            .into(),
+            error: None,
+            reasoning: String::new(),
+            usage: Value::Null,
+            _usage_details: serde::de::IgnoredAny,
+            model: String::new(),
+            provider_label: String::new(),
+            reasoning_effort: String::new(),
+            provider_id: String::new(),
+            model_name: String::new(),
+            completed_at: 0,
+            context_window: None,
+            max_output_tokens: None,
+        })
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct QueuedMessage {
+    id: String,
+    content: String,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Conversation {
@@ -82,6 +118,8 @@ struct Conversation {
     active_task: Option<String>,
     #[serde(default)]
     reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_messages: Vec<QueuedMessage>,
 }
 
 fn presentation(chat: &Conversation) -> Result<Value> {
@@ -131,6 +169,17 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
             .reasoning_effort
             .as_ref()
             .is_some_and(|v| !catalog::valid_reasoning(v))
+        || chat.pending_messages.len() > 8
+        || chat
+            .pending_messages
+            .iter()
+            .any(|m| !valid_id(&m.id) || m.content.trim().is_empty() || m.content.len() > 16000)
+        || chat
+            .pending_messages
+            .iter()
+            .map(|m| m.content.len() + 2)
+            .sum::<usize>()
+            > 16002
         || chat.messages.len() > 200
         || !chat.messages.len().is_multiple_of(2)
         || chat.messages.iter().enumerate().any(|(i, m)| {
@@ -383,6 +432,7 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
             messages: Vec::new(),
             active_task: None,
             reasoning_effort: None,
+            pending_messages: Vec::new(),
         }
     };
     chat.video_id = Some(id.into());
@@ -466,6 +516,13 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
     if chat.active_task.as_deref() != Some(&job.id) {
         return Ok(Value::Null);
     }
+    capture_reply(&mut chat, job, result)?;
+    chat.active_task = None;
+    chat.updated_at = now();
+    save(root, &chat)?;
+    Ok(json!({"conversation":presentation(&chat)?}))
+}
+fn capture_reply(chat: &mut Conversation, job: &Job, result: &Result<Value>) -> Result<()> {
     let message = chat.messages.last_mut().ok_or("Missing chat reply.")?;
     message.content = job
         .state
@@ -518,16 +575,131 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
         );
         message.blocks.clone_from(&tape.blocks);
     }
-    chat.active_task = None;
+    Ok(())
+}
+
+/// Deliver steering only after the complete tool result batch, or a text-only reply.
+/// Finalization shares the queue lock so a message arriving at completion starts a new turn.
+pub(super) fn steer(job: &Job, terminal: bool) -> Result<Option<(String, String)>> {
+    let Some((root, id)) = job.conversation.get() else {
+        return Ok(None);
+    };
+    let _guard = CHATS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    job.pending()?;
+    let mut chat = read(root, id)?;
+    if chat.active_task.as_deref() != Some(&job.id) {
+        return Err("This response is no longer active.".into());
+    }
+    if chat.pending_messages.is_empty() {
+        if terminal {
+            capture_reply(&mut chat, job, &Ok(Value::Null))?;
+            chat.active_task = None;
+            chat.updated_at = now();
+            save(root, &chat)?;
+        }
+        return Ok(None);
+    }
+    if chat.messages.len() >= 198 {
+        return Err("This chat is full. Start a new chat to continue.".into());
+    }
+    let content = chat
+        .pending_messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut user = Message::new("user", content.clone())?;
+    user.id.clone_from(&chat.pending_messages[0].id);
+    user.prepared_input = Some(PreparedInput {
+        content: content.clone(),
+        transcript: chat.messages.iter().rev().find_map(|m| {
+            m.prepared_input
+                .as_ref()
+                .and_then(|input| input.transcript.clone())
+        }),
+    });
+    let reply = Message::new("assistant", String::new())?;
+    let reply_id = reply.id.clone();
+    capture_reply(&mut chat, job, &Ok(Value::Null))?;
+    chat.messages.extend([user, reply]);
+    chat.pending_messages.clear();
     chat.updated_at = now();
     save(root, &chat)?;
-    Ok(json!({"conversation":presentation(&chat)?}))
-}
-pub(super) fn interrupt(job: &Arc<Job>) -> Result<()> {
-    if let Some((root, id)) = job.conversation.get() {
-        finish(root, id, job, &Err("Response stopped.".into()))?;
+    *job.activity
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = activity::Tape::default();
+    let mut state = job
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for field in ["text", "textPrefix", "reasoning", "reasoningPrefix"] {
+        state[field] = json!("");
     }
-    Ok(())
+    for field in ["usage", "usagePrefix"] {
+        state[field] = Value::Null;
+    }
+    state["blocks"] = json!([]);
+    state["games"] = json!([]);
+    state["replyId"] = json!(reply_id);
+    state["pendingMessages"] = json!([]);
+    state["steeringCommitted"] = json!(true);
+    drop(state);
+    Ok(Some((content, reply_id)))
+}
+
+fn enqueue(root: &Path, chat: &mut Conversation, c: &Value) -> Result<Value> {
+    if c["retry"] == true
+        || c.get("editMessageId").is_some()
+        || c.get("retryMessageId").is_some()
+        || c.get("intent").is_some()
+    {
+        return Err("Stop this response before editing or regenerating messages.".into());
+    }
+    let content = string(c, "prompt")?.trim();
+    let bytes = chat
+        .pending_messages
+        .iter()
+        .map(|m| m.content.len() + 2)
+        .sum::<usize>();
+    if content.is_empty() || content.len() > 16000 {
+        return Err("Enter a question of up to 16,000 bytes.".into());
+    }
+    if chat.pending_messages.len() >= 8
+        || bytes + content.len() > 16000
+        || chat.messages.len() >= 198
+    {
+        return Err("The message queue is full. Wait for the assistant to continue.".into());
+    }
+    let job = jobs()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(
+            chat.active_task
+                .as_ref()
+                .ok_or("This response has finished.")?,
+        )
+        .cloned()
+        .ok_or("This response has finished.")?;
+    job.pending()?;
+    chat.pending_messages.push(QueuedMessage {
+        id: random()?,
+        content: content.into(),
+    });
+    chat.updated_at = now();
+    save(root, chat)?;
+    job.state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)["pendingMessages"] =
+        json!(chat.pending_messages);
+    Ok(json!({"taskId":job.id,"conversation":presentation(chat)?}))
+}
+pub(super) fn interrupt(job: &Arc<Job>) -> Result<Value> {
+    if let Some((root, id)) = job.conversation.get() {
+        return finish(root, id, job, &Err("Response stopped.".into()));
+    }
+    Ok(Value::Null)
 }
 
 /// Commit before continuing the model so a failed final reply cannot lose a game.
@@ -763,7 +935,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         let mut chat = read(&root, id)?;
         recover(&root, &mut chat)?;
         if chat.active_task.is_some() {
-            return Err("This chat is already responding. Stop it first.".into());
+            return enqueue(&root, &mut chat, &c);
         }
         chat
     } else if c["transcript"]["videoId"].is_string() {
@@ -792,10 +964,11 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
             messages: Vec::new(),
             active_task: None,
             reasoning_effort: None,
+            pending_messages: Vec::new(),
         }
     };
     if chat.active_task.is_some() {
-        return Err("This chat is already responding. Stop it first.".into());
+        return enqueue(&root, &mut chat, &c);
     }
     if chat.provider_id.is_empty() {
         let selected = provider(&root, string(&c, "id")?)?;
@@ -868,6 +1041,15 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
     let prompt_id = edit
         .or(retry_prompt)
         .map(|index| chat.messages[index].id.clone());
+    if let Some(id) = c.get("queuedMessageId") {
+        let index = chat
+            .pending_messages
+            .iter()
+            .position(|m| id == &m.id)
+            .filter(|&index| chat.pending_messages[index].content == prompt)
+            .ok_or("This queued message is no longer available.")?;
+        chat.pending_messages.remove(index);
+    }
     if let Some(index) = edit {
         chat.messages.truncate(index);
         if index == 0 && chat.video_id.is_none() && !chat.title_edited {
@@ -917,8 +1099,22 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         .iter()
         .filter(|pair| pair[1].status == "completed")
         .flat_map(|pair| {
-            pair.iter()
-                .map(|m| json!({"role":m.role,"content":m.prepared_input.as_ref().map(|input| input.content.as_str()).unwrap_or(&m.content)}))
+            pair.iter().map(|m| {
+                let content = m
+                    .prepared_input
+                    .as_ref()
+                    .map_or(m.content.as_str(), |input| input.content.as_str());
+                let content = if content.trim().is_empty()
+                    && m.blocks
+                        .iter()
+                        .any(|block| matches!(block, activity::Block::Tool { .. }))
+                {
+                    "[Completed tool activity.]"
+                } else {
+                    content
+                };
+                json!({"role":m.role,"content":content})
+            })
         })
         .collect::<Vec<_>>();
     history(&json!(history_rows))?;
@@ -983,54 +1179,23 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
                 .collect()
         };
     }
-    chat.messages.push(Message {
-        id: match prompt_id {
-            Some(id) => id,
-            None => random()?,
-        },
-        role: "user".into(),
-        content: prompt,
-        prepared_input: None,
-        games: Vec::new(),
-        blocks: Vec::new(),
-        status: "completed".into(),
-        error: None,
-        reasoning: String::new(),
-        usage: Value::Null,
-        _usage_details: serde::de::IgnoredAny,
-        model: String::new(),
-        provider_label: String::new(),
-        reasoning_effort: String::new(),
-        provider_id: String::new(),
-        model_name: String::new(),
-        completed_at: 0,
-        context_window: None,
-        max_output_tokens: None,
-    });
-    chat.messages.push(Message {
-        id: random()?,
-        role: "assistant".into(),
-        content: String::new(),
-        prepared_input: None,
-        games: Vec::new(),
-        blocks: Vec::new(),
-        status: "streaming".into(),
-        error: None,
-        reasoning: String::new(),
-        usage: Value::Null,
-        _usage_details: serde::de::IgnoredAny,
-        model: String::new(),
-        provider_label: String::new(),
-        reasoning_effort: String::new(),
-        provider_id: String::new(),
-        model_name: String::new(),
-        completed_at: 0,
-        context_window: None,
-        max_output_tokens: None,
-    });
+    let mut user = Message::new("user", prompt)?;
+    if let Some(id) = prompt_id {
+        user.id = id;
+    }
+    chat.messages
+        .extend([user, Message::new("assistant", String::new())?]);
     chat.updated_at = now();
     wire["replyId"] = json!(chat.messages.last().ok_or("Missing assistant reply.")?.id);
     let job = new_job(&p.id)?;
+    {
+        let mut state = job
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state["replyId"] = wire["replyId"].clone();
+        state["pendingMessages"] = json!(chat.pending_messages);
+    }
     let _ = job.conversation.set((root.clone(), chat.id.clone()));
     chat.active_task = Some(job.id.clone());
     if let Err(error) = save(&root, &chat) {

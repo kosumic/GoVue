@@ -38,6 +38,84 @@ async function harness() {
     unmount: () => act(async () => root.unmount()) };
 }
 
+const nextPoll = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 180)); });
+
+test('messages sent during startup queue in order and streamed steering switches to the new reply', async t => {
+  const env = await harness(); t.after(env.unmount);
+  let first, followup, second;
+  await act(() => { first = env.chat().send('fixture', 'Hello', null); });
+  await act(() => { followup = env.chat().send('fixture', 'Use Spanish.', null); second = env.chat().send('fixture', 'Keep it short.', null); });
+  assert.equal(env.calls.filter(entry => entry.command.op === 'ai_chat_send').length, 1, 'startup must finish before steering is submitted');
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: conversation() });
+  assert.equal(await first, true);
+  assert.equal(env.pending('ai_chat_send').command.prompt, 'Use Spanish.');
+  const pending = [{ id: 'steer', content: 'Use Spanish.' }];
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: { ...conversation(), pendingMessages: pending } });
+  assert.equal(await followup, true);
+  assert.equal(env.pending('ai_chat_send').command.prompt, 'Keep it short.');
+  pending.push({ id: 'brief', content: 'Keep it short.' });
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: { ...conversation(), pendingMessages: [...pending] } });
+  assert.equal(await second, true);
+  assert.equal(env.calls.some(entry => entry.command.op === 'ai_cancel'), false);
+  assert.equal(env.calls.filter(entry => entry.command.op === 'ai_chat_poll').length, 1, 'queueing keeps one poller');
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'running', replyId: 'reply', text: 'Original progress', pendingMessages: pending } });
+  assert.equal(env.chat().conversation.messages[1].content, 'Original progress');
+  await nextPoll();
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 2, state: { status: 'running', replyId: 'steered-reply', text: 'Hola', pendingMessages: [] } });
+  const steered = conversation('low', 'Original progress', 'completed');
+  steered.activeTask = 'task';
+  steered.messages.push({ id: 'steer', role: 'user', content: 'Use Spanish.\n\nKeep it short.', status: 'completed' }, { id: 'steered-reply', role: 'assistant', content: '', status: 'streaming' });
+  await env.reply('ai_chat_get', steered);
+  assert.equal(env.chat().conversation.messages[1].content, 'Original progress');
+  assert.equal(env.chat().conversation.messages[3].content, 'Hola');
+  assert.deepEqual(env.chat().conversation.pendingMessages, []);
+  assert.equal(env.chat().busy, true);
+  await nextPoll();
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 3, state: { status: 'completed', replyId: 'steered-reply', text: 'Hola mundo', pendingMessages: [] } });
+  const completed = { ...steered, activeTask: null, messages: steered.messages.map(m => m.id === 'steered-reply' ? { ...m, content: 'Hola mundo', status: 'completed' } : m) };
+  await env.reply('ai_chat_get', completed);
+  assert.equal(env.chat().busy, false);
+  assert.equal(env.chat().conversation.messages[3].content, 'Hola mundo');
+});
+
+test('a queue acknowledgment arriving after completion cannot resurrect the old task', async t => {
+  const env = await harness(); t.after(env.unmount);
+  let first, followup;
+  await act(() => { first = env.chat().send('fixture', 'Hello', null); });
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: conversation() }); await first;
+  await act(() => { followup = env.chat().send('fixture', 'Use Spanish.', null); });
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'completed', replyId: 'steered-reply', text: 'Hola', pendingMessages: [] } });
+  const completed = conversation('low', 'Original progress', 'completed');
+  completed.messages.push({ id: 'steer', role: 'user', content: 'Use Spanish.', status: 'completed' }, { id: 'steered-reply', role: 'assistant', content: 'Hola', status: 'completed' });
+  await env.reply('ai_chat_get', completed);
+  const polls = env.calls.filter(entry => entry.command.op === 'ai_chat_poll').length;
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: { ...conversation(), pendingMessages: [{ id: 'steer', content: 'Use Spanish.' }] } });
+  assert.equal(await followup, true);
+  assert.equal(env.chat().busy, false);
+  assert.deepEqual(env.chat().conversation, completed);
+  assert.equal(env.calls.filter(entry => entry.command.op === 'ai_chat_poll').length, polls);
+});
+
+test('a follow-up racing with turn completion starts one new task and ignores late old output', async t => {
+  const env = await harness(); t.after(env.unmount);
+  let first, followup;
+  await act(() => { first = env.chat().send('fixture', 'Hello', null); });
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: conversation() }); await first;
+  await act(() => { followup = env.chat().send('fixture', 'Use Spanish.', null); });
+  const next = conversation('low', 'Original answer', 'completed');
+  next.activeTask = 'next-task';
+  next.messages.push({ id: 'steer', role: 'user', content: 'Use Spanish.', status: 'completed' }, { id: 'steered-reply', role: 'assistant', content: '', status: 'streaming' });
+  await env.reply('ai_chat_send', { taskId: 'next-task', conversation: next });
+  assert.equal(await followup, true);
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'completed', replyId: 'reply', text: 'Late old answer' } });
+  assert.equal(env.chat().conversation.messages[1].content, 'Original answer');
+  assert.equal(env.chat().busy, true);
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'completed', replyId: 'steered-reply', text: 'Hola' } });
+  await env.reply('ai_chat_get', { ...next, activeTask: null, messages: next.messages.map(m => m.id === 'steered-reply' ? { ...m, content: 'Hola', status: 'completed' } : m) });
+  assert.equal(env.chat().busy, false);
+  assert.equal(env.chat().conversation.messages[3].content, 'Hola');
+});
+
 test('reasoning changes during request startup apply to the next turn and preserve newer streaming and completion data', async t => {
   const env = await harness();
   t.after(env.unmount);
