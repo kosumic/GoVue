@@ -11,7 +11,7 @@ import { TranscriptTranslations } from './TranscriptTranslations';
 import { WordTranslationSheet } from './WordTranslationSheet';
 import { captionDetails, saveWord, type WordSelection } from '../core/vocabulary';
 
-export function TranscriptPanel({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, onBeforeWordAudio, audio, onSummarize, onDownload, downloadDisabled }: {
+export function TranscriptPanel({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, onBeforeWordAudio, audio, onSummarize, onDownload, downloadDisabled, bottomInset = 0 }: {
   data: Transcript | null;
   comparison?: Transcript | null;
   trackIds?: string[];
@@ -33,6 +33,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   onSummarize?: () => void;
   onDownload?: () => void;
   downloadDisabled?: boolean;
+  bottomInset?: number;
 }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
@@ -204,7 +205,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           value={query} onChangeText={setQuery} style={styles.searchInput} />
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>}
-        <FlatList ref={list} data={rows} extraData={position} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={styles.list}
+        <FlatList ref={list} data={rows} extraData={position} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={[styles.list, { paddingBottom: 24 + bottomInset }]}
           onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
             const target = scrollTarget.current;

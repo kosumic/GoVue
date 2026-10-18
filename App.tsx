@@ -659,6 +659,7 @@ function Browser() {
           browser.tabs.find((t) => t.id === browser.activeId)?.url || '',
         ) !== watch?.videoId));
   const transcriptVisible = session.transcript.open && !session.mini && !session.pip && !page && !aiVisible && !playerHidden;
+  const transcriptBottomInset = session.fullscreen ? 0 : insets.bottom;
   const transcriptBeside = workspaceSize.width > workspaceSize.height;
   const transcriptWidth = Math.min(400, workspaceSize.width * 0.4);
   const portraitVideoHeight = Math.min(workspaceSize.height * 0.45, workspaceSize.width * 9 / 16);
@@ -674,8 +675,8 @@ function Browser() {
         ? { top: 0, left: 0, bottom: 0, right: transcriptWidth }
         : embeddedFrame;
   const transcriptFrame = transcriptBeside
-    ? { top: 0, right: 0, bottom: 0, width: transcriptWidth }
-    : { top: session.fullscreen ? portraitVideoHeight : Math.max(0, embeddedFrame.top + embeddedFrame.height), left: 0, right: 0, bottom: 0 };
+    ? { top: 0, right: 0, bottom: -transcriptBottomInset, width: transcriptWidth }
+    : { top: session.fullscreen ? portraitVideoHeight : Math.max(0, embeddedFrame.top + embeddedFrame.height), left: 0, right: 0, bottom: -transcriptBottomInset };
   const remoteTranscript = media.cast.state.active && media.cast.state.acknowledged && !media.cast.state.link;
   const transcriptPosition = useTranscriptPosition(mediaView, media.player, media.playback?.videoId ?? null,
     transcriptVisible && !remoteTranscript, media.playback?.videoId ?? null,
@@ -692,7 +693,7 @@ function Browser() {
             hidden={session.fullscreen}
           />
           <View
-            style={s.workspace}
+            style={[s.workspace, (aiVisible || !!page) && s.clippedWorkspace]}
             onLayout={(e) => {
               setWorkspaceSize(e.nativeEvent.layout);
             }}
@@ -745,7 +746,7 @@ function Browser() {
                   }}
                 />
               ))}
-            <View pointerEvents="box-none" style={s.overlays}>
+            <View pointerEvents="box-none" style={[s.overlays, transcriptVisible && s.transcriptOverlays]}>
               <AiSheet
                 keyboardVerticalOffset={session.fullscreen ? 0 : insets.top}
                 onBeforeGameAudio={media.pause}
@@ -819,6 +820,7 @@ function Browser() {
               {transcriptVisible && (
                 <View style={[s.transcript, transcriptFrame]}>
                   <TranscriptPanel
+                    bottomInset={insets.bottom}
                     data={session.transcript.data}
                     comparison={session.transcript.comparison}
                     trackIds={session.transcript.trackIds}
@@ -1007,9 +1009,11 @@ const makeStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     safe: { flex: 1, backgroundColor: colors.background },
     fill: { flex: 1, backgroundColor: colors.background },
-    // The browser paints through the bottom safe area; native overlays stay clipped.
+    // The browser and transcript paint through the bottom safe area.
     workspace: { flex: 1 },
+    clippedWorkspace: { overflow: 'hidden' },
     overlays: { ...StyleSheet.absoluteFill, overflow: 'hidden' },
+    transcriptOverlays: { overflow: 'visible' },
     tab: { position: 'absolute', top: 0, left: 0 },
     parked: { opacity: 0, zIndex: -1 },
     native: {
