@@ -44,11 +44,14 @@ transcript cache. Cancelling or changing videos discards pending UI results and
 releases the Rust job; in-flight HTTPS calls finish within their bounded timeout.
 A browsing-renderer failure does not cancel independent extraction.
 
-Machine-translated captions wait until the in-memory guest session is at least
-75 seconds old before requesting text, following the
+Machine-translated captions are requested immediately. If a verified request
+returns 429 while the in-memory guest session is younger than 75 seconds, Rust
+waits for the remaining session age and retries that request once, following the
 [yt-dlp session-age workaround](https://github.com/yt-dlp/yt-dlp/pull/15709).
-Original captions load immediately. Refreshing player metadata reuses the cached
-guest cookies and their age; changing the visitor cookie resets that age.
+Original captions, cached transcripts and successful translation requests have
+no artificial delay. This retry applies only to younger sessions.
+Refreshing player metadata reuses the cached guest cookies and their age;
+changing the visitor cookie resets that age.
 The wait is cancellable and extraction jobs allow up to 180 seconds so the wait
 does not consume the verification/network budget. Unmarked caption requests
 that return 403 or 429 attempt verification once. If a verified translation

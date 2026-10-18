@@ -24,8 +24,8 @@ const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605
 const REQUEST_KEY: &str = "O43z0dpjhgX20SCx4KAo";
 const CACHE_LIFETIME: Duration = Duration::from_secs(90);
 const JOB_LIFETIME: Duration = Duration::from_secs(180);
-// YouTube rejects translations from new guest sessions even with a valid PO
-// token. See https://github.com/yt-dlp/yt-dlp/pull/15709.
+// On a translated-caption 429, retry once after the guest session has aged.
+// Empirical workaround: https://github.com/yt-dlp/yt-dlp/pull/15709.
 const TRANSLATION_SESSION_AGE: Duration = Duration::from_secs(75);
 static HTTP: OnceLock<Box<dyn ExtractionHttp>> = OnceLock::new();
 type Jobs = HashMap<(String, String), Arc<Job>>;
@@ -361,22 +361,26 @@ fn fetch(
     response_text(fetch_response(job, url, body, interpreter, extra)?)
 }
 fn caption_source(job: &Job, url: &str, verified: bool, translated: bool) -> Result<String> {
-    if translated {
-        let since = job
-            .session
-            .lock()
-            .map_err(|_| "Extraction session unavailable.")?
-            .since;
-        job.wait_until(since + TRANSLATION_SESSION_AGE)?;
-    }
-    let reply = fetch_response(job, url, None, false, &[])?;
+    let mut reply = fetch_response(job, url, None, false, &[])?;
     if !verified && matches!(reply.status, 403 | 429) {
         // An unmarked caption URL can still require verification. Allow the
         // existing token flow once, without retrying the same request in a loop.
         return Ok(String::new());
     }
     if reply.status == 429 && translated {
-        return Err("YouTube is temporarily limiting translated captions. Keep watching and try again shortly.".into());
+        let since = job
+            .session
+            .lock()
+            .map_err(|_| "Extraction session unavailable.")?
+            .since;
+        let ready_at = since + TRANSLATION_SESSION_AGE;
+        if ready_at > Instant::now() {
+            job.wait_until(ready_at)?;
+            reply = fetch_response(job, url, None, false, &[])?;
+        }
+        if reply.status == 429 {
+            return Err("YouTube is temporarily limiting translated captions. Keep watching and try again shortly.".into());
+        }
     }
     response_text(reply)
 }
@@ -970,7 +974,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, sync::atomic::AtomicUsize};
+    use std::{fs, path::Path, sync::atomic::AtomicUsize};
 
     #[test]
     fn translation_wait_is_cancellable_and_has_its_own_job_budget() {
@@ -1049,7 +1053,7 @@ mod tests {
     struct Http {
         count: Arc<AtomicUsize>,
         unverified_status: Arc<AtomicUsize>,
-        translated_status: Arc<AtomicUsize>,
+        translated_status: Arc<Mutex<VecDeque<usize>>>,
     }
     impl ExtractionHttp for Http {
         fn request(&self, request: ExtractionRequest) -> ExtractionReply {
@@ -1106,7 +1110,11 @@ mod tests {
                     let status = if !query.contains_key("pot") {
                         self.unverified_status.load(Ordering::Relaxed)
                     } else if query.contains_key("tlang") {
-                        self.translated_status.load(Ordering::Relaxed)
+                        self.translated_status
+                            .lock()
+                            .unwrap()
+                            .pop_front()
+                            .unwrap_or(200)
                     } else {
                         200
                     };
@@ -1136,11 +1144,74 @@ mod tests {
             }
         }
     }
+
+    fn test_execute(root: &Path, command: Value) -> Value {
+        serde_json::from_str(&crate::execute(
+            command.to_string(),
+            root.to_string_lossy().into(),
+        ))
+        .unwrap()
+    }
+
+    fn await_job(root: &Path, request: &str, solve: bool) -> Result<Value> {
+        let call = |command| test_execute(root, command);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(Instant::now() < deadline, "Extractor job stalled");
+            let result = call(json!({"op":"extract_poll","requestId":request}));
+            assert_eq!(result["ok"], true, "{result}");
+            let value = &result["value"];
+            if value["done"] == true {
+                return match value["error"].as_str() {
+                    Some(error) => Err(error.into()),
+                    None => Ok(value["value"].clone()),
+                };
+            }
+            if !value["task"].is_null() {
+                if !solve {
+                    return Ok(value["task"].clone());
+                }
+                let task = &value["task"];
+                assert_eq!(
+                    call(
+                        json!({"op":"extract_token","requestId":request,"taskId":999,"value":"stale"})
+                    )["ok"],
+                    false
+                );
+                let reply = if task["stage"] == "snapshot" {
+                    "snapshot"
+                } else {
+                    assert_eq!(task["videoId"], ID);
+                    "proof"
+                };
+                assert_eq!(
+                    call(
+                        json!({"op":"extract_token","requestId":request,"taskId":task["taskId"],"value":reply})
+                    )["ok"],
+                    true
+                );
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn set_translation_ready(root: &Path, remaining: Duration) -> Instant {
+        let ready_at = Instant::now() + remaining;
+        let mut players = PLAYERS.get().unwrap().lock().unwrap();
+        let cached = players
+            .iter_mut()
+            .find(|p| p.id == ID && p.root == root.to_string_lossy())
+            .unwrap();
+        cached.session.since = ready_at.checked_sub(TRANSLATION_SESSION_AGE).unwrap();
+        drop(players);
+        ready_at
+    }
+
     #[test]
     fn standalone_jobs_extract_media_and_protected_captions_without_page_fallback() {
         let count = Arc::new(AtomicUsize::new(0));
         let unverified_status = Arc::new(AtomicUsize::new(403));
-        let translated_status = Arc::new(AtomicUsize::new(429));
+        let translated_status = Arc::new(Mutex::new(VecDeque::new()));
         install_extraction_http(Box::new(Http {
             count: count.clone(),
             unverified_status: unverified_status.clone(),
@@ -1148,13 +1219,7 @@ mod tests {
         }));
         let root = std::env::temp_dir().join(format!("govue-extraction-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let call = |command: Value| -> Value {
-            serde_json::from_str(&crate::execute(
-                command.to_string(),
-                root.to_string_lossy().into(),
-            ))
-            .unwrap()
-        };
+        let call = |command| test_execute(&root, command);
         let start = |kind: &str, request: &str, fresh: bool| {
             assert_eq!(
                 call(
@@ -1163,46 +1228,7 @@ mod tests {
                 true
             );
         };
-        let wait = |request: &str, solve: bool| -> Result<Value> {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                assert!(Instant::now() < deadline, "Extractor job stalled");
-                let result = call(json!({"op":"extract_poll","requestId":request}));
-                assert_eq!(result["ok"], true, "{result}");
-                let value = &result["value"];
-                if value["done"] == true {
-                    return match value["error"].as_str() {
-                        Some(error) => Err(error.into()),
-                        None => Ok(value["value"].clone()),
-                    };
-                }
-                if !value["task"].is_null() {
-                    if !solve {
-                        return Ok(value["task"].clone());
-                    }
-                    let task = &value["task"];
-                    assert_eq!(
-                        call(
-                            json!({"op":"extract_token","requestId":request,"taskId":999,"value":"stale"})
-                        )["ok"],
-                        false
-                    );
-                    let reply = if task["stage"] == "snapshot" {
-                        "snapshot"
-                    } else {
-                        assert_eq!(task["videoId"], ID);
-                        "proof"
-                    };
-                    assert_eq!(
-                        call(
-                            json!({"op":"extract_token","requestId":request,"taskId":task["taskId"],"value":reply})
-                        )["ok"],
-                        true
-                    );
-                }
-                thread::sleep(Duration::from_millis(1));
-            }
-        };
+        let wait = |request, solve| await_job(&root, request, solve);
         start("media", "media:1", true);
         let catalog = wait("media:1", true).unwrap();
         assert_eq!(catalog["streams"].as_array().unwrap().len(), 1);
@@ -1233,24 +1259,30 @@ mod tests {
         ] {
             assert!(!stored.contains(secret), "Persisted {secret}");
         }
-        let translation_started = Instant::now();
-        {
-            let mut players = PLAYERS.get().unwrap().lock().unwrap();
-            let cached = players
-                .iter_mut()
-                .find(|p| p.id == ID && p.root == root.to_string_lossy())
-                .unwrap();
-            // Exercise the actual wait without making the fixture take 75s.
-            cached.session.since = translation_started
-                .checked_sub(TRANSLATION_SESSION_AGE)
-                .unwrap()
-                + Duration::from_millis(30);
-            drop(players);
-        }
+        // A successful translation from a brand-new session must complete
+        // within the fixture's 5s deadline, without the former 75s wait.
+        set_translation_ready(&root, TRANSLATION_SESSION_AGE);
+        let before_immediate = count.load(Ordering::Relaxed);
+        assert_eq!(
+            call(
+                json!({"op":"extract_start","kind":"transcript","requestId":"translated:immediate","videoId":ID,"trackId":"translate:es:.en"})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            wait("translated:immediate", true).unwrap()["segments"][0]["text"],
+            "Hola"
+        );
+        assert_eq!(count.load(Ordering::Relaxed) - before_immediate, 3);
+        call(json!({"op":"extract_release","requestId":"translated:immediate"}));
+
+        // Retry a young session's 429 once, then report a repeated limit.
+        let ready_at = set_translation_ready(&root, Duration::from_millis(500));
+        *translated_status.lock().unwrap() = VecDeque::from([429, 429]);
         let before_translation = count.load(Ordering::Relaxed);
         assert_eq!(
             call(
-                json!({"op":"extract_start","kind":"transcript","requestId":"translated:limited","videoId":ID,"trackId":"translate:es:.en","audioKey":"en.4"})
+                json!({"op":"extract_start","kind":"transcript","requestId":"translated:limited","videoId":ID,"trackId":"translate:es:.en","audioKey":"en.4","fresh":true})
             )["ok"],
             true
         );
@@ -1259,16 +1291,18 @@ mod tests {
                 .unwrap_err()
                 .contains("temporarily limiting translated captions")
         );
-        assert!(translation_started.elapsed() >= Duration::from_millis(30));
-        assert_eq!(count.load(Ordering::Relaxed) - before_translation, 3);
+        assert!(Instant::now() >= ready_at);
+        assert_eq!(count.load(Ordering::Relaxed) - before_translation, 6);
         assert_eq!(
             call(json!({"op":"restore","videoId":ID,"trackId":".en"}))["value"],
             transcript
         );
         call(json!({"op":"extract_release","requestId":"translated:limited"}));
-        translated_status.store(200, Ordering::Relaxed);
-        // A refresh must preserve the aged visitor session even when the
-        // watch document sends the same visitor cookie again.
+        // Recover after a 429, preserving session age across a refresh even
+        // when the watch document sends the same visitor cookie again.
+        let ready_at = set_translation_ready(&root, Duration::from_millis(500));
+        *translated_status.lock().unwrap() = VecDeque::from([429, 200]);
+        let before_recovery = count.load(Ordering::Relaxed);
         assert_eq!(
             call(
                 json!({"op":"extract_start","kind":"transcript","requestId":"translated:1","videoId":ID,"trackId":"translate:es:.en","audioKey":"en.4","fresh":true})
@@ -1276,6 +1310,8 @@ mod tests {
             true
         );
         let translated = wait("translated:1", true).unwrap();
+        assert!(Instant::now() >= ready_at);
+        assert_eq!(count.load(Ordering::Relaxed) - before_recovery, 6);
         assert_eq!(translated["segments"][0]["text"], "Hola");
         assert_eq!(translated["trackId"], "translate:es:.en");
         assert_eq!(translated["trackMetadata"]["defaultAudioTrackId"], "en.4");
@@ -1284,6 +1320,36 @@ mod tests {
             call(json!({"op":"restore","videoId":ID,"trackId":"translate:es:.en"}))["value"],
             translated
         );
+        // Other errors never wait. A mature session's 429 does not trigger an
+        // identical request with no age left to wait for.
+        for status in [429, 403, 500] {
+            set_translation_ready(
+                &root,
+                if status == 429 {
+                    Duration::ZERO
+                } else {
+                    TRANSLATION_SESSION_AGE
+                },
+            );
+            *translated_status.lock().unwrap() = VecDeque::from([status]);
+            let before = count.load(Ordering::Relaxed);
+            assert_eq!(
+                call(
+                    json!({"op":"extract_start","kind":"transcript","requestId":"translated:error","videoId":ID,"trackId":"translate:es:.en","fresh":true})
+                )["ok"],
+                true
+            );
+            let error = wait("translated:error", true).unwrap_err();
+            assert!(error.contains(if status == 429 {
+                "temporarily limiting"
+            } else if status == 403 {
+                "HTTP 403"
+            } else {
+                "HTTP 500"
+            }));
+            assert_eq!(count.load(Ordering::Relaxed) - before, 5);
+            call(json!({"op":"extract_release","requestId":"translated:error"}));
+        }
         start("transcript", "cancelled:1", true);
         assert_eq!(wait("cancelled:1", false).unwrap()["stage"], "snapshot");
         assert_eq!(call(json!({"op":"info"}))["ok"], true);
