@@ -66,7 +66,8 @@ pub fn install_media_http(backend: Box<dyn MediaHttp>) {
 pub trait CastPlatform: Send + Sync {
     fn wifi_address(&self) -> String;
     fn bind_wifi_socket(&self, socket_fd: u32, address: String) -> bool;
-    fn open(&self, host: String, port: u16) -> String;
+    // Avoid Swift keywords: UniFFI also uses this name in its C callback table.
+    fn connect(&self, host: String, port: u16) -> String;
     fn read(&self, socket: String) -> Vec<u8>;
     fn write(&self, socket: String, frame: Vec<u8>) -> bool;
     fn close(&self, socket: String);

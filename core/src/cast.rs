@@ -497,7 +497,7 @@ fn run(
             view.phase = "connecting";
             view.waiting = Instant::now();
         }
-        let socket = platform()?.open(address.to_string(), port);
+        let socket = platform()?.connect(address.to_string(), port);
         if socket.is_empty() {
             return Err("Cast authentication failed.".into());
         }

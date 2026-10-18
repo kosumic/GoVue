@@ -356,7 +356,13 @@ class LingoPlayCoreModule : Module() {
             buffer.clear()
             val bytes = extractor.readSampleData(buffer, 0)
             if (bytes < 0) break
-            info.set(0, bytes, extractor.sampleTime.coerceAtLeast(0), extractor.sampleFlags)
+            val sampleFlags = extractor.sampleFlags
+            require(sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC.inv() == 0) {
+              "Only complete, unencrypted media samples can be combined."
+            }
+            // MediaMuxer accepts codec buffer flags, not extractor sample flags.
+            val bufferFlags = if (sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+            info.set(0, bytes, extractor.sampleTime.coerceAtLeast(0), bufferFlags)
             writer.writeSampleData(tracks[index], buffer, info)
             extractor.advance()
           }

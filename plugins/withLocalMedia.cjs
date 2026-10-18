@@ -4,10 +4,23 @@ const path = require('node:path');
 
 module.exports = config => {
   config = withAndroidManifest(config, config => {
-    config.modResults.manifest.application[0].$['android:networkSecurityConfig'] = '@xml/lingoplay_network_security';
-    config.modResults.manifest.application[0].profileable = [{
+    const manifest = config.modResults.manifest;
+    const application = manifest.application[0];
+    application.$['android:networkSecurityConfig'] = '@xml/lingoplay_network_security';
+    application.profileable = [{
       $: { 'android:shell': String(process.env.EXPO_PUBLIC_LINGOPLAY_TRACE_TRANSCRIPT === '1') },
     }];
+    // Expo needs this unnamespaced marker to replace generated intent filters
+    // on subsequent prebuilds. Suppress only its namespace lint finding.
+    manifest.$['xmlns:tools'] = 'http://schemas.android.com/tools';
+    for (const activity of application.activity || []) {
+      for (const filter of activity['intent-filter'] || []) {
+        if (filter.$?.['data-generated'] !== 'true') continue;
+        const ignored = new Set((filter.$['tools:ignore'] || '').split(',').filter(Boolean));
+        ignored.add('MissingPrefix');
+        filter.$['tools:ignore'] = [...ignored].join(',');
+      }
+    }
     return config;
   });
   return withDangerousMod(config, ['android', async config => {

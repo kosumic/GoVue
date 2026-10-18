@@ -10,6 +10,7 @@ android {
   namespace 'io.github.kaminarios.lingoplay.coremodule'
   defaultConfig { versionCode 1; versionName '0.1.0' }
   sourceSets.main.java.srcDir '../generated/kotlin'
+  lint { abortOnError true }
 }
 
 dependencies { implementation 'net.java.dev.jna:jna:5.17.0@aar' }

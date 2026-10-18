@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import androidx.annotation.RequiresApi
 import io.github.kaminarios.lingoplay.core.execute
 import org.json.JSONObject
 import java.io.File
@@ -50,6 +51,7 @@ internal class DownloadPublisher(private val context: Context) {
     check(source.parentFile == directory && source.isFile && source.length() in 1..200_000_000_000L) { "The saved source file is missing." }
     return source
   }
+  @RequiresApi(29)
   private fun create(name: String, mime: String): Uri {
     require(name.isNotBlank() && name.length <= 255 && !name.contains(Regex("[\\\\/:*?\"<>|\\r\\n]")))
     require(mime in listOf("video/mp4", "audio/mp4", "image/jpeg", "application/x-subrip"))
@@ -78,6 +80,7 @@ internal class DownloadPublisher(private val context: Context) {
     try { return synchronized(slot.lock) { publishLocked(id) } }
     finally { synchronized(slots) { slot.users--; if (slot.users == 0) slots.remove(id) } }
   }
+  @RequiresApi(29)
   private fun publishLocked(id: String): Boolean {
     val plan = core(command("downloads_publication_plan", id)).getJSONObject("publication")
     val generation = plan.getLong("generation")
