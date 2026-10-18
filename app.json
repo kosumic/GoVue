@@ -2,6 +2,7 @@
   "expo": {
     "name": "GoVue",
     "slug": "govue",
+    "icon": "./assets/icon.png",
     "version": "0.1.0",
     "scheme": ["govue", "lingoplay"],
     "orientation": "default",
@@ -9,6 +10,11 @@
     "android": {
       "package": "io.github.kaminarios.lingoplay",
       "allowBackup": false,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
       "intentFilters": [
         {
           "action": "VIEW",
@@ -33,6 +39,7 @@
       ]
     },
     "ios": {
+      "icon": "./assets/AppIcon.icon",
       "bundleIdentifier": "io.github.kaminarios.lingoplay",
       "supportsTablet": true,
       "infoPlist": {
