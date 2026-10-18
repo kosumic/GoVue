@@ -605,6 +605,26 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     Ok(result)
 }
 
+pub(super) fn read_game_library(job: &Arc<Job>, call: &Value) -> Result<Value> {
+    let (root, _) = job
+        .conversation
+        .get()
+        .ok_or("Games require a saved conversation.")?;
+    job.pending()?;
+    let mut command: Value = serde_json::from_str(string(call, "arguments")?)
+        .map_err(|_| "Game library arguments must be a JSON object.")?;
+    let fields = command
+        .as_object_mut()
+        .ok_or("Game library arguments must be an object.")?;
+    let op = match string(call, "name")? {
+        "list_interactive_games" => "ai_practice_catalog",
+        "read_interactive_game" => "ai_practice_get",
+        _ => return Err("Unknown game library tool.".into()),
+    };
+    fields.insert("op".into(), json!(op));
+    dispatch(command, root.clone())
+}
+
 fn game_export(c: &Value, root: &Path) -> Result<Value> {
     let chat = read(root, string(c, "chatId")?)?;
     let game = chat
@@ -1183,7 +1203,15 @@ fn speech_hints(c: &Value, root: &Path) -> Result<Value> {
 
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     if string(&c, "op")?.starts_with("ai_practice_") {
-        if c["op"] == "ai_practice_list" {
+        if matches!(
+            c["op"].as_str(),
+            Some(
+                "ai_practice_list"
+                    | "ai_practice_catalog"
+                    | "ai_practice_get"
+                    | "ai_practice_rename"
+            )
+        ) {
             let _guard = CHATS
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);

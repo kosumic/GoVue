@@ -273,22 +273,20 @@ fn append(target: &mut Value, name: &str, delta: &Value) -> Result<()> {
 }
 
 pub(super) fn install(body: &mut Value, protocol: &str) {
-    let tool = games::tool();
-    body["tools"] = match protocol {
-        "responses" => {
-            json!([{"type":"function","name":tool["name"],"description":tool["description"],"parameters":tool["parameters"],"strict":false}])
-        }
-        "anthropic" => {
-            json!([{"name":tool["name"],"description":tool["description"],"input_schema":tool["parameters"]}])
-        }
+    let definitions = std::iter::once(games::tool()).chain(practice::tools());
+    let declarations = definitions.map(|tool| match protocol {
+        "responses" => json!({"type":"function","name":tool["name"],"description":tool["description"],"parameters":tool["parameters"],"strict":false}),
+        "anthropic" => json!({"name":tool["name"],"description":tool["description"],"input_schema":tool["parameters"]}),
         "gemini" => {
             let mut parameters = tool["parameters"].clone();
-            if let Some(fields) = parameters.as_object_mut() {
-                fields.remove("additionalProperties");
-            }
-            json!([{"functionDeclarations":[{"name":tool["name"],"description":tool["description"],"parameters":parameters}]}])
+            if let Some(fields) = parameters.as_object_mut() { fields.remove("additionalProperties"); }
+            json!({"name":tool["name"],"description":tool["description"],"parameters":parameters})
         }
-        _ => json!([{"type":"function","function":tool}]),
+        _ => json!({"type":"function","function":tool}),
+    }).collect::<Vec<_>>();
+    body["tools"] = match protocol {
+        "gemini" => json!([{"functionDeclarations":declarations}]),
+        _ => json!(declarations),
     };
     if protocol != "gemini" && protocol != "anthropic" {
         body["parallel_tool_calls"] = json!(false);

@@ -33,8 +33,10 @@ export function ToolActivity({ block, messageStatus, busy }: { block: ToolBlock;
   const active = pending && messageStatus === 'streaming' && busy;
   const status = pending && !active ? messageStatus === 'failed' ? 'failed' : 'stopped' : block.status;
   const exercise = block.name === 'create_interactive_game';
-  const label = active ? (exercise ? 'Creating exercise…' : 'Running tool…')
-    : status === 'completed' ? (exercise ? 'Exercise ready' : 'Tool completed')
+  const listing = block.name === 'list_interactive_games';
+  const reading = block.name === 'read_interactive_game';
+  const label = active ? (exercise ? 'Creating exercise…' : listing ? 'Finding saved games…' : reading ? 'Reading saved game…' : 'Running tool…')
+    : status === 'completed' ? (exercise ? 'Exercise ready' : listing ? 'Saved games found' : reading ? 'Saved game read' : 'Tool completed')
     : status === 'failed' ? (exercise ? 'Exercise creation failed' : 'Tool failed')
     : (exercise ? 'Exercise creation stopped' : 'Tool stopped');
   const tint = status === 'failed' ? colors.error : colors.muted;
