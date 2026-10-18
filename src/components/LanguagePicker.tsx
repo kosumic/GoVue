@@ -16,22 +16,24 @@ export function LanguagePicker({ value, onChange, excluded, disabled, label }: {
   const [choices, setChoices] = useState<LanguageChoices | null>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  // Playback updates can recreate this array without changing the exclusions.
+  const excludedKey = JSON.stringify(excluded);
   useEffect(() => {
     if (!open) return;
     let active = true;
-    setChoices(null); setError('');
+    setError('');
     const timer = setTimeout(() => {
-      languageChoices(query, excluded, value)
+      languageChoices(query, JSON.parse(excludedKey), value)
         .then(result => { if (active) setChoices(result); })
         .catch(failure => { if (active) setError(failure instanceof Error ? failure.message : 'Could not load languages.'); });
     }, 80);
     return () => { active = false; clearTimeout(timer); };
-  }, [open, query, excluded, value, revision]);
+  }, [open, query, excludedKey, value, revision]);
   function close() { Keyboard.dismiss(); setOpen(false); setQuery(''); }
 
   return <>
     <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityValue={{ text: value || 'No language selected' }} accessibilityState={{ disabled, expanded: open }} disabled={disabled}
-      onPress={() => { setQuery(''); setOpen(true); }} style={[styles.selector, disabled && styles.dim]}>
+      onPress={() => { setQuery(''); setChoices(null); setError(''); setOpen(true); }} style={[styles.selector, disabled && styles.dim]}>
       <Text style={[styles.selection, !value && styles.placeholder]}>{value || 'Choose a language'}</Text><ChevronDown size={20} color={colors.muted} />
     </Pressable>
     <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
