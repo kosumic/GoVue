@@ -30,6 +30,7 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
   const alive = useRef(true);
   const ready = useRef(false);
   const requests = useRef(new Set<string>());
+  const audioGeneration = useRef(0);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -68,6 +69,13 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
     requests.current.add(request.id);
     const eventId = `${document.session}-${request.id}`;
     setError('');
+    let audioVersion: number | undefined;
+    let acknowledged = false;
+    const acknowledge = () => {
+      if (acknowledged) return;
+      acknowledged = true;
+      reply(request.id);
+    };
     try {
       if (request.method === 'action') {
         if (typeof request.action !== 'string' || request.action === '__play_audio' || !request.input || typeof request.input !== 'object' || Array.isArray(request.input)) throw Error('Invalid game action.');
@@ -75,14 +83,19 @@ function GameSurface({ game, chatId, messageId, onAction, onBeforeAudio, expande
         reply(request.id, saved.state);
       } else if (request.method === 'audio') {
         if (typeof request.cueId !== 'string' || !game.cues.some(cue => cue.id === request.cueId)) throw Error('This audio is not part of the game.');
+        const version = ++audioGeneration.current;
+        audioVersion = version;
+        audio.stop();
         await onAction(messageId, game.id, '__play_audio', { cueId: request.cueId }, eventId);
         if (!alive.current) return;
-        await audio.play(request.cueId);
-        reply(request.id);
+        if (version !== audioGeneration.current) { acknowledge(); return; }
+        await audio.play(request.cueId, acknowledge);
+        acknowledge();
       }
     } catch (error) {
+      if (audioVersion !== undefined && audioVersion !== audioGeneration.current) { acknowledge(); return; }
       const text = error instanceof Error ? error.message : 'The game action failed.';
-      if (alive.current) { setError(text); reply(request.id, undefined, text); }
+      if (alive.current) { setError(text); if (!acknowledged) reply(request.id, undefined, text); }
     } finally {
       requests.current.delete(request.id);
     }
