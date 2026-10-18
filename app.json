@@ -60,6 +60,7 @@
           "backgroundColor": "#FFFFFF"
         }
       ],
+      "./plugins/withAndroidSplashScreenCompat.cjs",
       [
         "expo-video",
         {
