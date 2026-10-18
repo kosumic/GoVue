@@ -714,6 +714,7 @@ function Browser() {
                   }
                   width={frame.width}
                   height={frame.height}
+                  bottomInset={Platform.OS === 'android' && isYouTubeUrl(tab.url) ? insets.bottom : 0}
                   settings={media.settings}
                   onMessage={handleMessage}
                   onUrl={updateUrl}
@@ -743,144 +744,146 @@ function Browser() {
                   }}
                 />
               ))}
-            <AiSheet
-              keyboardVerticalOffset={session.fullscreen ? 0 : insets.top}
-              onBeforeGameAudio={media.pause}
-              visible={aiVisible}
-              onClose={() => setAiVisible(false)}
-              transcript={session.transcript.data}
-              videoId={aiVideoId}
-              onOpenVideo={videoId => {
-                navigate({ videoId });
-                session.setMini(false);
-                session.setLocked(false);
-                setAiVisible(false);
-              }}
-            />
-            {mini.dropTarget}
-            {(media.playback || media.preparing) && (
-              <Animated.View
-                pointerEvents={playerHidden ? 'none' : 'auto'}
-                style={[s.native, nativeFrame, mini.motionStyle, playerHidden && s.hidden]}
-                {...(session.mini ? mini.panHandlers : {})}
-              >
-                <PlayerSurface
-                  media={media}
-                  session={session}
-                  videoRef={nativeVideo}
-                  onMiniClose={mini.dismiss}
-                  onError={(e) =>
-                    Alert.alert(
-                      'LingoPlay',
-                      e instanceof Error ? e.message : 'Please try again.',
-                    )
-                  }
-                  onDownload={(id) => openDownload(id)}
-                  onAi={() => {
-                    setAiVideoId(media.playback?.videoId ?? null);
-                    setAiVisible(true);
-                  }}
-                  onDownloadQueue={() =>
-                    setDownloadTarget({
-                      name: 'Queue',
-                      items: session.queue.queue,
-                    })
-                  }
-                  onRestore={() => {
-                    setAiVisible(false);
-                    session.setMini(false);
-                    if (media.playback?.offline) {
-                      session.setFullscreen(true);
-                      return;
-                    }
-                    const id = media.playback?.videoId;
-                    if (
-                      id &&
-                      youtubeVideoId(
-                        browser.tabs.find((t) => t.id === watch?.id)?.url || '',
-                      ) !== id
-                    )
-                      navigate(`https://m.youtube.com/watch?v=${id}`);
-                    else run(() => browserAction('restore_watch'));
-                  }}
-                  onBack={goBack}
-                  onPip={() =>
-                    run(async () => {
-                      await nativeVideo.current?.startPictureInPicture();
-                    })
-                  }
-                />
-              </Animated.View>
-            )}
-            {transcriptVisible && (
-              <View style={[s.transcript, transcriptFrame]}>
-                <TranscriptPanel
-                  data={session.transcript.data}
-                  comparison={session.transcript.comparison}
-                  trackIds={session.transcript.trackIds}
-                  comparisonLoading={session.transcript.comparisonLoading}
-                  comparisonError={session.transcript.comparisonError}
-                  onSelectTrack={session.transcript.selectTrack}
-                  loading={session.transcript.loading}
-                  cached={session.transcript.cached}
-                  error={session.transcript.error}
-                  position={remoteTranscript ? media.cast.state.position ?? null : transcriptPosition.position}
-                  pauseAfterLine={media.settings.pauseAfterLine}
-                  onPauseAfterLine={remoteTranscript ? undefined : pauseAfterLine => media.updateSettings({ pauseAfterLine })}
-                  onClose={session.transcript.close}
-                  onExtract={session.transcript.extract}
-                  onBeforeWordAudio={() => media.pause()}
-                  onSeek={seconds => run(async () => {
-                    const videoId = session.transcript.data?.videoId;
-                    if (!videoId || videoId !== mediaRef.current.playback?.videoId) return;
-                    transcriptPosition.reset();
-                    await media.seekTo(seconds);
-                    if (videoId === mediaRef.current.playback?.videoId) await media.play();
-                  })}
-                  onDownload={() => openDownload()}
-                  downloadDisabled={!media.playback}
-                />
-              </View>
-            )}
-            {!!page && !aiVisible && (
-              <View style={s.nativePage}>
-                <ExtensionSettings
-                  page={page}
-                  settings={media.settings}
-                  onClearCache={() => {
-                    for (const handle of handles.current.values())
-                      handle.view.current?.clearCache?.(true);
-                  }}
-                  onSettings={media.updateSettings}
-                  onCategoryChange={media.updateSponsorCategory}
-                  onClose={() =>
-                    setPage(page === 'data' || page === 'ai' ? 'settings' : null)
-                  }
-                  onNavigate={(target) =>
-                    target === 'library' ? setSheet('library') : setPage(target)
-                  }
-                />
-              </View>
-            )}
-            {!!(notice || media.notice) && (
-              <View pointerEvents="none" style={s.toast}>
-                <Text style={s.toastText}>{notice || media.notice}</Text>
-              </View>
-            )}
-            {media.error && !media.playback && !sheet && (
-              <View style={s.mediaError}>
-                <Text style={s.errorText}>{media.error}</Text>
-                <Pressable
-                  style={s.retry}
-                  onPress={() => run(() => media.startNative())}
+            <View pointerEvents="box-none" style={s.overlays}>
+              <AiSheet
+                keyboardVerticalOffset={session.fullscreen ? 0 : insets.top}
+                onBeforeGameAudio={media.pause}
+                visible={aiVisible}
+                onClose={() => setAiVisible(false)}
+                transcript={session.transcript.data}
+                videoId={aiVideoId}
+                onOpenVideo={videoId => {
+                  navigate({ videoId });
+                  session.setMini(false);
+                  session.setLocked(false);
+                  setAiVisible(false);
+                }}
+              />
+              {mini.dropTarget}
+              {(media.playback || media.preparing) && (
+                <Animated.View
+                  pointerEvents={playerHidden ? 'none' : 'auto'}
+                  style={[s.native, nativeFrame, mini.motionStyle, playerHidden && s.hidden]}
+                  {...(session.mini ? mini.panHandlers : {})}
                 >
-                  <Text style={s.errorText}>Retry</Text>
-                </Pressable>
-                <Pressable style={s.retry} onPress={() => media.closePlayer()}>
-                  <Text style={s.errorText}>Web player</Text>
-                </Pressable>
-              </View>
-            )}
+                  <PlayerSurface
+                    media={media}
+                    session={session}
+                    videoRef={nativeVideo}
+                    onMiniClose={mini.dismiss}
+                    onError={(e) =>
+                      Alert.alert(
+                        'LingoPlay',
+                        e instanceof Error ? e.message : 'Please try again.',
+                      )
+                    }
+                    onDownload={(id) => openDownload(id)}
+                    onAi={() => {
+                      setAiVideoId(media.playback?.videoId ?? null);
+                      setAiVisible(true);
+                    }}
+                    onDownloadQueue={() =>
+                      setDownloadTarget({
+                        name: 'Queue',
+                        items: session.queue.queue,
+                      })
+                    }
+                    onRestore={() => {
+                      setAiVisible(false);
+                      session.setMini(false);
+                      if (media.playback?.offline) {
+                        session.setFullscreen(true);
+                        return;
+                      }
+                      const id = media.playback?.videoId;
+                      if (
+                        id &&
+                        youtubeVideoId(
+                          browser.tabs.find((t) => t.id === watch?.id)?.url || '',
+                        ) !== id
+                      )
+                        navigate(`https://m.youtube.com/watch?v=${id}`);
+                      else run(() => browserAction('restore_watch'));
+                    }}
+                    onBack={goBack}
+                    onPip={() =>
+                      run(async () => {
+                        await nativeVideo.current?.startPictureInPicture();
+                      })
+                    }
+                  />
+                </Animated.View>
+              )}
+              {transcriptVisible && (
+                <View style={[s.transcript, transcriptFrame]}>
+                  <TranscriptPanel
+                    data={session.transcript.data}
+                    comparison={session.transcript.comparison}
+                    trackIds={session.transcript.trackIds}
+                    comparisonLoading={session.transcript.comparisonLoading}
+                    comparisonError={session.transcript.comparisonError}
+                    onSelectTrack={session.transcript.selectTrack}
+                    loading={session.transcript.loading}
+                    cached={session.transcript.cached}
+                    error={session.transcript.error}
+                    position={remoteTranscript ? media.cast.state.position ?? null : transcriptPosition.position}
+                    pauseAfterLine={media.settings.pauseAfterLine}
+                    onPauseAfterLine={remoteTranscript ? undefined : pauseAfterLine => media.updateSettings({ pauseAfterLine })}
+                    onClose={session.transcript.close}
+                    onExtract={session.transcript.extract}
+                    onBeforeWordAudio={() => media.pause()}
+                    onSeek={seconds => run(async () => {
+                      const videoId = session.transcript.data?.videoId;
+                      if (!videoId || videoId !== mediaRef.current.playback?.videoId) return;
+                      transcriptPosition.reset();
+                      await media.seekTo(seconds);
+                      if (videoId === mediaRef.current.playback?.videoId) await media.play();
+                    })}
+                    onDownload={() => openDownload()}
+                    downloadDisabled={!media.playback}
+                  />
+                </View>
+              )}
+              {!!page && !aiVisible && (
+                <View style={s.nativePage}>
+                  <ExtensionSettings
+                    page={page}
+                    settings={media.settings}
+                    onClearCache={() => {
+                      for (const handle of handles.current.values())
+                        handle.view.current?.clearCache?.(true);
+                    }}
+                    onSettings={media.updateSettings}
+                    onCategoryChange={media.updateSponsorCategory}
+                    onClose={() =>
+                      setPage(page === 'data' || page === 'ai' ? 'settings' : null)
+                    }
+                    onNavigate={(target) =>
+                      target === 'library' ? setSheet('library') : setPage(target)
+                    }
+                  />
+                </View>
+              )}
+              {!!(notice || media.notice) && (
+                <View pointerEvents="none" style={s.toast}>
+                  <Text style={s.toastText}>{notice || media.notice}</Text>
+                </View>
+              )}
+              {media.error && !media.playback && !sheet && (
+                <View style={s.mediaError}>
+                  <Text style={s.errorText}>{media.error}</Text>
+                  <Pressable
+                    style={s.retry}
+                    onPress={() => run(() => media.startNative())}
+                  >
+                    <Text style={s.errorText}>Retry</Text>
+                  </Pressable>
+                  <Pressable style={s.retry} onPress={() => media.closePlayer()}>
+                    <Text style={s.errorText}>Web player</Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
           </View>
           <TokenRuntime />
           <MediaResolver ref={resolver} />
@@ -1002,7 +1005,9 @@ const makeStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     safe: { flex: 1, backgroundColor: colors.background },
     fill: { flex: 1, backgroundColor: colors.background },
-    workspace: { flex: 1, overflow: 'hidden' },
+    // The browser paints through the bottom safe area; native overlays stay clipped.
+    workspace: { flex: 1 },
+    overlays: { ...StyleSheet.absoluteFill, overflow: 'hidden' },
     tab: { position: 'absolute', top: 0, left: 0 },
     parked: { opacity: 0, zIndex: -1 },
     native: {

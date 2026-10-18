@@ -3,6 +3,17 @@
   if (window.__nav) return;
   window.__nav = true;
 
+  const safeArea = document.createElement('style');
+  // Native supplies the inset even on WebViews without CSS safe-area support.
+  safeArea.textContent = `html[data-lingoplay-bottom-inset] body {
+    padding-bottom: var(--lingoplay-bottom-inset) !important;
+  }
+  html[data-lingoplay-bottom-inset] ytm-pivot-bar-renderer {
+    box-sizing: content-box !important;
+    padding-bottom: var(--lingoplay-bottom-inset) !important;
+  }`;
+  document.documentElement.appendChild(safeArea);
+
   // YouTube can replace its bottom bar during SPA navigation.
   function ensureChat() {
     const bar = document.querySelector('ytm-pivot-bar-renderer');
