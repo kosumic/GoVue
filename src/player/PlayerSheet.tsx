@@ -31,6 +31,7 @@ export function SheetRow({
   detail,
   selected,
   disabled,
+  expanded,
   onPress,
   icon,
   trailing,
@@ -44,6 +45,7 @@ export function SheetRow({
   detail?: string;
   selected?: boolean;
   disabled?: boolean;
+  expanded?: boolean;
   onPress: () => void;
   icon?: ReactNode;
   trailing?: ReactNode;
@@ -64,6 +66,7 @@ export function SheetRow({
         selected: radio ? undefined : selected,
         checked: radio ? !!selected : undefined,
         disabled,
+        expanded,
       }}
       disabled={disabled}
       onPress={() => {

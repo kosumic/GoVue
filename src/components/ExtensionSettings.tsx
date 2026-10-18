@@ -30,7 +30,7 @@ import {
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
-import { Sparkles } from 'lucide-react-native';
+import { Languages, Sparkles } from 'lucide-react-native';
 import { coreRequest, saveFileToDevice } from '../../modules/lingoplay-core';
 import type { MediaSettings } from '../core/media';
 import { Range } from '../player/Range';
@@ -83,6 +83,7 @@ export function ExtensionSettings({
   const reducedMotion = useReducedMotion();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
+  const languagesOpen = expanded.includes('languages');
   const [notice, setNotice] = useState('');
   const [hapticPreview, setHapticPreview] = useState<number | null>(null);
   useEffect(() => setHapticPreview(null), [page]);
@@ -123,6 +124,22 @@ export function ExtensionSettings({
       share,
     );
   }
+  function toggleSection(key: string) {
+    const open = expanded.includes(key);
+    if (!reducedMotion)
+      LayoutAnimation.configureNext({
+        duration: open ? 220 : 300,
+        create: { type: 'easeInEaseOut', property: 'opacity' },
+        update: {
+          type: open ? 'easeInEaseOut' : 'spring',
+          springDamping: 1,
+        },
+        delete: { type: 'easeInEaseOut', property: 'opacity' },
+      });
+    setExpanded((v) =>
+      v.includes(key) ? v.filter((i) => i !== key) : [...v, key],
+    );
+  }
   const render = (node: Node, depth = 0): React.ReactNode => {
     const key = node.id || node.key || node.title;
     if (node.kind === 'nav') {
@@ -150,6 +167,7 @@ export function ExtensionSettings({
             <SheetRow
               title={node.title}
               section
+              expanded={open}
               icon={Icon ? <Icon color={colors.ink} size={24} /> : undefined}
               trailing={
                 <ChevronRight
@@ -158,21 +176,7 @@ export function ExtensionSettings({
                   style={{ transform: [{ rotate: open ? '90deg' : '0deg' }] }}
                 />
               }
-              onPress={() => {
-                if (!reducedMotion)
-                  LayoutAnimation.configureNext({
-                    duration: open ? 220 : 300,
-                    create: { type: 'easeInEaseOut', property: 'opacity' },
-                    update: {
-                      type: open ? 'easeInEaseOut' : 'spring',
-                      springDamping: 1,
-                    },
-                    delete: { type: 'easeInEaseOut', property: 'opacity' },
-                  });
-                setExpanded((v) =>
-                  open ? v.filter((i) => i !== key) : [...v, key],
-                );
-              }}
+              onPress={() => toggleSection(key)}
             />
           </View>
           {open && node.children.map((child) => render(child, depth + 1))}
@@ -297,9 +301,17 @@ export function ExtensionSettings({
       {page === 'ai' ? <AiSettings /> : <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
         {page === 'settings' && (
           <>
-            <View style={s.languages}>
+            <SheetRow
+              title="Languages"
+              section
+              expanded={languagesOpen}
+              icon={<Languages color={colors.ink} size={24} />}
+              trailing={<ChevronRight size={24} color={colors.muted} style={{ transform: [{ rotate: languagesOpen ? '90deg' : '0deg' }] }} />}
+              onPress={() => toggleSection('languages')}
+            />
+            {languagesOpen && <View style={s.languages}>
               <LanguageSettings />
-            </View>
+            </View>}
             {nodes.map((node) => render(node))}
           </>
         )}
