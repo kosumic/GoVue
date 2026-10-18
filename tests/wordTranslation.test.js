@@ -19,6 +19,7 @@ async function harness() {
       builder.onResolve({ filter: /\/core\/vocabulary$/ }, () => ({ path: 'test-core', external: true }));
       builder.onResolve({ filter: /\/theme$/ }, () => ({ path: 'test-theme', external: true }));
       builder.onResolve({ filter: /\/IconButton$/ }, () => ({ path: 'test-button', external: true }));
+      builder.onResolve({ filter: /\/player\/Haptics$/ }, () => ({ path: 'test-haptics', external: true }));
       builder.onResolve({ filter: /\/ai\/use(GameAudio|WordAssistance|ExampleSpeech)$/ }, () => ({ path: 'test-word-tools', external: true }));
       builder.onResolve({ filter: /^test-native$/ }, () => ({ path: 'test-native', external: true }));
       builder.onResolve({ filter: /^expo-translate-text$/ }, () => ({ path: 'native', namespace: 'test-native' }));
@@ -32,7 +33,9 @@ async function harness() {
     if (name === 'test-native') return { translate: (...args) => deferred(native, args) };
     if (name === 'test-theme') return { useThemeColors: () => ({}), useThemeStyles: factory => factory({}) };
     if (name === 'test-button') return { IconButton: 'IconButton' };
-    if (name === 'lucide-react-native') return Object.fromEntries(['X', 'RotateCw', 'BookmarkPlus', 'BookOpen', 'Sparkles', 'Square', 'Volume2'].map(name => [name, name]));
+    if (name === 'test-haptics') return { useHaptic: () => () => {} };
+    if (name === '@react-native-clipboard/clipboard') return { setString() {} };
+    if (name === 'lucide-react-native') return Object.fromEntries(['X', 'RotateCw', 'BookmarkPlus', 'BookOpen', 'Check', 'Copy', 'Sparkles', 'Square', 'Volume2'].map(name => [name, name]));
     if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) };
     if (name === 'react-native') return { ...Object.fromEntries(['Text', 'View', 'Modal', 'Pressable', 'ScrollView', 'ActivityIndicator'].map(name => [name, name])), useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }), StyleSheet: { create: value => value, absoluteFill: {}, hairlineWidth: 1 } };
     return require(name);

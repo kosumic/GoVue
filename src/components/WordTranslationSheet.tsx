@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { BookOpen, BookmarkPlus, RotateCw, Sparkles, Square, Volume2, X } from 'lucide-react-native';
+import { BookOpen, BookmarkPlus, Check, Copy, RotateCw, Sparkles, Square, Volume2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { planWordTranslation, saveWord, wordAudioTiming, type WordSelection, type WordTranslationPlan } from '../core/vocabulary';
 import { stopCaptionAudio, useWordAudio } from '../ai/useGameAudio';
@@ -9,6 +9,7 @@ import { useExampleSpeech } from '../ai/useExampleSpeech';
 import { translateWord } from '../native/translation';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { IconButton } from './IconButton';
+import { useCopyFeedback } from './useCopyFeedback';
 type Translation = { plan: WordTranslationPlan; text: string | null; error: string };
 
 export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio }: {
@@ -19,6 +20,7 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
 }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
+  const { copied, copyText } = useCopyFeedback();
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
   const [cardHeight, setCardHeight] = useState(0);
@@ -90,7 +92,12 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
       <View accessibilityViewIsModal onLayout={event => setCardHeight(event.nativeEvent.layout.height)} style={[styles.card, { width, maxHeight, left, top, opacity: cardHeight > 0 ? 1 : 0 }]}>
         <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>Translate word</Text><IconButton icon={X} label="Close word translation" onPress={onClose} /></View>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text selectable style={styles.word}>{selection.word}</Text>
+          <View style={styles.wordHeading}>
+            <Text selectable style={styles.word}>{selection.word}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={copied ? 'Word copied' : 'Copy word'} accessibilityLiveRegion="polite" onPress={() => copyText(selection.word)} style={({ pressed }) => [styles.copyButton, pressed && { opacity: 0.35 }]}>
+              {copied ? <Check size={24} color={colors.accent} /> : <Copy size={24} color={colors.ink} />}
+            </Pressable>
+          </View>
           <Text style={styles.context}>{selection.source.segments[selection.segmentIndex].text}</Text>
           {timed && <Pressable accessibilityRole="button" accessibilityLabel={audio.phase === 'idle' ? 'Play word' : 'Stop word audio'} onPress={() => {
             speech.stop();
@@ -155,7 +162,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 20, paddingRight: 8, paddingTop: 8 },
   title: { color: colors.ink, fontSize: 19, fontWeight: '600' },
   content: { paddingHorizontal: 20, paddingBottom: 8, gap: 14 },
-  word: { color: colors.ink, fontSize: 28, fontWeight: '600' },
+  wordHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  word: { flexShrink: 1, color: colors.ink, fontSize: 28, fontWeight: '600' },
+  copyButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   context: { color: colors.muted, fontSize: 14, lineHeight: 21 },
   label: { color: colors.muted, fontSize: 12 },
   translation: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
