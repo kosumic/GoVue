@@ -25,7 +25,7 @@
       androidNdkTools = "${androidSdk}/libexec/android-sdk/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/bin";
     in {
       default = pkgs.mkShell ({
-        packages = [ pkgs.nodejs_24 pkgs.libwebp (pkgs.rust-bin.stable.${rustVersion}.default.override {
+        packages = [ pkgs.nodejs_24 pkgs.libwebp pkgs.resvg (pkgs.rust-bin.stable.${rustVersion}.default.override {
           targets = if pkgs.stdenv.isLinux then [ "aarch64-linux-android" ] else [ "aarch64-apple-ios" "aarch64-apple-ios-sim" ];
         }) ]
           ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ androidSdk pkgs.jdk17_headless ]

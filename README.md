@@ -30,6 +30,7 @@ progress. See [project status](#project-status) for verified behavior and open w
 
 ## Contents
 
+- [Preview](#preview)
 - [What you can do](#what-you-can-do)
   - [Watch with native controls](#watch-with-native-controls)
   - [Read along in two languages](#read-along-in-two-languages)
@@ -52,6 +53,56 @@ progress. See [project status](#project-status) for verified behavior and open w
 - [Community](#community)
 - [Credits](#credits)
 - [License](#license)
+
+## Preview
+
+<table>
+  <tr>
+    <td align="center"><img src="assets/screenshots/browse.webp" alt="GoVue searching YouTube for Easy French's lesson on introducing yourself" width="320"></td>
+    <td align="center"><img src="assets/screenshots/playback.webp" alt="GoVue playing Easy French's introduction lesson with native controls above YouTube comments" width="320"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Find something to learn</strong><br>Browse YouTube's videos, channels, and recommendations.</td>
+    <td align="center"><strong>Watch with native controls</strong><br>Choose playback speed and quality while keeping the page interactive.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/transcript.webp" alt="GoVue transcript reader highlighting French phrases for introducing yourself beneath the native player" width="320"></td>
+    <td align="center"><img src="assets/screenshots/search.webp" alt="GoVue searching the French transcript for comment to find questions to practice" width="320"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Read every line</strong><br>Follow the transcript, search captions, and tap to seek.</td>
+    <td align="center"><strong>Find phrases to practice</strong><br>Search French captions for words and expressions.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/word-card.webp" alt="GoVue's long-press word card showing a French usage example for comment, its English translation, and a grammar explanation" width="320"></td>
+    <td align="center"><img src="assets/screenshots/languages.webp" alt="GoVue language preferences with native English and French at A2 Elementary" width="320"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Long-press a word</strong><br>Ask for usage examples, translations, and grammar in its word card.</td>
+    <td align="center"><strong>Set your learning goals</strong><br>Keep the languages you know and the levels you want to reach.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/chat.webp" alt="GoVue chat showing informal and formal French questions with English translations from GPT-6-Astra and the French transcript attached" width="320"></td>
+    <td align="center"><img src="assets/screenshots/providers.webp" alt="GoVue provider connections offering ChatGPT and Codex sign-in alongside API and other account connections" width="320"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Ask about the lesson</strong><br>Use your AI model with the video's transcript attached.</td>
+    <td align="center"><strong>Connect your AI</strong><br>Sign in with an account or choose an API connection.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/download.webp" alt="GoVue download sheet with video or audio selection, quality, audio track, and subtitle options" width="320"></td>
+    <td align="center"><img src="assets/screenshots/extensions.webp" alt="GoVue Extensions screen grouping language, playback, gesture, background, SponsorBlock, AI, and download settings" width="320"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Keep a lesson for later</strong><br>Choose video or audio, quality, and caption attachments.</td>
+    <td align="center"><strong>Make GoVue yours</strong><br>Manage playback, gestures, SponsorBlock, AI, and downloads in Extensions.</td>
+  </tr>
+</table>
+
+Captured from an ARM64 release build in the iPhone 17 Pro simulator running
+iOS 26.5, framed with the same iPhone mockup as Whip, using Easy French's
+[lesson on introducing yourself](https://www.youtube.com/watch?v=tCd_4uCD5eo).
+[Capture details](assets/screenshots/README.md).
 
 ## What you can do
 
@@ -364,7 +415,7 @@ evidence, and remaining gaps; implemented controls still need verification.
 | Downloads | Video and cover publication, read-back integrity, and reuse after restart were checked on the Pixel. Durable partial recovery remains open. |
 | PiP and background audio | A protected PiP audio handoff passed. The latest transition refinement, physical button checks, and extended background behavior remain open. |
 | Cast | Shared playback, pause/resume, seek, and revocation were checked through a USB relay. Direct Wi-Fi, physical receivers, and iOS adapters remain open; further Cast work is deferred. |
-| iOS | Shared code and native adapters exist; current extraction and UI parity still require a Mac build and live verification. |
+| iOS | An ARM64 release build, native VOD playback, captions, bilingual reading, settings, and ChatGPT / Codex sign-in with a real reply were checked in the iPhone 17 Pro simulator on iOS 26.5. The account connection and saved chat survived restart. Physical iPhone and full feature verification remain open. |
 
 The current standalone extractor uses a guest client. Sign-in-required videos
 and videos unavailable to that client fail explicitly, even if the browsing
