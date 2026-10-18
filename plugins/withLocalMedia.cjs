@@ -6,9 +6,9 @@ module.exports = config => {
   config = withAndroidManifest(config, config => {
     const manifest = config.modResults.manifest;
     const application = manifest.application[0];
-    application.$['android:networkSecurityConfig'] = '@xml/lingoplay_network_security';
+    application.$['android:networkSecurityConfig'] = '@xml/govue_network_security';
     application.profileable = [{
-      $: { 'android:shell': String(process.env.EXPO_PUBLIC_LINGOPLAY_TRACE_TRANSCRIPT === '1') },
+      $: { 'android:shell': String(process.env.EXPO_PUBLIC_GOVUE_TRACE_TRANSCRIPT === '1') },
     }];
     // Expo needs this unnamespaced marker to replace generated intent filters
     // on subsequent prebuilds. Suppress only its namespace lint finding.
@@ -26,7 +26,7 @@ module.exports = config => {
   return withDangerousMod(config, ['android', async config => {
     const folder = path.join(config.modRequest.platformProjectRoot, 'app/src/main/res/xml');
     fs.mkdirSync(folder, { recursive: true });
-    fs.writeFileSync(path.join(folder, 'lingoplay_network_security.xml'), `<?xml version="1.0" encoding="utf-8"?>
+    fs.writeFileSync(path.join(folder, 'govue_network_security.xml'), `<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
   <base-config cleartextTrafficPermitted="false" />
   <domain-config cleartextTrafficPermitted="true">

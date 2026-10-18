@@ -41,7 +41,7 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Test Rust
-        run: cargo test --locked -p lingoplay-core
+        run: cargo test --locked -p govue-core
 
       - name: Audit Rust dependencies
         uses: rustsec/audit-check@858dc40f52ca2b8570b7a997c1c4e35c6fc9a432 # main
@@ -105,7 +105,7 @@ jobs:
             npm ci --include=dev
             npm run core:android
             npx expo prebuild --platform android --no-install
-            android/gradlew -p android :app:assembleDebug :app:lintDebug :lingoplay-core:lintDebug \
+            android/gradlew -p android :app:assembleDebug :app:lintDebug :govue-core:lintDebug \
               -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon
           NIX_SHELL
 
@@ -113,11 +113,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: lingoplay-android-checks
+          name: govue-android-checks
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/reports/lint-results-debug.*
-            modules/lingoplay-core/android/build/reports/lint-results-debug.*
+            modules/govue-core/android/build/reports/lint-results-debug.*
           retention-days: 7
 
   ios:
@@ -161,22 +161,22 @@ jobs:
       - name: Compile unsigned arm64 iOS app
         run: |
           xcodebuild -quiet \
-            -workspace ios/LingoPlay.xcworkspace -scheme LingoPlay \
+            -workspace ios/GoVue.xcworkspace -scheme GoVue \
             -configuration Release -sdk iphoneos -destination generic/platform=iOS \
-            -derivedDataPath "$RUNNER_TEMP/LingoPlayDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/GoVueDerivedData" \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
-          app_path="$RUNNER_TEMP/LingoPlayDerivedData/Build/Products/Release-iphoneos/LingoPlay.app"
+          app_path="$RUNNER_TEMP/GoVueDerivedData/Build/Products/Release-iphoneos/GoVue.app"
           test -s "$app_path/main.jsbundle"
-          test "$(lipo -archs "$app_path/LingoPlay")" = arm64
+          test "$(lipo -archs "$app_path/GoVue")" = arm64
           ditto -c -k --sequesterRsrc --keepParent \
-            "$app_path" "$RUNNER_TEMP/LingoPlay-unsigned.app.zip"
+            "$app_path" "$RUNNER_TEMP/GoVue-unsigned.app.zip"
 
       - name: Upload unsigned compile artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: lingoplay-ios-unsigned-compile-only
-          path: ${{ runner.temp }}/LingoPlay-unsigned.app.zip
+          name: govue-ios-unsigned-compile-only
+          path: ${{ runner.temp }}/GoVue-unsigned.app.zip
           if-no-files-found: error
           retention-days: 7
 

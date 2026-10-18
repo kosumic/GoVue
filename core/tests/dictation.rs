@@ -1,4 +1,4 @@
-use lingoplay_core::{ai_execute, dictation_execute, execute};
+use govue_core::{ai_execute, dictation_execute, execute};
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
@@ -139,7 +139,7 @@ struct Store(PathBuf);
 impl Store {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
-            "lingoplay-dictation-{}-{}",
+            "govue-dictation-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

@@ -18,7 +18,7 @@ async function harness() {
   let controller;
   const result = await build({ entryPoints: ['src/ai/useChats.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'chat-core', setup(builder) {
-      builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'test-core', external: true }));
+      builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'test-core', external: true }));
     } }],
   });
   const core = { aiRequest(command) {

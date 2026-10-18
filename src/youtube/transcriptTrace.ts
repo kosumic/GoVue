@@ -1,6 +1,6 @@
-import { transcriptTrace } from '../../modules/lingoplay-core';
+import { transcriptTrace } from '../../modules/govue-core';
 
-export const TRANSCRIPT_TRACING = process.env.EXPO_PUBLIC_LINGOPLAY_TRACE_TRANSCRIPT === '1';
+export const TRANSCRIPT_TRACING = process.env.EXPO_PUBLIC_GOVUE_TRACE_TRANSCRIPT === '1';
 
 const stages = new Set([
   'request', 'cache.restore', 'bridge.extract', 'core.accept', 'reader.commit',

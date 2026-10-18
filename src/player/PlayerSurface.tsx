@@ -57,7 +57,7 @@ import {
   coreRequest,
   getSystemVolume,
   setSystemVolume,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 import type { useMediaBrowser } from '../media/useMediaBrowser';
 import type { usePlayerSession } from './usePlayerSession';
 import { PlayerSheet, SheetRow, type MenuAnchor } from './PlayerSheet';

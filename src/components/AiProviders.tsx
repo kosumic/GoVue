@@ -4,7 +4,7 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Gauge, Plus } from 'lucide-react-native';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 import type { AiController, ConnectionPreview, Group, Model, Provider, ProviderChoice, ProviderDraft } from '../ai/useAi';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { AiMarkdown } from './AiMarkdown';
@@ -154,7 +154,7 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
     try {
       const value = await aiRequest({ op: 'ai_export' });
       const text = JSON.stringify(value, null, 2);
-      const path = `${FileSystem.cacheDirectory}lingoplay-providers.json`;
+      const path = `${FileSystem.cacheDirectory}govue-providers.json`;
       await FileSystem.writeAsStringAsync(path, text);
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: 'Export AI providers' });
       else { Clipboard.setString(text); Alert.alert('Configuration copied', 'Provider and model settings were copied without credentials.'); }
@@ -241,7 +241,7 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
         <Action title="Remove connection" disabled={busy} onPress={() => removeProvider(editing)} />
       </>}
     </> : transfer !== null ? <>
-      <Text style={s.help}>Import a LingoPlay provider configuration. It adds separate connections and model groups. Reconnect imported accounts and keys on this device.</Text>
+      <Text style={s.help}>Import a GoVue provider configuration. It adds separate connections and model groups. Reconnect imported accounts and keys on this device.</Text>
       <Action title="Paste configuration" onPress={() => { void Clipboard.getString().then(setTransfer).catch(() => setError('Could not read the clipboard.')); }} />
       <Field label="Provider configuration JSON" value={transfer} onChange={setTransfer} multiline />
       <Action title="Import configuration" disabled={busy || !transfer.trim()} onPress={() => { try { const data = JSON.parse(transfer); void ai.mutate({ op: 'ai_import', data }).then(r => { if (r) setTransfer(null); }); } catch { setError('Enter valid provider configuration JSON.'); } }} />

@@ -8,7 +8,7 @@ import { build } from 'esbuild';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const require = createRequire(import.meta.url);
 const bundle = await build({ entryPoints: ['src/ai/useChatFind.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
-  plugins: [{ name: 'core', setup(builder) { builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'mock-core', external: true })); } }],
+  plugins: [{ name: 'core', setup(builder) { builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'mock-core', external: true })); } }],
 });
 const hit = (messageId, offset = 0) => ({ messageId, offset, role: 'assistant', before: '', matched: 'word', after: '', leading: false, trailing: false });
 const result = (query, matches, selected = 0) => ({ query, matches, selected: matches.length ? selected : null, truncated: false });

@@ -10,7 +10,7 @@ import {
   saveFileToDevice,
   publishDownloadToLibrary,
   deletePublishedDownload,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 import {
   downloadPreferences,
   type DownloadArtifact,

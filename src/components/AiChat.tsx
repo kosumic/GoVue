@@ -198,7 +198,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
         {onDetach && <Pressable accessibilityRole="button" accessibilityLabel="Remove transcript attachment" disabled={chat.busy} onPress={onDetach} style={styles.messageAction}><X size={17} color={colors.muted} /></Pressable>}
       </View>}
       <View style={styles.composer}>
-        <TextInput ref={input} accessibilityLabel="Message LingoPlay" placeholder={attachment ? 'Ask about this video…' : 'Ask anything…'} placeholderTextColor={colors.muted}
+        <TextInput ref={input} accessibilityLabel="Message GoVue" placeholder={attachment ? 'Ask about this video…' : 'Ask anything…'} placeholderTextColor={colors.muted}
           value={draft} onChangeText={voice.changeDraft} multiline maxLength={8000} style={styles.input} selectionColor={colors.accent} editable={!loading} />
         {!!voice.interimText && <Text accessibilityLabel="Speech preview" accessibilityLiveRegion="polite" numberOfLines={3} style={styles.voicePreview}>{voice.interimText}</Text>}
         {showReasoning && providerId && model && <AiReasoning id={providerId} model={model} value={chat.reasoningEffort} busy={chat.settingsBusy} deferred={chat.busy} onSelect={level => { void chat.setReasoning(level).then(saved => { if (saved) setShowReasoning(false); }); }} />}

@@ -13,7 +13,7 @@ async function harness(t) {
   const platform = { OS: 'android' };
   const bundle = await build({ entryPoints: ['src/ai/voiceInput.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'voice-core', setup(builder) {
-      builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'test-core', external: true }));
+      builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'test-core', external: true }));
     } }],
   });
   const module = { exports: {} };

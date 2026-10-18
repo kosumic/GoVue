@@ -1,4 +1,4 @@
-use lingoplay_core::execute;
+use govue_core::execute;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -12,7 +12,7 @@ struct Store(PathBuf);
 impl Store {
     fn new() -> Self {
         Self(std::env::temp_dir().join(format!(
-            "lingoplay-languages-{}-{}",
+            "govue-languages-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         )))

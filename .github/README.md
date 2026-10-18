@@ -23,7 +23,7 @@ restricted to this repository with **Actions: read**, **Contents: read**, and
 push access. Enter the token at the prompt; do not put it in shell history:
 
 ```sh
-gh secret set DEPENDABOT_REBASE_TOKEN --repo kosumic/lingoplay
+gh secret set DEPENDABOT_REBASE_TOKEN --repo kosumic/GoVue
 ```
 
 Without the secret, rebasing skips with a notice. The workflow only requests a

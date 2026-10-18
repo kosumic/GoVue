@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type WebView from 'react-native-webview';
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import { extractTranscript } from '../core/transcripts';
 import type { Transcript } from '../youtube/transcript';
 import type { useMediaBrowser } from '../media/useMediaBrowser';

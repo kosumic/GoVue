@@ -53,7 +53,7 @@ async function harness(initial = {}) {
     entryPoints: ['src/player/useMiniPlayer.tsx'], bundle: true, write: false,
     platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic',
     plugins: [{ name: 'mini-player-edges', setup(builder) {
-      builder.onResolve({ filter: /modules\/lingoplay-core$|^\.\/Haptics$|^\.\/icons$/ },
+      builder.onResolve({ filter: /modules\/govue-core$|^\.\/Haptics$|^\.\/icons$/ },
         ({ path }) => ({ path, external: true }));
     } }],
   });
@@ -61,7 +61,7 @@ async function harness(initial = {}) {
   Function('require', 'module', 'exports', result.outputFiles[0].text)(name => {
     if (name === 'react-native') return native;
     if (name === 'expo-linear-gradient') return { LinearGradient: 'Gradient' };
-    if (name.endsWith('modules/lingoplay-core')) return {
+    if (name.endsWith('modules/govue-core')) return {
       coreRequest: request => new Promise(resolve => calls.push({ request, resolve })),
     };
     if (name === './Haptics') return { haptic() {} };

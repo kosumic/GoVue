@@ -6,7 +6,7 @@ Log.setLevel(Log.Level.NONE);
 let evaluationOwner;
 let evaluationSequence = 0;
 const evaluations = new Map();
-window.__lingoplayEvalReply = (id, values) => evaluations.get(id)?.(values);
+window.__govueEvalReply = (id, values) => evaluations.get(id)?.(values);
 Platform.shim.eval = (data) =>
   new Promise((resolve, reject) => {
     const owner = evaluationOwner;
@@ -170,7 +170,7 @@ const decodeFormats = async (formats, videoId, requestId, owner) => {
     if (evaluationOwner === owner) evaluationOwner = null;
   }
 };
-window.__lingoplayDecode = (formats, videoId, requestId) => {
+window.__govueDecode = (formats, videoId, requestId) => {
   lastDecode?.cancel();
   let stop;
   const owner = {
@@ -199,11 +199,11 @@ window.__lingoplayDecode = (formats, videoId, requestId) => {
   );
   return result;
 };
-window.__lingoplayCancelDecode = (requestId) => {
+window.__govueCancelDecode = (requestId) => {
   if (lastDecode?.requestId === requestId) lastDecode.cancel();
 };
 
-window.__lingoplayMediaInfo = async (videoId) => {
+window.__govueMediaInfo = async (videoId) => {
   const client = Constants.CLIENTS.VISIONOS;
   const pageContext = window.ytcfg?.get?.('INNERTUBE_CONTEXT') || {};
   const controller = new AbortController();

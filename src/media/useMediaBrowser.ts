@@ -22,7 +22,7 @@ import {
   mediaSponsorsScript,
 } from '../youtube/mediaBridge';
 import { seekScript } from '../youtube/pageScripts';
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import { acceptPlayerLayout, type PlayerLayout } from './playerLayout';
 import { useCastSession } from '../player/useCastSession';
 import { useTranscriptPosition } from './useTranscriptPosition';
@@ -37,7 +37,7 @@ type Playback = {
   qualityFps?: number;
 };
 type LiveTrackPlayer = {
-  lingoplaySelectVideoTrack?: (
+  govueSelectVideoTrack?: (
     expectedUri: string,
     trackId: string | null,
   ) => Promise<boolean>;
@@ -177,7 +177,7 @@ export function useMediaBrowser(
         !catalogRef.current?.live ||
         catalogRef.current.videoId !== owner.videoId ||
         identity.current !== owner.videoId ||
-        !(player as LiveTrackPlayer).lingoplaySelectVideoTrack
+        !(player as LiveTrackPlayer).govueSelectVideoTrack
       )
         return;
       const request = ++revision;
@@ -203,11 +203,11 @@ export function useMediaBrowser(
     };
   }, [player, playback?.uri, catalog?.live]);
   useEffect(() => {
-    if (process.env.EXPO_PUBLIC_LINGOPLAY_DEBUG !== '1') return;
+    if (process.env.EXPO_PUBLIC_GOVUE_DEBUG !== '1') return;
     const timer = setInterval(() => {
       coreRequest({ op: 'media_transport_status' })
         .then((value) =>
-          console.info('LingoPlay transport', JSON.stringify(value)),
+          console.info('GoVue transport', JSON.stringify(value)),
         )
         .catch(() => {});
     }, 3000);
@@ -821,7 +821,7 @@ export function useMediaBrowser(
     setSwitchingQuality(true);
     let uri: string | undefined;
     try {
-      const selectLive = (player as LiveTrackPlayer).lingoplaySelectVideoTrack;
+      const selectLive = (player as LiveTrackPlayer).govueSelectVideoTrack;
       if (data.live && selectLive) {
         const tracks = player.availableVideoTracks;
         const selected = await coreRequest<{

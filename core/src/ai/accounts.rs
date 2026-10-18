@@ -269,7 +269,7 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
         "127.0.0.1"
     };
     let redirect = format!("http://{host}:{port}{path}");
-    let return_url = format!("lingoplay://ai-login/{}", job.id);
+    let return_url = format!("govue://ai-login/{}", job.id);
     let browser_return = return_url.clone();
     // xAI discovery runs in the worker, so the JS bridge never blocks on HTTPS.
     thread::spawn(move || {
@@ -313,7 +313,7 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                     if p.kind == "xai" {
                         q.append_pair("nonce", &nonce)
                             .append_pair("plan", "generic")
-                            .append_pair("referrer", "lingoplay");
+                            .append_pair("referrer", "govue");
                     }
                 }
             }
@@ -367,7 +367,7 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                     );
                 }
                 worker.state.lock().unwrap_or_else(|e| e.into_inner())["message"] =
-                    json!("Return to LingoPlay to finish signing in.");
+                    json!("Return to GoVue to finish signing in.");
                 wait_foreground(&worker, deadline)?;
                 let mut body = json!({"grant_type":"authorization_code","client_id":s.client,"code":codes[0].1,"redirect_uri":redirect,"code_verifier":verifier});
                 if p.kind == "anthropic" {

@@ -330,7 +330,7 @@ fn start(command: &Value) -> Result<Value> {
     let id = random()?;
     stop_all();
     if !p.activity(true) {
-        return Err("Open LingoPlay and enable notifications before starting Cast.".into());
+        return Err("Open GoVue and enable notifications before starting Cast.".into());
     }
     let now = Instant::now();
     let session = Arc::new(Session {
@@ -507,7 +507,7 @@ fn run(
             return Ok(());
         }
     }
-    let title = clean(command["catalog"]["title"].as_str().unwrap_or("LingoPlay"))
+    let title = clean(command["catalog"]["title"].as_str().unwrap_or("GoVue"))
         .chars()
         .take(500)
         .collect::<String>();

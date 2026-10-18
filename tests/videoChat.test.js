@@ -36,7 +36,7 @@ async function harness(videoId, restore = async id => transcript(id)) {
   const native = { View: 'View', Text: 'Text', Pressable: 'Pressable', KeyboardAvoidingView: 'KeyboardAvoidingView', BackHandler: { addEventListener(_event, handler) { backHandlers.add(handler); return { remove: () => backHandlers.delete(handler) }; } }, Keyboard: { dismiss() {} }, Alert: { alert() {} }, Platform: { OS: 'android' }, StyleSheet: { create: value => value, hairlineWidth: 1 } };
   const result = await build({ entryPoints: ['src/components/AiSheet.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic',
     plugins: [{ name: 'chat-edges', setup(builder) {
-      builder.onResolve({ filter: /modules\/lingoplay-core$/ }, () => ({ path: 'mock-core', external: true }));
+      builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'mock-core', external: true }));
       builder.onResolve({ filter: /\/core\/transcripts$/ }, () => ({ path: 'mock-transcripts', external: true }));
       builder.onResolve({ filter: /\/ai\/useAi$/ }, () => ({ path: 'mock-ai', external: true }));
       builder.onResolve({ filter: /\/ai\/useGameAudio$/ }, () => ({ path: 'mock-audio', external: true }));

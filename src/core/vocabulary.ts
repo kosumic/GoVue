@@ -1,4 +1,4 @@
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import type { Transcript } from '../youtube/transcript';
 
 export type WordToken = { text: string; word: boolean; start?: number; end?: number; bold?: boolean; italic?: boolean; underline?: boolean; reading?: string; speakerChange?: boolean };

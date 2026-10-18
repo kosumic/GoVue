@@ -4,7 +4,7 @@
       "kty": "RSA",
       "n": "lEgev_sQY-jGswm62bNxmBSHFsKoRu-Klh2TC4-jg5j7AEILFXOB-VGLSXByYwazsoSF9dzEuq6KMYwuV9JBDd_CABQAwBFARp8_N4ct7QaNHoa_79lgaXf9lxXQXmvYnKmWC0Q8_HJxm9fqNsDPHeNZZVKu-7XRiDwEw0uDxN0nQM9rjApTaHe-O2qMNcf0lfITmUKR49_x9Jps5q-0E58jmD58_VHBiavowxrpYowXKJ8MS9em2CML5hRclzwhcmQXxx-l0PPIw1CrC5D2pLvy5ALWQLKC0o-6I6PLFT2Yr56toHhP7JprhrRYlE5M1oCI790FiWlUZvkqoY0rKw",
       "e": "AQAB",
-      "kid": "lingoplay-test",
+      "kid": "govue-test",
       "alg": "RS256",
       "use": "sig"
     }

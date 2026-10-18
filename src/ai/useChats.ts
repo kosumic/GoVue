@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 import type { MessageUsageDetails, TokenUsage } from './usage';
 import type { GameAction, LearningGame } from './games';
 import { applyChatUpdate, type ChatStream, type ChatUpdate } from './chatUpdates';

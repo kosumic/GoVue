@@ -1,4 +1,4 @@
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import type { MediaCatalog, MediaStream } from './media';
 
 export type DownloadConfig = {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 import type { ChatMessage } from './useChats';
 
 export type SearchExcerpt = { before: string; matched: string; after: string; leading: boolean; trailing: boolean };

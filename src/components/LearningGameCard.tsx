@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Check, Copy, Expand, Minimize2, Play, RotateCw, Square, X } from 'lucide-react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import WebView from 'react-native-webview';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { gameDocument, scriptJSON } from '../ai/gameRuntime';
 import { useGameAudio } from '../ai/useGameAudio';

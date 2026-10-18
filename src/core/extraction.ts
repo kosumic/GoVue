@@ -1,4 +1,4 @@
-import { coreRequest, getBrowserUserAgent } from '../../modules/lingoplay-core';
+import { coreRequest, getBrowserUserAgent } from '../../modules/govue-core';
 
 export type TokenTask = { taskId: number; stage: 'snapshot' | 'mint' } & Record<string, unknown>;
 export type TokenRuntime = {

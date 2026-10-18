@@ -26,7 +26,7 @@ import {
   Delete as Trash2,
   X,
 } from '../player/icons';
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 import Clipboard from '@react-native-clipboard/clipboard';
 import type { DownloadEntry } from '../core/downloads';
 import type { useDownloads } from '../media/downloads';

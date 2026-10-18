@@ -32,7 +32,7 @@ import {
   Share2,
   X,
 } from './src/player/icons';
-import { coreRequest } from './modules/lingoplay-core';
+import { coreRequest } from './modules/govue-core';
 import { BrowserTab, type TabHandle } from './src/browser/BrowserTab';
 import { isWebUrl, isYouTubeUrl, youtubeVideoId } from './src/browser/address';
 import { useMediaBrowser } from './src/media/useMediaBrowser';
@@ -167,7 +167,7 @@ function Browser() {
     void fn().catch((e) => {
       if (e instanceof Error && e.name === 'AbortError') return;
       Alert.alert(
-        'LingoPlay',
+        'GoVue',
         e instanceof Error ? e.message : 'Please try again.',
       );
     });
@@ -773,7 +773,7 @@ function Browser() {
                     onMiniClose={mini.dismiss}
                     onError={(e) =>
                       Alert.alert(
-                        'LingoPlay',
+                        'GoVue',
                         e instanceof Error ? e.message : 'Please try again.',
                       )
                     }
@@ -895,7 +895,7 @@ function Browser() {
             downloads={downloads}
             onError={(error) =>
               Alert.alert(
-                'LingoPlay',
+                'GoVue',
                 error instanceof Error ? error.message : 'Download failed.',
               )
             }
@@ -914,7 +914,7 @@ function Browser() {
             downloads={downloads}
             onError={(error) =>
               Alert.alert(
-                'LingoPlay',
+                'GoVue',
                 error instanceof Error ? error.message : 'Download failed.',
               )
             }

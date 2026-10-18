@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 
 async function harness(core) {
   const result = await build({entryPoints:['src/core/extraction.ts'],bundle:true,write:false,platform:'node',format:'cjs',packages:'external',
-    plugins:[{name:'native-extraction-edge',setup(builder){builder.onResolve({filter:/modules\/lingoplay-core$/},()=>({path:'native-edge',external:true}));}}]});
+    plugins:[{name:'native-extraction-edge',setup(builder){builder.onResolve({filter:/modules\/govue-core$/},()=>({path:'native-edge',external:true}));}}]});
   const module={exports:{}};
   Function('require','module','exports',result.outputFiles[0].text)(() => ({coreRequest:core,getBrowserUserAgent:async()=> 'fixture browser'}),module,module.exports);
   return module.exports;

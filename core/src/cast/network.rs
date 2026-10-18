@@ -98,7 +98,7 @@ pub fn start(
     };
     let title = html_escape::encode_text(title);
     let page = format!(
-        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>*{{box-sizing:border-box}}body{{margin:0;background:#000;color:#fff;font:15px system-ui;height:100dvh;display:flex;flex-direction:column}}header{{padding:12px 16px;background:#111;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}video{{flex:1;min-height:0;width:100%;object-fit:contain}}p{{padding:16px}}</style><header>{title}</header><video controls autoplay playsinline data-file=\"{file}\" data-start=\"{position:.3}\"></video><p hidden>Could not play this video. Keep LingoPlay open on the same Wi-Fi network.</p><script src=\"dash.all.min.js\"></script><script src=\"player.js\"></script></html>"
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>*{{box-sizing:border-box}}body{{margin:0;background:#000;color:#fff;font:15px system-ui;height:100dvh;display:flex;flex-direction:column}}header{{padding:12px 16px;background:#111;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}video{{flex:1;min-height:0;width:100%;object-fit:contain}}p{{padding:16px}}</style><header>{title}</header><video controls autoplay playsinline data-file=\"{file}\" data-start=\"{position:.3}\"></video><p hidden>Could not play this video. Keep GoVue open on the same Wi-Fi network.</p><script src=\"dash.all.min.js\"></script><script src=\"player.js\"></script></html>"
     );
     let state = Arc::new(Transport {
         base: base.clone(),

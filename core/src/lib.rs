@@ -434,7 +434,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
             return Err("Untrusted transcript response.".into());
         }
         let reply: Value = {
-            let _span = trace::Section::begin(c"LingoPlay transcript: rust.reply_parse");
+            let _span = trace::Section::begin(c"GoVue transcript: rust.reply_parse");
             serde_json::from_str(raw).map_err(|_| "Unreadable transcript response.")?
         };
         if reply["type"] != "transcript"
@@ -456,7 +456,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
             return Err("Invalid transcript response.".into());
         }
         let mut data: Transcript = {
-            let _span = trace::Section::begin(c"LingoPlay transcript: rust.decode");
+            let _span = trace::Section::begin(c"GoVue transcript: rust.decode");
             serde_json::from_value(reply["transcript"].clone())
                 .map_err(|_| "Invalid transcript data.")?
         };
@@ -464,20 +464,20 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
             return Err("Transcript belongs to another video.".into());
         }
         if let Some(source) = reply["transcript"]["captionSource"].as_str() {
-            let _span = trace::Section::begin(c"LingoPlay transcript: rust.caption_parse");
+            let _span = trace::Section::begin(c"GoVue transcript: rust.caption_parse");
             let (segments, metadata) = parse_captions(source)?;
             data.segments = segments;
             data.caption_metadata = Some(metadata);
         }
         {
-            let _span = trace::Section::begin(c"LingoPlay transcript: rust.normalize");
+            let _span = trace::Section::begin(c"GoVue transcript: rust.normalize");
             normalize(&mut data)?;
         }
         // Captions remain usable when device storage is full or unavailable.
         let path = cache_path(root, &data.video_id, &data.track_id)?;
         remember(path, &data);
         let cache_saved = {
-            let _span = trace::Section::begin(c"LingoPlay transcript: rust.cache_save");
+            let _span = trace::Section::begin(c"GoVue transcript: rust.cache_save");
             save(root, &data).is_ok()
         };
         return Ok(
@@ -488,7 +488,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         if let Some(track) = command["trackId"].as_str() {
             return Ok(load(root, id, track).map_or(Value::Null, |data| json!(data)));
         }
-        let _span = trace::Section::begin(c"LingoPlay transcript: rust.cache_restore");
+        let _span = trace::Section::begin(c"GoVue transcript: rust.cache_restore");
         let Ok(entries) = fs::read_dir(root) else {
             return Ok(Value::Null);
         };
@@ -579,9 +579,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
 /// dispatched off the JavaScript/UI thread by the Expo native module.
 #[uniffi::export]
 pub fn execute(request: String, storage_path: String) -> String {
-    let _span = trace::Section::begin(c"LingoPlay core: execute");
+    let _span = trace::Section::begin(c"GoVue core: execute");
     let _guard = {
-        let _span = trace::Section::begin(c"LingoPlay core: lock_wait");
+        let _span = trace::Section::begin(c"GoVue core: lock_wait");
         REQUEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
     };
     match dispatch(&request, &storage_path) {

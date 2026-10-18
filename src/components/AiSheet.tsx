@@ -166,7 +166,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
         <View style={styles.heading}>
           {page === 'chat' ? <IconButton icon={Menu} label="Open conversations" onPress={() => { Keyboard.dismiss(); setFind(null); void chats.refresh().catch(() => {}); setHistoryVisible(true); }} /> : <IconButton icon={ChevronLeft} label="Back to chat" onPress={() => { ai.stop(); showPage('chat'); }} />}
           {page === 'chat' ? <Pressable accessibilityRole="button" accessibilityLabel="Choose AI model" disabled={!!chatVideoId && chats.conversation?.videoId !== chatVideoId} onPress={() => showPage('models')} style={styles.chatTitle}>
-            <Text numberOfLines={1} style={styles.brand}>{chats.conversation?.title || 'LingoPlay'}</Text>
+            <Text numberOfLines={1} style={styles.brand}>{chats.conversation?.title || 'GoVue'}</Text>
             <View style={styles.modelLabel}><Text numberOfLines={1} style={styles.modelName}>{selectedModel?.replace(/^gpt-/, 'GPT-') || 'Choose a model'}</Text><ChevronDown size={12} color={colors.muted} /></View>
           </Pressable> : <Text accessibilityRole="header" style={styles.pageTitle}>{page === 'models' ? 'Choose a model' : 'Providers'}</Text>}
           {page === 'chat' && !!chats.conversation?.messages.length && <IconButton icon={Search} label="Find in chat" active={find?.chatId === chats.conversation.id} onPress={() => { Keyboard.dismiss(); setFind(current => current?.chatId === chats.conversation!.id ? null : { chatId: chats.conversation!.id, query: '' }); }} />}

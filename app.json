@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "LingoPlay",
-    "slug": "lingoplay",
+    "name": "GoVue",
+    "slug": "govue",
     "version": "0.1.0",
-    "scheme": "lingoplay",
+    "scheme": ["govue", "lingoplay"],
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "android": {
@@ -57,8 +57,8 @@
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Allow LingoPlay to use the microphone for voice input in chat.",
-          "speechRecognitionPermission": "Allow LingoPlay to turn your speech into chat messages."
+          "microphonePermission": "Allow GoVue to use the microphone for voice input in chat.",
+          "speechRecognitionPermission": "Allow GoVue to turn your speech into chat messages."
         }
       ]
     ]

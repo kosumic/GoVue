@@ -66,7 +66,7 @@ fn image(path: &Path) -> Result<Value> {
         return Err("Unsupported image format.".into());
     };
     Ok(
-        json!({"uri":Url::from_file_path(path).map_err(|_|"Invalid image storage.")?.to_string(),"bytes":meta.len(),"extension":extension,"mimeType":mime,"name":format!("LingoPlay-{}.{}",SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),extension)}),
+        json!({"uri":Url::from_file_path(path).map_err(|_|"Invalid image storage.")?.to_string(),"bytes":meta.len(),"extension":extension,"mimeType":mime,"name":format!("GoVue-{}.{}",SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),extension)}),
     )
 }
 fn prune(root: &str, protect: Option<&Path>) {
@@ -215,7 +215,7 @@ mod tests {
             }
         }
         let name = format!(
-            "lingoplay-gallery-{}-{}",
+            "govue-gallery-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

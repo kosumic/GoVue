@@ -1,5 +1,5 @@
 //! The UI receives an ordered, durable activity tape, never provider continuation data.
-use lingoplay_core::{
+use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
 use serde_json::{Value, json};
@@ -241,7 +241,7 @@ struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "lingoplay-activity-{}-{}",
+            "govue-activity-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

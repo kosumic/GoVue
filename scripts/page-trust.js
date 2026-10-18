@@ -1,5 +1,5 @@
 // Private to the injected bundle. Only YouTube's player code is evaluated here.
-export const pageTrust = globalThis.trustedTypes?.createPolicy('lingoplay-player', {
+export const pageTrust = globalThis.trustedTypes?.createPolicy('govue-player', {
   createScript: source => source,
   createScriptURL: address => {
     const url = new URL(address, location.href);

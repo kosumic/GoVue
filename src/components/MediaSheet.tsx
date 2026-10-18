@@ -10,7 +10,7 @@ import type { DownloadEntry, useDownloads } from '../media/downloads';
 
 export type MediaSheetMode = 'download' | 'library' | 'settings' | null;
 const categories = [['sponsor', 'Sponsors'], ['selfpromo', 'Self promotion'], ['interaction', 'Subscribe reminders'], ['intro', 'Intros'], ['outro', 'Outros'], ['preview', 'Previews'], ['music_offtopic', 'Non-music sections'], ['filler', 'Filler']] as const;
-const action = (work: () => Promise<unknown>) => { work().catch(e => Alert.alert('LingoPlay', e instanceof Error ? e.message : 'Please try again.')); };
+const action = (work: () => Promise<unknown>) => { work().catch(e => Alert.alert('GoVue', e instanceof Error ? e.message : 'Please try again.')); };
 const bytes = (n: number) => n > 0 ? `${(n / 1024 / 1024).toFixed(1)} MB` : '';
 
 export function MediaSheet({ mode, onClose, catalog, loading, error, onRefresh, onDownload, downloads, onPlay, onRetry, settings, onSettings, sponsorStatus, browserControl }: {

@@ -15,7 +15,7 @@ const duration = Number(options.get('--duration') ?? 60);
 if (!Number.isInteger(duration) || duration < 10 || duration > 300) throw Error('Duration must be 10–300 seconds.');
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const output = resolve(options.get('--output') ?? `.cache/transcript-${stamp}.pftrace`);
-const remote = `/data/misc/perfetto-traces/lingoplay-transcript-${stamp}.pftrace`;
+const remote = `/data/misc/perfetto-traces/govue-transcript-${stamp}.pftrace`;
 const serial = options.get('--serial');
 const adbArgs = serial ? ['-s', serial] : [];
 const config = readFileSync(fileURLToPath(new URL('./transcript.perfetto.pbtxt', import.meta.url)), 'utf8')
@@ -32,4 +32,4 @@ await new Promise<void>((accept, reject) => {
 });
 execFileSync('adb', [...adbArgs, 'pull', remote, output], { stdio: 'inherit' });
 execFileSync('adb', [...adbArgs, 'shell', 'rm', remote]);
-console.log(`Saved ${output}\nOpen it in https://ui.perfetto.dev and search for "LingoPlay transcript:".`);
+console.log(`Saved ${output}\nOpen it in https://ui.perfetto.dev and search for "GoVue transcript:".`);

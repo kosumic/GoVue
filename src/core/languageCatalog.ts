@@ -1,4 +1,4 @@
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 
 export type LanguageOption = { code: string; name: string; nativeName: string };
 export type LanguageChoices = {

@@ -9,7 +9,7 @@ export function translateWord(plan: WordTranslationPlan, isCurrent: () => boolea
     if (!isCurrent()) return null;
     if (plan.sameLanguage) return plan.input;
     const { onTranslateTask } = await import('expo-translate-text').catch(() => {
-      throw Error('Install an updated LingoPlay build to translate words.');
+      throw Error('Install an updated GoVue build to translate words.');
     });
     if (!isCurrent()) return null;
     // 0.3.0 forwards every optional field into a non-null Kotlin map. Supply

@@ -1,5 +1,5 @@
 //! Multi-turn wire histories and provider-reported cache usage.
-use lingoplay_core::{
+use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, execute, install_ai_platform,
 };
 use serde_json::{Value, json};
@@ -219,7 +219,7 @@ fn requests_preserve_prefixes_tools_and_unknown_cache_counts() {
     let backend = Arc::new(Backend::default());
     install_ai_platform(Box::new(Platform(backend.clone())));
     let directory = std::env::temp_dir().join(format!(
-        "lingoplay-prompt-cache-{}-{}",
+        "govue-prompt-cache-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

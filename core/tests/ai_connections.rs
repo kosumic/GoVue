@@ -1,5 +1,5 @@
 //! Connection regressions after Android discovery/inference checks on a local endpoint.
-use lingoplay_core::{
+use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
 use serde_json::{Value, json};
@@ -150,7 +150,7 @@ fn last(b: &Backend) -> Value {
 #[test]
 fn connection_edits_preserve_identity_and_apply_to_all_request_paths() {
     let temp = Temp(std::env::temp_dir().join(format!(
-            "lingoplay-connections-{}-{}",
+            "govue-connections-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

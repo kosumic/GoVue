@@ -8,11 +8,11 @@ dist/
 .env*.local
 result
 target/
-modules/lingoplay-core/generated/
-modules/lingoplay-core/android/src/main/jniLibs/
-modules/lingoplay-core/ios/LingoPlayRust.xcframework/
-modules/lingoplay-core/ios/generated/
+modules/govue-core/generated/
+modules/govue-core/android/src/main/jniLibs/
+modules/govue-core/ios/GoVueRust.xcframework/
+modules/govue-core/ios/generated/
 .cache/
 src/youtube/generated/
 .gradle/
-modules/lingoplay-core/android/build/
+modules/govue-core/android/build/

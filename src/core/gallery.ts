@@ -2,7 +2,7 @@ import {
   coreRequest,
   galleryBytes,
   saveFileToDevice,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 export type GalleryTarget = { urls: string[]; index: number };

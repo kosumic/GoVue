@@ -32,8 +32,8 @@ function setup() {
 test('reports the inline video slot and follows scrolling without resizing the page player', async () => {
   const env = setup();
   try {
-    assert.equal(env.window.__lingoplayMedia.resolve, undefined, 'page media extraction is retired');
-    env.window.__lingoplayMedia.native(videoId, true);
+    assert.equal(env.window.__govueMedia.resolve, undefined, 'page media extraction is retired');
+    env.window.__govueMedia.native(videoId, true);
     assert.deepEqual(env.layout(), { type: 'playerLayout', videoId, layout: { ...env.rect, viewportWidth: 400, viewportHeight: 700, visible: true } });
     assert.equal(env.window.getComputedStyle(env.player).opacity, '0');
     env.rect.top = -60;
@@ -43,7 +43,7 @@ test('reports the inline video slot and follows scrolling without resizing the p
     assert.equal(env.layout().layout.visible, true);
     assert.equal(env.player.getBoundingClientRect().height, 225);
     env.rect.top = -300;
-    env.window.__lingoplayMedia.configure({});
+    env.window.__govueMedia.configure({});
     assert.equal(env.layout().layout.visible, false);
   } finally { env.close(); }
 });
@@ -51,13 +51,13 @@ test('reports the inline video slot and follows scrolling without resizing the p
 test('yields the native surface to an overlapping comments panel and restores it on dismissal', () => {
   const env = setup();
   try {
-    env.window.__lingoplayMedia.native(videoId, true);
-    env.occlude(true); env.window.__lingoplayMedia.configure({});
+    env.window.__govueMedia.native(videoId, true);
+    env.occlude(true); env.window.__govueMedia.configure({});
     assert.equal(env.layout().layout.visible, false);
-    env.occlude(false); env.window.__lingoplayMedia.configure({});
+    env.occlude(false); env.window.__govueMedia.configure({});
     assert.equal(env.layout().layout.visible, true);
-    env.window.__lingoplayMedia.native(videoId, false);
-    assert.equal(env.window.document.documentElement.dataset.lingoplayNativePlayer, 'false');
+    env.window.__govueMedia.native(videoId, false);
+    assert.equal(env.window.document.documentElement.dataset.govueNativePlayer, 'false');
     assert.notEqual(env.window.getComputedStyle(env.player).opacity, '0');
   } finally { env.close(); }
 });
@@ -65,13 +65,13 @@ test('yields the native surface to an overlapping comments panel and restores it
 test('releases the old video slot on in-page navigation and ignores stale native ownership', () => {
   const env = setup();
   try {
-    env.window.__lingoplayMedia.native(videoId, true);
+    env.window.__govueMedia.native(videoId, true);
     env.window.history.pushState({}, '', `/watch?v=${otherVideoId}`);
-    env.window.__lingoplayMedia.configure({});
-    env.window.__lingoplayMedia.native(videoId, true);
-    assert.equal(env.window.document.documentElement.dataset.lingoplayNativePlayer, 'false');
-    env.window.__lingoplayMedia.native(otherVideoId, true);
+    env.window.__govueMedia.configure({});
+    env.window.__govueMedia.native(videoId, true);
+    assert.equal(env.window.document.documentElement.dataset.govueNativePlayer, 'false');
+    env.window.__govueMedia.native(otherVideoId, true);
     assert.equal(env.layout().videoId, otherVideoId);
-    assert.equal(env.window.document.documentElement.dataset.lingoplayNativePlayer, 'true');
+    assert.equal(env.window.document.documentElement.dataset.govueNativePlayer, 'true');
   } finally { env.close(); }
 });

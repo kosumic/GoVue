@@ -4,7 +4,7 @@ Status: approved by the owner on 2026-10-17: “Allow casting-only LAN HTTP”.
 The exception below is the authorized implementation boundary.
 
 LiTube's Cast receiver and “Open on any device” browser player fetch media from
-the phone. The existing LingoPlay proxy listens only on loopback, which a receiver
+the phone. The existing GoVue proxy listens only on loopback, which a receiver
 cannot reach. `AGENTS.md` explicitly requires plain HTTP to remain on loopback.
 The owner explicitly granted the exception for the reference transport.
 

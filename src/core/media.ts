@@ -1,7 +1,7 @@
 import {
   coreRequest,
   supportedMediaFormats,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 import { Platform } from 'react-native';
 import { extract } from './extraction';
 import type { CaptionTrack } from '../youtube/transcript';

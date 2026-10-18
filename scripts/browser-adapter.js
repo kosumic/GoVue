@@ -1,6 +1,6 @@
 // LiTube's injected UI talks only to this bounded, origin-checked message adapter.
 (() => {
-  if (window.__lingoplayBrowser) return;
+  if (window.__govueBrowser) return;
   let preferences = {};
   let documentGeneration = 0;
   let lastTransient = '';
@@ -57,16 +57,16 @@
   window.addEventListener('tabVisibilityChanged', () => {
     lastTransient = '';
   });
-  window.__lingoplayBrowser = {
+  window.__govueBrowser = {
     setBottomInset(bottom) {
       if (!Number.isFinite(bottom) || bottom < 0 || bottom > 200) return;
-      document.documentElement.style.setProperty('--lingoplay-bottom-inset', `${bottom}px`);
-      document.documentElement.toggleAttribute('data-lingoplay-bottom-inset', bottom > 0);
+      document.documentElement.style.setProperty('--govue-bottom-inset', `${bottom}px`);
+      document.documentElement.toggleAttribute('data-govue-bottom-inset', bottom > 0);
     },
     setDocumentGeneration(value) {
       if (!Number.isSafeInteger(value) || value <= documentGeneration) return;
       documentGeneration = value;
-      window.dispatchEvent(new CustomEvent('lingoplayDocumentChanged'));
+      window.dispatchEvent(new CustomEvent('govueDocumentChanged'));
     },
     configure(settings) {
       preferences = {

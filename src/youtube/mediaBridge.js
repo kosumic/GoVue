@@ -1,7 +1,7 @@
 // Runs in YouTube's page runtime. Keep helpers inside this literal.
 export const MEDIA_BRIDGE = String.raw`
 (() => {
-  if (window.__lingoplayMedia || location.protocol !== 'https:' || !['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].includes(location.hostname)) return;
+  if (window.__govueMedia || location.protocol !== 'https:' || !['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].includes(location.hostname)) return;
   const id = () => {
     const url = new URL(location.href);
     const value = url.pathname === '/watch' ? url.searchParams.get('v') : url.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]{11})/)?.[1];
@@ -80,7 +80,7 @@ export const MEDIA_BRIDGE = String.raw`
     if (blocked(requests.get(this)?.address)) { this.abort(); return; }
     return Reflect.apply(send,this,args);
   };
-  const adStyle = 'html[data-lingoplay-adblock="true"] :is(#masthead-ad,#player-ads,ytd-ad-slot-renderer,ytm-ad-slot-renderer,ad-slot-renderer,ytd-display-ad-renderer,ytd-promoted-sparkles-web-renderer,ytm-promoted-sparkles-web-renderer,ytm-companion-ad-renderer,ytm-app-promo-renderer,ytm-app-install-ad-renderer,yt-mealbar-promo-renderer,ytm-open-in-app-renderer,.ytp-ad-overlay-container,.video-ads.ytp-ad-module,[data-lingoplay-app-promo]){display:none!important}';
+  const adStyle = 'html[data-govue-adblock="true"] :is(#masthead-ad,#player-ads,ytd-ad-slot-renderer,ytm-ad-slot-renderer,ad-slot-renderer,ytd-display-ad-renderer,ytd-promoted-sparkles-web-renderer,ytm-promoted-sparkles-web-renderer,ytm-companion-ad-renderer,ytm-app-promo-renderer,ytm-app-install-ad-renderer,yt-mealbar-promo-renderer,ytm-open-in-app-renderer,.ytp-ad-overlay-container,.video-ads.ytp-ad-module,[data-govue-app-promo]){display:none!important}';
   function tick() {
     const videoId = id();
     if (owner !== videoId) {
@@ -88,15 +88,15 @@ export const MEDIA_BRIDGE = String.raw`
     }
     const root = document.documentElement;
     if (root) {
-      root.dataset.lingoplayAdblock = String(settings.adBlock);
-      root.dataset.lingoplayNativePlayer = String(!!videoId && nativeOwner === videoId);
-      if (!document.getElementById('lingoplay-ad-rules')) {
-        const style = document.createElement('style'); style.id = 'lingoplay-ad-rules'; style.textContent = adStyle + '\nhtml[data-lingoplay-native-player="true"] #movie_player{opacity:0!important}'; root.appendChild(style);
+      root.dataset.govueAdblock = String(settings.adBlock);
+      root.dataset.govueNativePlayer = String(!!videoId && nativeOwner === videoId);
+      if (!document.getElementById('govue-ad-rules')) {
+        const style = document.createElement('style'); style.id = 'govue-ad-rules'; style.textContent = adStyle + '\nhtml[data-govue-native-player="true"] #movie_player{opacity:0!important}'; root.appendChild(style);
       }
       for (const control of document.querySelectorAll('ytm-mobile-topbar-renderer :is(a,button,[role="button"]),ytm-mobile-topbar :is(a,button,[role="button"]),ytm-mobile-app-bar :is(a,button,[role="button"])')) {
         const label=(control.getAttribute('aria-label')||control.textContent||'').trim().toLowerCase();
         const app=['open app','open in app','open in the app','打开应用','在应用中打开','開啟應用程式'].includes(label);
-        if(app) control.setAttribute('data-lingoplay-app-promo',''); else control.removeAttribute('data-lingoplay-app-promo');
+        if(app) control.setAttribute('data-govue-app-promo',''); else control.removeAttribute('data-govue-app-promo');
       }
     }
     const p = player();
@@ -126,7 +126,7 @@ export const MEDIA_BRIDGE = String.raw`
       }
     }
   }
-  window.__lingoplayMedia = {
+  window.__govueMedia = {
     configure(value) { settings = {...settings,...value}; tick(); },
     sponsors(videoId,value) { if (videoId===id()) segments=value; },
     native(videoId,enabled) {
@@ -147,6 +147,6 @@ export const MEDIA_BRIDGE = String.raw`
 true;
 `;
 
-export const mediaSettingsScript = settings => `${MEDIA_BRIDGE}\nwindow.__lingoplayMedia?.configure(${JSON.stringify(settings)}); true;`;
-export const mediaNativeScript = (videoId, enabled) => `window.__lingoplayMedia?.native(${JSON.stringify(videoId)},${JSON.stringify(enabled)}); true;`;
-export const mediaSponsorsScript = (videoId, segments) => `window.__lingoplayMedia?.sponsors(${JSON.stringify(videoId)},${JSON.stringify(segments)}); true;`;
+export const mediaSettingsScript = settings => `${MEDIA_BRIDGE}\nwindow.__govueMedia?.configure(${JSON.stringify(settings)}); true;`;
+export const mediaNativeScript = (videoId, enabled) => `window.__govueMedia?.native(${JSON.stringify(videoId)},${JSON.stringify(enabled)}); true;`;
+export const mediaSponsorsScript = (videoId, segments) => `window.__govueMedia?.sponsors(${JSON.stringify(videoId)},${JSON.stringify(segments)}); true;`;

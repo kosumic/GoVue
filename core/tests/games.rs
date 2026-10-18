@@ -1,5 +1,5 @@
 //! Regressions for generated cards, streamed tools, durable actions and lazy clips.
-use lingoplay_core::{
+use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, MediaHttp, MediaRangeReply, ai_execute,
     execute, install_ai_platform, install_media_http,
 };
@@ -226,7 +226,7 @@ struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "lingoplay-games-{}-{}",
+            "govue-games-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

@@ -6,7 +6,7 @@ import {
   coreRequest,
   observePipActions,
   pipBackgroundAudio,
-} from '../../modules/lingoplay-core';
+} from '../../modules/govue-core';
 import type { useMediaBrowser } from '../media/useMediaBrowser';
 
 type PipState = {
@@ -71,14 +71,14 @@ export function usePipControls(input: {
         };
         setState(result);
         const renderer = player as VideoPlayer & {
-          lingoplaySetVideoEnabled?: (
+          govueSetVideoEnabled?: (
             expectedUri: string,
             enabled: boolean,
           ) => Promise<boolean>;
         };
         const source = value.media.playback?.uri;
         if (source)
-          await renderer.lingoplaySetVideoEnabled?.(source, !next.audioOnly);
+          await renderer.govueSetVideoEnabled?.(source, !next.audioOnly);
         await configurePipControls(result);
       });
     writes.current = work.catch(() => {});

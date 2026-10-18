@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { coreRequest } from '../../modules/lingoplay-core';
+import { coreRequest } from '../../modules/govue-core';
 
 export function useExampleSpeech(context: unknown, beforePlay?: () => Promise<void> | void) {
   return useSpeech(context, false, beforePlay);

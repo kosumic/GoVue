@@ -1,4 +1,4 @@
-use lingoplay_core::execute;
+use govue_core::execute;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -14,7 +14,7 @@ struct Store(PathBuf);
 impl Store {
     fn new() -> Self {
         Self(std::env::temp_dir().join(format!(
-            "lingoplay-vocabulary-{}-{}",
+            "govue-vocabulary-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         )))

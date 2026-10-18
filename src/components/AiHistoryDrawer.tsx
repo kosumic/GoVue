@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Animated, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { Archive, ArchiveRestore, Gauge, MessageCircle, Pencil, Pin, PinOff, Search, Settings2, SquarePen, Trash2, X } from 'lucide-react-native';
 import type { SavedChat } from '../ai/useChats';
-import { aiRequest } from '../../modules/lingoplay-core';
+import { aiRequest } from '../../modules/govue-core';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { IconButton } from './IconButton';
 import { SearchExcerpt } from './ChatSearch';
@@ -72,7 +72,7 @@ export function AiHistoryDrawer({ visible, chats, selectedId, error, onClose, on
       <Pressable accessibilityRole="button" accessibilityLabel="Close conversations" onPress={onClose} style={s.scrim} />
     </Animated.View>
     <Animated.View style={[s.drawer, { width, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }] }]}>
-      <View style={s.heading}><Text accessibilityRole="header" style={s.brand}>LingoPlay</Text><IconButton icon={X} label="Close conversations" onPress={onClose} /></View>
+      <View style={s.heading}><Text accessibilityRole="header" style={s.brand}>GoVue</Text><IconButton icon={X} label="Close conversations" onPress={onClose} /></View>
       <Pressable accessibilityRole="button" onPress={onNew} style={s.newChat}><SquarePen size={20} color={colors.ink} /><Text style={s.newLabel}>New chat</Text></Pressable>
       <View style={s.search}>
         <Search size={18} color={colors.muted} />
