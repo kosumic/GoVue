@@ -3,10 +3,11 @@
 use super::{Result, container, playback};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 pub(crate) fn manifest(duration: f64, tracks: &[(&Value, String)]) -> Result<String> {
     if !duration.is_finite()
-        || !(0.0..=604800.0).contains(&duration)
+        || !(0.0..=604_800.0).contains(&duration)
         || duration == 0.0
         || tracks.is_empty()
         || tracks.len() > 17
@@ -38,7 +39,11 @@ pub(crate) fn manifest(duration: f64, tracks: &[(&Value, String)]) -> Result<Str
     let mut representation = 0;
     for (set, ((mime, _), streams)) in groups.into_iter().enumerate() {
         let audio = mime.starts_with("audio/");
-        text.push_str(&format!("<AdaptationSet id=\"{set}\" mimeType=\"{mime}\" contentType=\"{}\" subsegmentAlignment=\"true\">",if audio{"audio"}else{"video"}));
+        let _ = write!(
+            text,
+            "<AdaptationSet id=\"{set}\" mimeType=\"{mime}\" contentType=\"{}\" subsegmentAlignment=\"true\">",
+            if audio { "audio" } else { "video" }
+        );
         for (stream, uri) in streams {
             let length = stream["bytes"].as_u64().unwrap_or(0);
             let (init_start, init_end) = playback::range(&stream["initRange"], length)
@@ -48,14 +53,15 @@ pub(crate) fn manifest(duration: f64, tracks: &[(&Value, String)]) -> Result<Str
             let bandwidth = stream["bitrate"]
                 .as_u64()
                 .filter(|n| *n > 0 && *n <= 1_000_000_000)
-                .unwrap_or(if audio { 128000 } else { 4_000_000 });
-            text.push_str(&format!(
+                .unwrap_or(if audio { 128_000 } else { 4_000_000 });
+            let _ = write!(
+                text,
                 "<Representation id=\"{representation}\" bandwidth=\"{bandwidth}\" codecs=\"{}\"",
                 playback::codecs(stream)?
-            ));
+            );
             representation += 1;
             for (field, attribute, max) in if audio {
-                vec![("audioSampleRate", "audioSamplingRate", 384000)]
+                vec![("audioSampleRate", "audioSamplingRate", 384_000)]
             } else {
                 vec![
                     ("width", "width", 15360),
@@ -64,7 +70,7 @@ pub(crate) fn manifest(duration: f64, tracks: &[(&Value, String)]) -> Result<Str
                 ]
             } {
                 if let Some(n) = stream[field].as_u64().filter(|n| *n > 0 && *n <= max) {
-                    text.push_str(&format!(" {attribute}=\"{n}\""));
+                    let _ = write!(text, " {attribute}=\"{n}\"");
                 }
             }
             text.push('>');
@@ -73,9 +79,15 @@ pub(crate) fn manifest(duration: f64, tracks: &[(&Value, String)]) -> Result<Str
                     .as_u64()
                     .filter(|n| *n > 0 && *n <= 32)
             {
-                text.push_str(&format!("<AudioChannelConfiguration schemeIdUri=\"urn:mpeg:dash:23003:3:audio_channel_configuration:2012\" value=\"{channels}\"/>"));
+                let _ = write!(
+                    text,
+                    "<AudioChannelConfiguration schemeIdUri=\"urn:mpeg:dash:23003:3:audio_channel_configuration:2012\" value=\"{channels}\"/>"
+                );
             }
-            text.push_str(&format!("<BaseURL>{uri}</BaseURL><SegmentBase indexRange=\"{index_start}-{index_end}\"><Initialization range=\"{init_start}-{init_end}\"/></SegmentBase></Representation>"));
+            let _ = write!(
+                text,
+                "<BaseURL>{uri}</BaseURL><SegmentBase indexRange=\"{index_start}-{index_end}\"><Initialization range=\"{init_start}-{init_end}\"/></SegmentBase></Representation>"
+            );
         }
         text.push_str("</AdaptationSet>");
     }

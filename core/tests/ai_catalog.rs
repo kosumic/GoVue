@@ -1,8 +1,11 @@
+#![cfg(test)]
+
 //! Native-independent boundary/routing regressions, added after Pixel streaming checks.
 use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 use std::{
     collections::HashMap,
     fs,
@@ -111,10 +114,10 @@ impl AiPlatform for Platform {
                 json!({"error":{"message":"SECRET_UPSTREAM_BODY"}}),
             ];
         }
-        let mut wire = events
-            .iter()
-            .map(|v| format!("data: {v}\r\n\r\n"))
-            .collect::<String>();
+        let mut wire = events.iter().fold(String::new(), |mut wire, event| {
+            let _ = write!(wire, "data: {event}\r\n\r\n");
+            wire
+        });
         if r.url.ends_with("/chat/completions") {
             wire.push_str("data: [DONE]\r\n\r\n");
         }
@@ -188,6 +191,10 @@ fn group(root: &Path, id: &str, members: &[&str], strategy: &str, any: bool) -> 
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep the end-to-end fixture setup, actions, and assertions for this scenario together."
+)]
 fn saved_models_groups_configuration_and_wire_controls_work_together() {
     let temp = Temp(std::env::temp_dir().join(format!(
             "govue-catalog-{}-{}",

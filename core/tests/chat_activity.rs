@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! The UI receives an ordered, durable activity tape, never provider continuation data.
 use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,

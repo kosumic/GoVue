@@ -2,6 +2,11 @@
 use crate::{Result, string};
 use serde_json::{Value, json};
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "Validated HSV components produce rounded channels in the 0..=255 range."
+)]
 fn rgb(h: f64, s: f64, v: f64) -> String {
     let channel = |n: f64| {
         let k = (n + h / 60.0) % 6.0;
@@ -15,6 +20,10 @@ fn rgb(h: f64, s: f64, v: f64) -> String {
     )
 }
 
+#[allow(
+    clippy::float_cmp,
+    reason = "The maximum is selected directly from the same RGB operands to identify its channel."
+)]
 pub(super) fn color(command: &Value) -> Result<Value> {
     let (h, s, v) = if command["hex"].is_string() {
         let text = string(command, "hex")?.trim();
@@ -30,9 +39,9 @@ pub(super) fn color(command: &Value) -> Result<Value> {
             _ => return Err("Enter a hexadecimal color.".into()),
         };
         let packed = u32::from_str_radix(&raw, 16).map_err(|_| "Enter a hexadecimal color.")?;
-        let r = ((packed >> 16) & 255) as f64 / 255.0;
-        let g = ((packed >> 8) & 255) as f64 / 255.0;
-        let b = (packed & 255) as f64 / 255.0;
+        let r = f64::from((packed >> 16) & 255) / 255.0;
+        let g = f64::from((packed >> 8) & 255) / 255.0;
+        let b = f64::from(packed & 255) / 255.0;
         let max = r.max(g).max(b);
         let min = r.min(g).min(b);
         let delta = max - min;

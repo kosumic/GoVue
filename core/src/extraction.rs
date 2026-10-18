@@ -225,7 +225,7 @@ fn fetch(
         method: method.into(),
         headers,
         body: body.map_or_else(String::new, |b| b.to_string()),
-        max_bytes: MAX_BYTES as u32,
+        max_bytes: u32::try_from(MAX_BYTES).map_err(|_| "Invalid extraction size limit.")?,
     };
     let reply = if let Some(http) = HTTP.get() {
         http.request(request)
@@ -380,9 +380,11 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
             .iter()
             .find(|p| p.root == root && p.id == id && p.at.elapsed() < LIFETIME)
         {
-            *job.cookies
+            (*job
+                .cookies
                 .lock()
-                .map_err(|_| "Extraction session unavailable.")? = cached.cookies.clone();
+                .map_err(|_| "Extraction session unavailable.")?)
+            .clone_from(&cached.cookies);
             return Ok(cached.clone());
         }
     }
@@ -402,10 +404,18 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
     if !client.is_object() {
         return Err("YouTube did not provide a client context.".into());
     }
-    for (key, value) in json!({"clientName":"VISIONOS","clientVersion":"1.02","deviceMake":"Apple","deviceModel":"RealityDevice17,1","osName":"visionOS","osVersion":"26.5.23O471","userAgent":UA}).as_object().unwrap() {
-        client[key] = value.clone();
+    for (key, value) in [
+        ("clientName", "VISIONOS"),
+        ("clientVersion", "1.02"),
+        ("deviceMake", "Apple"),
+        ("deviceModel", "RealityDevice17,1"),
+        ("osName", "visionOS"),
+        ("osVersion", "26.5.23O471"),
+        ("userAgent", UA),
+    ] {
+        client[key] = json!(value);
     }
-    let mut native_context = context.clone();
+    let mut native_context = context;
     native_context["client"] = client;
     let mut data = json_response(&fetch(
         job,
@@ -460,6 +470,7 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Player> {
     players.retain(|p| p.at.elapsed() < LIFETIME && !(p.root == root && p.id == id));
     players.push_front(result.clone());
     players.truncate(3);
+    drop(players);
     Ok(result)
 }
 fn tracks(player: &Player) -> Vec<Track> {
@@ -513,7 +524,7 @@ fn token(job: &Job, player: &Player) -> Result<String> {
         .and_then(|values| values.iter().find_map(Value::as_str))
     {
         let address = Url::parse(ORIGIN)
-            .unwrap()
+            .map_err(|_| "Invalid extraction origin.")?
             .join(address)
             .map_err(|_| "Invalid token interpreter address.")?;
         fetch(job, address.as_str(), None, true, &[])?
@@ -643,7 +654,7 @@ fn transcript(
     };
     let address = address_for(None)?;
     let requires_token = Url::parse(&address)
-        .unwrap()
+        .map_err(|_| "Invalid caption address.")?
         .query_pairs()
         .any(|(key, value)| key == "exp" && matches!(value.as_ref(), "xpe" | "xpv"));
     let mut source = if requires_token {
@@ -673,7 +684,7 @@ fn transcript(
     job.check()?;
     let _guard = crate::REQUEST_LOCK
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     crate::remember(crate::cache_path(root, id, &data.track_id)?, &data);
     let _ = crate::save(root, &data);
     Ok(json!(data))
@@ -696,7 +707,7 @@ fn catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value> {
                 continue;
             };
             if Url::parse(&address)
-                .unwrap()
+                .map_err(|_| "Invalid media address.")?
                 .query_pairs()
                 .any(|(k, _)| k == "n")
                 || raw.get("drmFamilies").is_some()
@@ -804,7 +815,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 audio_key.to_owned(),
                 command["fresh"] == true,
             );
-            let worker = job.clone();
+            let worker = job;
             if thread::Builder::new()
                 .name("youtube-extraction".into())
                 .spawn(move || {
@@ -842,6 +853,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     Err(error) => json!({"done":true,"error":error}),
                 });
             }
+            drop(result);
             let runtime = job
                 .runtime
                 .lock()
@@ -869,6 +881,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
             runtime.task = None;
             runtime.reply = Some(Ok(result.into()));
+            drop(runtime);
             job.wake.notify_all();
             Ok(Value::Null)
         }
@@ -876,6 +889,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             if let Some(job) = jobs.remove(&key) {
                 job.cancel();
             }
+            drop(jobs);
             Ok(Value::Null)
         }
         _ => Err("Unsupported extraction operation.".into()),

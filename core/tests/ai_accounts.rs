@@ -1,8 +1,11 @@
+#![cfg(test)]
+
 //! Account protocol tests use synthetic keys/tokens; they do not establish plan access.
 use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 use std::{
     collections::HashMap,
     fs,
@@ -177,10 +180,10 @@ impl AiPlatform for Platform {
                     json!({"choices":[{"delta":{"content":"Account protocol passed"},"finish_reason":"stop"}]}),
                 ]
             };
-            let mut wire = events
-                .iter()
-                .map(|v| format!("data: {v}\n\n"))
-                .collect::<String>();
+            let mut wire = events.iter().fold(String::new(), |mut wire, event| {
+                let _ = write!(wire, "data: {event}\n\n");
+                wire
+            });
             if r.url.ends_with("/chat/completions") {
                 wire.push_str("data: [DONE]\n\n");
             }
@@ -252,8 +255,7 @@ fn request_callback(url: &Url) -> u16 {
         .get(url.as_str())
         .call()
     {
-        Ok(r) => r.status(),
-        Err(ureq::Error::Status(_, r)) => r.status(),
+        Ok(r) | Err(ureq::Error::Status(_, r)) => r.status(),
         Err(e) => panic!("Callback failed: {e}"),
     }
 }

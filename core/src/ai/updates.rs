@@ -54,7 +54,7 @@ impl Cursor {
             let mut fields = json!({});
             let mut strings = json!({});
             let mut arrays = json!({});
-            for (key, value) in next.as_object().unwrap() {
+            for (key, value) in next.as_object().into_iter().flatten() {
                 let old = &self.state[key];
                 if old == value {
                     continue;

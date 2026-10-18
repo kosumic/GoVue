@@ -40,7 +40,7 @@ pub(super) fn reset(root: &str) {
     let mut transfers = TRANSFERS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     transfers.retain(|key, transfer| {
         if !key.starts_with(&format!("{root}/")) {
             return true;
@@ -50,6 +50,7 @@ pub(super) fn reset(root: &str) {
         cleanup(transfer.clone());
         false
     });
+    drop(transfers);
     let directory = Path::new(root).join("media").join("transfers");
     if let Ok(files) = fs::read_dir(directory) {
         for file in files.flatten() {
@@ -106,7 +107,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         fs::create_dir_all(&directory).map_err(|_| "Could not create transfer storage.")?;
         let mut bytes = [0u8; 8];
         getrandom::getrandom(&mut bytes).map_err(|_| "Could not create transfer identity.")?;
-        let nonce = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let nonce = crate::hex(&bytes);
         let files = (0..parts.len())
             .map(|i| {
                 directory
@@ -137,49 +138,21 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         thread::spawn(move || {
             let result = (|| -> Result<()> {
                 for (index, source) in sources.into_iter().enumerate() {
-                    let file = File::create(&transfer.files[index])
-                        .map_err(|_| "Could not create media file.")?;
-                    file.set_len(lengths[index])
-                        .map_err(|_| "Not enough storage for this download.")?;
-                    let file = Mutex::new(file);
-                    let offset = AtomicU64::new(0);
-                    let failed = AtomicBool::new(false);
-                    thread::scope(|scope| {
-                        for _ in 0..connections {
-                            let t = &transfer;
-                            let file = &file;
-                            let source = &source;
-                            let offset = &offset;
-                            let failed = &failed;
-                            let length = lengths[index];
-                            scope.spawn(move||{
-                                let work=(||->Result<()>{loop{
-                                    let mut paused=t.paused.lock().map_err(|_|"Download stopped.")?;
-                                    while *paused&&!t.cancelled.load(Ordering::Relaxed){paused=t.wake.wait(paused).map_err(|_|"Download stopped.")?;}drop(paused);
-                                    if t.cancelled.load(Ordering::Relaxed)||failed.load(Ordering::Relaxed){return Err("Download cancelled.".into());}
-                                    let start=offset.fetch_add(CHUNK,Ordering::Relaxed);if start>=length{break;}let end=(start+CHUNK).min(length)-1;
-                                    let bytes=source.bytes(start,end).map_err(|_|"Media request failed. Resume to refresh its address.")?;
-                                    let mut output=file.lock().map_err(|_|"Could not assemble media file.")?;
-                                    output.seek(SeekFrom::Start(start)).and_then(|_|output.write_all(&bytes)).map_err(|_|"Could not write media. Check available storage.")?;drop(output);
-                                    t.received.fetch_add(bytes.len() as u64,Ordering::Relaxed);
-                                }Ok(())})();
-                                if let Err(error)=work {failed.store(true,Ordering::Relaxed);let mut stored=t.error.lock().unwrap_or_else(|e|e.into_inner());if stored.is_none(){*stored=Some(error);}}
-                            });
-                        }
-                    });
-                    if failed.load(Ordering::Relaxed) {
-                        return Err(transfer
-                            .error
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .clone()
-                            .unwrap_or_else(|| "Download failed.".into()));
-                    }
+                    copy_part(
+                        &transfer,
+                        &source,
+                        &transfer.files[index],
+                        lengths[index],
+                        connections,
+                    )?;
                 }
                 Ok(())
             })();
             if let Err(error) = result {
-                let mut stored = transfer.error.lock().unwrap_or_else(|e| e.into_inner());
+                let mut stored = transfer
+                    .error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if stored.is_none() {
                     *stored = Some(error);
                 }
@@ -211,7 +184,90 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let value = json!({"done":done,"error":error,"received":transfer.received.load(Ordering::Relaxed),"total":transfer.total,"files":if done&&error.is_none(){transfer.files.iter().map(|p|format!("file://{p}")).collect::<Vec<_>>()}else{vec![]}});
     if string(command, "op")? == "downloads_transfer_release" {
         transfers.remove(&key);
+        drop(transfers);
         cleanup(transfer);
     }
     Ok(value)
+}
+
+fn copy_chunks(
+    transfer: &Transfer,
+    source: &DownloadSource,
+    file: &Mutex<File>,
+    offset: &AtomicU64,
+    failed: &AtomicBool,
+    length: u64,
+) -> Result<()> {
+    loop {
+        let mut paused = transfer.paused.lock().map_err(|_| "Download stopped.")?;
+        while *paused && !transfer.cancelled.load(Ordering::Relaxed) {
+            paused = transfer
+                .wake
+                .wait(paused)
+                .map_err(|_| "Download stopped.")?;
+        }
+        drop(paused);
+        if transfer.cancelled.load(Ordering::Relaxed) || failed.load(Ordering::Relaxed) {
+            return Err("Download cancelled.".into());
+        }
+        let start = offset.fetch_add(CHUNK, Ordering::Relaxed);
+        if start >= length {
+            return Ok(());
+        }
+        let end = (start + CHUNK).min(length) - 1;
+        let bytes = source
+            .bytes(start, end)
+            .map_err(|_| "Media request failed. Resume to refresh its address.")?;
+        let mut output = file.lock().map_err(|_| "Could not assemble media file.")?;
+        output
+            .seek(SeekFrom::Start(start))
+            .and_then(|_| output.write_all(&bytes))
+            .map_err(|_| "Could not write media. Check available storage.")?;
+        drop(output);
+        transfer
+            .received
+            .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+    }
+}
+
+fn copy_part(
+    transfer: &Transfer,
+    source: &DownloadSource,
+    path: &str,
+    length: u64,
+    connections: usize,
+) -> Result<()> {
+    let file = File::create(path).map_err(|_| "Could not create media file.")?;
+    file.set_len(length)
+        .map_err(|_| "Not enough storage for this download.")?;
+    let file = Mutex::new(file);
+    let offset = AtomicU64::new(0);
+    let failed = AtomicBool::new(false);
+    thread::scope(|scope| {
+        for _ in 0..connections {
+            let t = transfer;
+            let file = &file;
+            let offset = &offset;
+            let failed = &failed;
+            scope.spawn(move || {
+                let Err(error) = copy_chunks(t, source, file, offset, failed, length) else {
+                    return;
+                };
+                failed.store(true, Ordering::Relaxed);
+                t.error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get_or_insert(error);
+            });
+        }
+    });
+    if failed.load(Ordering::Relaxed) {
+        return Err(transfer
+            .error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| "Download failed.".into()));
+    }
+    Ok(())
 }

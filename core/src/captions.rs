@@ -11,12 +11,12 @@ const PEN: &[(&str, &str, u32)] = &[
     ("i", "iAttr", 1),
     ("u", "uAttr", 1),
     ("of", "ofOffset", 2),
-    ("fc", "fcForeColor", 0xffffff),
+    ("fc", "fcForeColor", 0x00ff_ffff),
     ("fo", "foForeAlpha", 255),
-    ("bc", "bcBackColor", 0xffffff),
+    ("bc", "bcBackColor", 0x00ff_ffff),
     ("bo", "boBackAlpha", 255),
     ("et", "etEdgeType", 4),
-    ("ec", "ecEdgeColor", 0xffffff),
+    ("ec", "ecEdgeColor", 0x00ff_ffff),
     ("fs", "fsFontStyle", 7),
     ("sz", "szPenSize", 1000),
     ("rb", "rbRuby", 15),
@@ -27,7 +27,7 @@ const WINDOW_STYLE: &[(&str, &str, u32)] = &[
     ("ju", "juJustifCode", 3),
     ("pd", "pdPrintDir", 3),
     ("sd", "sdScrollDir", 3),
-    ("wfc", "wfcWinFillColor", 0xffffff),
+    ("wfc", "wfcWinFillColor", 0x00ff_ffff),
     ("wfo", "wfoWinFillAlpha", 255),
 ];
 const WINDOW_POSITION: &[(&str, &str, u32)] = &[
@@ -138,6 +138,11 @@ pub(crate) fn matches(segment: &Segment, query: &str) -> bool {
                 .contains(query))
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "The filter accepts only finite integral values in the u32 range."
+)]
 fn integer(value: &Value, max: u32) -> Option<u32> {
     number(value)
         .filter(|n| n.is_finite() && *n >= 0.0 && *n <= f64::from(max) && n.fract() == 0.0)
@@ -275,7 +280,7 @@ pub(crate) fn parse(source: &str) -> Result<(Vec<Segment>, Metadata)> {
                         .filter(|n| n.is_finite() && *n >= 0.0)
                         .map(|n| n / 1000.0),
                     pen_id: reference(&part["pPenId"]),
-                    confidence: integer(&part["acAsrConf"], 255).map(|n| n as u8),
+                    confidence: integer(&part["acAsrConf"], 255).and_then(|n| u8::try_from(n).ok()),
                     speaker_change: part["isSpeakerChange"].as_bool(),
                 })
             })
@@ -415,7 +420,9 @@ fn xml(source: &str) -> Result<Value> {
                     }
                 }
             }
-            let items = result[key].as_array_mut().unwrap();
+            let items = result[key]
+                .as_array_mut()
+                .ok_or("Invalid caption attribute table.")?;
             items.resize(items.len().max(id + 1), json!({}));
             items[id] = item;
         }
@@ -462,10 +469,16 @@ fn xml(source: &str) -> Result<Value> {
                         }
                     }
                 }
-                event["segs"].as_array_mut().unwrap().push(part);
+                event["segs"]
+                    .as_array_mut()
+                    .ok_or("Invalid caption segments.")?
+                    .push(part);
             }
         }
-        result["events"].as_array_mut().unwrap().push(event);
+        result["events"]
+            .as_array_mut()
+            .ok_or("Invalid caption events.")?
+            .push(event);
     }
     Ok(result)
 }

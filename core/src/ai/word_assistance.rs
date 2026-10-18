@@ -69,10 +69,10 @@ fn example(value: Value, plans: &Value, source: &Value) -> Result<Value> {
         }
         text(&translation.text, 2000)?;
     }
-    let translations = plans.iter().map(|plan| {
-        let translation = example.translations.iter().find(|translation| plan["targetLangCode"] == translation.language_code).unwrap();
-        json!({"languageCode":translation.language_code,"language":plan["targetLanguage"],"text":translation.text.trim()})
-    }).collect::<Vec<_>>();
+    let translations = plans.iter().map(|plan| -> Result<Value> {
+        let translation = example.translations.iter().find(|translation| plan["targetLangCode"] == translation.language_code).ok_or("The AI did not translate the example into every language. Please try again.")?;
+        Ok(json!({"languageCode":translation.language_code,"language":plan["targetLanguage"],"text":translation.text.trim()}))
+    }).collect::<Result<Vec<_>>>()?;
     Ok(
         json!({"sentence":text(&example.sentence,2000)?,"sourceLanguage":source["sourceLanguage"],"sourceLangCode":source["sourceLangCode"],"translations":translations}),
     )
@@ -86,11 +86,11 @@ pub(super) fn start(command: Value, root: PathBuf) -> Result<Value> {
     let (source, plans, language) = {
         let _guard = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let path = root.to_str().ok_or("Invalid caption storage path.")?;
         let source = crate::vocabulary::word_context(&command, path)?;
         let plans = if kind == "example" {
-            let mut selection = command.clone();
+            let mut selection = command;
             selection["op"] = json!("vocabulary_translation");
             crate::vocabulary::dispatch(&selection, path)?
         } else {
@@ -100,7 +100,9 @@ pub(super) fn start(command: Value, root: PathBuf) -> Result<Value> {
         (source, plans, language)
     };
     let provider_id = {
-        let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         config(&root)?
             .active_id
             .ok_or("Choose a model in AI settings before using word assistance.")?
@@ -146,7 +148,7 @@ pub(super) fn audio(command: &Value, root: &Path) -> Result<Value> {
     let (start, end, cue) = {
         let _guard = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let path = root.to_str().ok_or("Invalid caption storage path.")?;
         let (start, end) = crate::vocabulary::word_audio(command, path)?
             .ok_or("This word has no individual audio timestamps.")?;

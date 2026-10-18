@@ -32,6 +32,10 @@ fn text(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "Frame rates and drop ratios are approximate display measurements."
+)]
 pub(super) fn sample(command: &Value) -> Result<Value> {
     let id = command["videoId"]
         .as_str()
@@ -63,7 +67,9 @@ pub(super) fn sample(command: &Value) -> Result<Value> {
         .as_u64()
         .unwrap_or(0)
         .min(1_000_000_000);
-    let mut guard = MONITOR.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = MONITOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let monitor = guard.get_or_insert_with(Monitor::default);
     if monitor.id != id || monitor.epoch != epoch {
         *monitor = Monitor {
@@ -126,6 +132,7 @@ pub(super) fn sample(command: &Value) -> Result<Value> {
         "bufferingMs":monitor.buffer_at.map_or(0,|t|at-t),
         "bufferCount":monitor.buffers.len(),"playbackState":state
     });
+    drop(guard);
     for key in [
         "videoCodec",
         "audioCodec",
@@ -140,7 +147,7 @@ pub(super) fn sample(command: &Value) -> Result<Value> {
         ("height", 8640.0),
         ("videoBitrate", 1_000_000_000.0),
         ("audioBitrate", 100_000_000.0),
-        ("audioSampleRate", 384000.0),
+        ("audioSampleRate", 384_000.0),
         ("audioChannels", 32.0),
     ] {
         result[key] = json!(number(raw, key, max));

@@ -17,10 +17,10 @@ pub struct Message {
 }
 fn varint(out: &mut Vec<u8>, mut n: u64) {
     while n >= 128 {
-        out.push((n as u8 & 127) | 128);
+        out.push((n.to_le_bytes()[0] & 127) | 128);
         n >>= 7;
     }
-    out.push(n as u8);
+    out.push(n.to_le_bytes()[0]);
 }
 fn field(out: &mut Vec<u8>, key: u8, value: &str) {
     out.push(key);
@@ -44,7 +44,7 @@ fn number(data: &[u8], at: &mut usize) -> Option<u64> {
         if shift == 63 && b > 1 {
             return None;
         }
-        n |= ((b & 127) as u64) << shift;
+        n |= u64::from(b & 127) << shift;
         if b & 128 == 0 {
             return Some(n);
         }
@@ -143,7 +143,7 @@ mod tests {
         let mut duplicate = valid.clone();
         field(&mut duplicate, 18, "another-sender");
         assert!(decode(&duplicate).is_err());
-        let mut binary = valid.clone();
+        let mut binary = valid;
         binary[1] = 1;
         assert!(decode(&binary).is_err());
         assert!(decode(&vec![0; 65537]).is_err());

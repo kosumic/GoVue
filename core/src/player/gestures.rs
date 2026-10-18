@@ -17,8 +17,8 @@ pub(super) fn drag(command: &Value) -> Result<Value> {
     if width <= 0.0 || height <= 0.0 {
         return Err("Missing player size.".into());
     }
-    let dx = number(command, "dx", 100000.0)?;
-    let dy = number(command, "dy", 100000.0)?;
+    let dx = number(command, "dx", 100_000.0)?;
+    let dy = number(command, "dy", 100_000.0)?;
     let x = number(command, "x", 10000.0)?;
     let mode = command["mode"].as_str().filter(|s| !s.is_empty());
     let kind = mode.unwrap_or_else(|| {
@@ -34,10 +34,10 @@ pub(super) fn drag(command: &Value) -> Result<Value> {
     });
     Ok(match kind {
         "seek" => {
-            let delta = (dx / width * 120000.0).trunc() / 1000.0;
-            let position = number(command, "position", 604800.0)?.max(0.0);
-            let duration = number(command, "duration", 604800.0)?.max(0.0);
-            json!({"kind":kind,"delta":delta,"target":(position+delta).clamp(0.0,if duration>0.0{duration}else{604800.0})})
+            let delta = (dx / width * 120_000.0).trunc() / 1000.0;
+            let position = number(command, "position", 604_800.0)?.max(0.0);
+            let duration = number(command, "duration", 604_800.0)?.max(0.0);
+            json!({"kind":kind,"delta":delta,"target":(position+delta).clamp(0.0,if duration>0.0{duration}else{604_800.0})})
         }
         "brightness" => {
             let delta = (-dy / height * 1.5).clamp(-1.0, 1.0);
@@ -91,9 +91,11 @@ pub(super) fn double_tap(command: &Value) -> Result<Value> {
         .as_u64()
         .filter(|v| *v <= 9_007_199_254_740_991)
         .ok_or("Invalid gesture time.")?;
-    let position = number(command, "position", 604800.0)?.max(0.0);
-    let duration = number(command, "duration", 604800.0)?.max(0.0);
-    let mut guard = TAPS.lock().unwrap_or_else(|e| e.into_inner());
+    let position = number(command, "position", 604_800.0)?.max(0.0);
+    let duration = number(command, "duration", 604_800.0)?.max(0.0);
+    let mut guard = TAPS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let taps = guard.get_or_insert_with(SeekTaps::default);
     if taps.owner != owner
         || taps.video_id != id
@@ -109,8 +111,11 @@ pub(super) fn double_tap(command: &Value) -> Result<Value> {
         };
     }
     taps.at = at;
-    taps.delta = (taps.delta + delta).clamp(-604800, 604800);
-    let target =
-        (position + delta as f64).clamp(0.0, if duration > 0.0 { duration } else { 604800.0 });
-    Ok(json!({"kind":"seek","target":target,"delta":delta,"accumulated":taps.delta}))
+    taps.delta = (taps.delta + delta).clamp(-604_800, 604_800);
+    let target = (position
+        + f64::from(i32::try_from(delta).map_err(|_| "Seek adjustment is too large.")?))
+    .clamp(0.0, if duration > 0.0 { duration } else { 604_800.0 });
+    let result = Ok(json!({"kind":"seek","target":target,"delta":delta,"accumulated":taps.delta}));
+    drop(guard);
+    result
 }

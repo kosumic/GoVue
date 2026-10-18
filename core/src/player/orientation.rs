@@ -18,7 +18,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let mut surfaces = SURFACES
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(|error| error.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let surface = surfaces.entry(root.into()).or_default();
     match string(command, "op")? {
         "player_surface_reset" => *surface = Surface::default(),
@@ -63,7 +63,9 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         }
         _ => return Err("Unknown player orientation action.".into()),
     }
-    Ok(
+    let result = Ok(
         json!({"fullscreen":surface.fullscreen,"automatic":surface.automatic,"suppressed":surface.suppressed}),
-    )
+    );
+    drop(surfaces);
+    result
 }

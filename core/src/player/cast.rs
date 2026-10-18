@@ -6,7 +6,7 @@ use std::net::IpAddr;
 
 pub(super) fn devices(command: &Value) -> Result<Value> {
     let raw = string(command, "raw")?;
-    if raw.len() > 131072 {
+    if raw.len() > 131_072 {
         return Err("Too many cast receivers.".into());
     }
     let data: Value = serde_json::from_str(raw).map_err(|_| "Unreadable cast receivers.")?;

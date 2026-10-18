@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Usage regressions added after the Pixel settings/report navigation check.
 use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
@@ -203,7 +205,7 @@ fn usage_survives_provider_changes_normalizes_protocols_and_preserves_legacy_his
     let measured_ms = report["stats"]["streamMs"].as_u64().unwrap();
     assert_eq!(
         report["stats"]["outputTokensPerSecond"],
-        100_000.0 / measured_ms as f64
+        100_000.0 / f64::from(u32::try_from(measured_ms).unwrap())
     );
 
     // Renaming or removing a configured model must not reattribute past usage.
@@ -259,7 +261,7 @@ fn usage_survives_provider_changes_normalizes_protocols_and_preserves_legacy_his
     assert_eq!(report["stats"]["outputTokens"], 102);
     assert_eq!(
         report["stats"]["outputTokensPerSecond"],
-        100_000.0 / measured_ms as f64
+        100_000.0 / f64::from(u32::try_from(measured_ms).unwrap())
     );
     assert_eq!(report["stats"]["activeDays"], Value::Null);
     assert_eq!(report["stats"]["legacyUsage"], true);

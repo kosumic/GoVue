@@ -113,7 +113,9 @@ pub(crate) fn dispatch(request: &str) -> Result<Value> {
     {
         return Err("Invalid dictation session.".into());
     }
-    let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut active = ACTIVE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if op == "begin" {
         if string(&c, "draft")?.encode_utf16().count() >= DRAFT_UNITS {
             return Err(
@@ -140,7 +142,7 @@ pub(crate) fn dispatch(request: &str) -> Result<Value> {
         .ok_or("This dictation session is no longer active.")?;
     match op {
         "listening" if session.phase == Phase::Preparing && !session.cancelled => {
-            session.phase = Phase::Listening
+            session.phase = Phase::Listening;
         }
         "finish" if session.phase == Phase::Listening => session.phase = Phase::Finishing,
         "cancel" => {
@@ -169,6 +171,7 @@ pub(crate) fn dispatch(request: &str) -> Result<Value> {
         "end" => {
             let no_speech = !session.cancelled && !session.confirmed;
             *active = None;
+            drop(active);
             return Ok(json!({"phase":"idle", "interimText":"", "noSpeech":no_speech}));
         }
         "listening" | "finish" | "result" => {}

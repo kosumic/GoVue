@@ -59,7 +59,8 @@ fn address(raw: &str) -> Result<(String, String)> {
         if !crate::video_id(id) {
             return Err("Invalid shared video link.".into());
         }
-        let mut watch = Url::parse("https://m.youtube.com/watch").unwrap();
+        let mut watch =
+            Url::parse("https://m.youtube.com/watch").map_err(|_| "Invalid watch page address.")?;
         watch.query_pairs_mut().append_pair("v", id);
         for (key, value) in url.query_pairs() {
             if matches!(key.as_ref(), "t" | "start" | "list" | "index") && value.len() <= 200 {
@@ -188,7 +189,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let mut browsers = BROWSERS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let browser = browsers.entry(root.into()).or_default();
     let mut target = Value::Null;
     let op = string(command, "op")?;
@@ -249,7 +250,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     tab.transient = "none".into();
                     tab.generation = tab.generation.saturating_add(1);
                 }
-                tab.url = url.clone();
+                tab.url.clone_from(&url);
                 tab.id
             } else {
                 if browser.tabs.len() >= 64 {
@@ -336,7 +337,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         }
         "browser_back" => {
             if browser.stack.len() > 1 {
-                let id = browser.stack.pop().unwrap();
+                let id = browser.stack.pop().ok_or("Missing browser history.")?;
                 if command["suspendWatch"] == true
                     && browser.tabs.iter().any(|t| t.id == id && t.kind == "watch")
                 {
@@ -365,9 +366,11 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     if op != "browser_state" {
         browser.revision += 1;
     }
-    Ok(
+    let result = Ok(
         json!({"tabs":browser.tabs,"activeId":browser.active,"canGoBack":browser.stack.len()>1,"target":target,"revision":browser.revision,"suspendedWatchId":browser.suspended_watch,"transient":browser.tabs.iter().find(|t|t.id==browser.active).map(|t|t.transient.as_str()).unwrap_or("none")}),
-    )
+    );
+    drop(browsers);
+    result
 }
 
 #[cfg(test)]

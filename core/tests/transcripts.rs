@@ -1,3 +1,9 @@
+#![cfg(test)]
+#![allow(
+    clippy::significant_drop_tightening,
+    reason = "Keep each temporary filesystem fixture alive through its entire test scenario."
+)]
+
 use govue_core::execute;
 use serde_json::{Value, json};
 use std::{
@@ -21,7 +27,9 @@ struct Store {
 }
 impl Store {
     fn new() -> Self {
-        let scenario = SCENARIOS.lock().unwrap_or_else(|error| error.into_inner());
+        let scenario = SCENARIOS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let path = std::env::temp_dir().join(format!(
             "govue-{}-{}",
             std::process::id(),
@@ -229,7 +237,7 @@ fn parses_raw_json3_and_keeps_lines_across_the_whole_video() {
     let store = Store::new();
     let mut response = reply();
     response["transcript"]["captionSource"] = json!(json!({"events":[
-        {"tStartMs":490000,"dDurationMs":3000,"segs":[{"utf8":"Later line"}]},
+        {"tStartMs":490_000,"dDurationMs":3000,"segs":[{"utf8":"Later line"}]},
         {"tStartMs":7000,"dDurationMs":2000,"segs":[{"utf8":"a new ＨｏｍｅＰｏｄ "},{"utf8":" mini 2,"}]},
         {"tStartMs":45000,"dDurationMs":2000,"segs":[{"utf8":" Inside\n the gap "}]},
         {"tStartMs":-1,"segs":[{"utf8":"invalid timing"}]},

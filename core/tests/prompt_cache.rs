@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Multi-turn wire histories and provider-reported cache usage.
 use govue_core::{
     AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, execute, install_ai_platform,
@@ -215,6 +217,10 @@ fn transcript(root: &Path, text: &str) {
     assert_eq!(result["ok"], true, "{result}");
 }
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep the end-to-end fixture setup, actions, and assertions for this scenario together."
+)]
 fn requests_preserve_prefixes_tools_and_unknown_cache_counts() {
     let backend = Arc::new(Backend::default());
     install_ai_platform(Box::new(Platform(backend.clone())));

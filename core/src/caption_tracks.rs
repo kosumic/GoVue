@@ -106,12 +106,12 @@ pub(crate) fn extract_for_source(
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .filter_map(|n| tracks.get(n.as_u64()? as usize))
+                    .filter_map(|n| tracks.get(usize::try_from(n.as_u64()?).ok()?))
                     .map(|t| t.id.clone())
                     .collect(),
                 default_caption_track_id: raw["defaultCaptionTrackIndex"]
                     .as_u64()
-                    .and_then(|n| tracks.get(n as usize))
+                    .and_then(|n| tracks.get(usize::try_from(n).ok()?))
                     .map(|t| t.id.clone()),
                 captions_initial_state: short(&raw["captionsInitialState"]),
                 has_default_track: raw["hasDefaultTrack"].as_bool(),
@@ -133,7 +133,8 @@ pub(crate) fn extract_for_source(
             }
         }
     }
-    let default_index = list["defaultAudioTrackIndex"].as_u64().unwrap_or(0) as usize;
+    let default_index =
+        usize::try_from(list["defaultAudioTrackIndex"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX);
     let default_audio = audio_tracks
         .iter()
         .find(|t| !audio_key.is_empty() && t.id == audio_key)

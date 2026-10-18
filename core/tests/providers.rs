@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Boundary regressions, independent of account entitlement and live device checks.
 //! The committed RSA fixture signs synthetic test identities only.
 use govue_core::{
@@ -167,7 +169,7 @@ fn identity(nonce: &str, mode: &str) -> String {
         } else {
             "A"
         };
-        token.replace_range(i..i + 1, replace);
+        token.replace_range(i..=i, replace);
     }
     token
 }
@@ -218,7 +220,7 @@ fn auth_start(root: &Path, id: &str, backend: &Backend) -> (Value, HashMap<Strin
     let u = Url::parse(started["url"].as_str().unwrap()).unwrap();
     assert_eq!(u.origin().ascii_serialization(), "https://auth.openai.com");
     let fields: HashMap<_, _> = u.query_pairs().into_owned().collect();
-    *backend.nonce.lock().unwrap() = fields["nonce"].clone();
+    backend.nonce.lock().unwrap().clone_from(&fields["nonce"]);
     assert_eq!(fields["code_challenge_method"], "S256");
     assert!(fields["ext_agent_host_id"].starts_with("urn:uuid:"));
     (started, fields)
@@ -241,8 +243,7 @@ fn send_callback(
         .get(u.as_str())
         .call()
     {
-        Ok(r) => r,
-        Err(ureq::Error::Status(_, r)) => r,
+        Ok(r) | Err(ureq::Error::Status(_, r)) => r,
         Err(e) => panic!("Loopback callback failed: {e}"),
     }
 }
@@ -254,6 +255,10 @@ impl Drop for Temp {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep the end-to-end fixture setup, actions, and assertions for this scenario together."
+)]
 fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     let root = Temp(std::env::temp_dir().join(format!(
             "govue-ai-test-{}-{}",
@@ -415,6 +420,7 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
         let requests = backend.requests.lock().unwrap();
         let body = requests.last().unwrap()["body"].as_str().unwrap();
         assert_eq!(body.contains("CAPTION_PRIVATE_MARKER"), attach);
+        drop(requests);
     }
     let settings = fs::read_to_string(root.join("ai/providers.json")).unwrap();
     for secret in [

@@ -63,7 +63,6 @@ pub(super) fn default_base(kind: &str) -> Option<&'static str> {
         "xai" => "https://api.x.ai/v1",
         "kimi" => "https://api.kimi.com/coding/v1",
         "copilot" => "https://api.githubcopilot.com",
-        "custom" => return None,
         _ => return None,
     })
 }
@@ -188,7 +187,10 @@ fn reasoning_choices(model: &Model) -> Vec<String> {
         return model.reasoning_efforts.clone();
     }
     let levels = known_reasoning(&model.id).unwrap_or(&["none", "low", "medium", "high"]);
-    levels.iter().map(|s| s.to_string()).collect()
+    levels
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 fn reasoning_options(cfg: &Config, c: &Value) -> Result<Value> {
@@ -384,8 +386,12 @@ pub(super) fn operation(op: &str) -> bool {
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     let op = string(&c, "op")?;
     let lock = session(c["id"].as_str().unwrap_or("catalog"));
-    let _lock = lock.lock().unwrap_or_else(|e| e.into_inner());
-    let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _g = CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut cfg = config(&root)?;
     match op {
         "ai_reasoning_options" => return reasoning_options(&cfg, &c),
@@ -471,14 +477,14 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                     return Err("Model list changed. Refresh and try again.".into());
                 }
                 p.models
-                    .sort_by_key(|m| ids.iter().position(|id| id == &m.id).unwrap());
+                    .sort_by_key(|m| ids.iter().position(|id| id == &m.id).unwrap_or(usize::MAX));
             } else if c["kind"] == "groups" {
                 if ids.len() != cfg.groups.len() || cfg.groups.iter().any(|g| !ids.contains(&g.id))
                 {
                     return Err("Group list changed. Refresh and try again.".into());
                 }
                 cfg.groups
-                    .sort_by_key(|g| ids.iter().position(|id| id == &g.id).unwrap());
+                    .sort_by_key(|g| ids.iter().position(|id| id == &g.id).unwrap_or(usize::MAX));
             } else {
                 if ids.len() != cfg.providers.len()
                     || cfg.providers.iter().any(|p| !ids.contains(&p.id))
@@ -486,7 +492,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                     return Err("Provider list changed. Refresh and try again.".into());
                 }
                 cfg.providers
-                    .sort_by_key(|p| ids.iter().position(|id| id == &p.id).unwrap());
+                    .sort_by_key(|p| ids.iter().position(|id| id == &p.id).unwrap_or(usize::MAX));
             }
         }
         "ai_save_model" | "ai_remove_model" | "ai_model_options" => {
@@ -526,7 +532,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                     return Err("At most 512 models can be saved per provider.".into());
                 }
                 if p.model.is_empty() {
-                    p.model = model.clone();
+                    p.model.clone_from(&model);
                 }
                 if p.models.iter().any(|m| m.id == p.model && m.hidden) {
                     p.model = p

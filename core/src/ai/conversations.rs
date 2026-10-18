@@ -86,8 +86,14 @@ struct Conversation {
 
 fn presentation(chat: &Conversation) -> Result<Value> {
     let mut value = serde_json::to_value(chat).map_err(|_| "Could not open this chat.")?;
-    for message in value["messages"].as_array_mut().unwrap() {
-        message.as_object_mut().unwrap().remove("preparedInput");
+    for message in value["messages"]
+        .as_array_mut()
+        .ok_or("Invalid chat messages.")?
+    {
+        message
+            .as_object_mut()
+            .ok_or("Invalid chat message.")?
+            .remove("preparedInput");
         message["usageDetails"] = usage::details(&message["usage"]);
     }
     Ok(value)
@@ -168,7 +174,8 @@ fn save(root: &Path, chat: &Conversation) -> Result<()> {
         return Err("This chat is full. Start a new chat to continue.".into());
     }
     let target = path(root, &chat.id)?;
-    fs::create_dir_all(target.parent().unwrap()).map_err(|_| "Could not save chat history.")?;
+    fs::create_dir_all(target.parent().ok_or("Invalid chat storage path.")?)
+        .map_err(|_| "Could not save chat history.")?;
     let temp = target.with_extension("tmp");
     fs::write(&temp, bytes)
         .and_then(|_| fs::rename(temp, target))
@@ -177,11 +184,14 @@ fn save(root: &Path, chat: &Conversation) -> Result<()> {
 fn running(id: &str) -> bool {
     jobs()
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(id)
         .is_some_and(|j| {
             !j.cancelled.load(Ordering::Relaxed)
-                && j.state.lock().unwrap_or_else(|e| e.into_inner())["status"] == "running"
+                && j.state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)["status"]
+                    == "running"
         })
 }
 fn recover(root: &Path, chat: &mut Conversation) -> Result<()> {
@@ -189,16 +199,19 @@ fn recover(root: &Path, chat: &mut Conversation) -> Result<()> {
         let partial = chat.active_task.as_ref().and_then(|id| {
             jobs()
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get(id)
                 .map(|j| {
-                    let state = j.state.lock().unwrap_or_else(|e| e.into_inner());
+                    let state = j
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     (
                         state["text"].as_str().unwrap_or_default().to_owned(),
                         state["reasoning"].as_str().unwrap_or_default().to_owned(),
                         j.activity
                             .lock()
-                            .unwrap_or_else(|e| e.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .blocks
                             .clone(),
                     )
@@ -278,7 +291,7 @@ fn caption(root: &Path, value: &Value) -> Result<Option<TranscriptRef>> {
     }
     let _g = crate::REQUEST_LOCK
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let transcript = crate::load(
         root.to_str().ok_or("Invalid transcript storage path.")?,
         id,
@@ -315,7 +328,9 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
             return Err("Chat history is full. Delete an older chat first.".into());
         }
         let selected = {
-            let _g = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _g = CONFIG_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             config(root)?.active_id
         };
         let p = selected.as_deref().and_then(|id| provider(root, id).ok());
@@ -353,7 +368,7 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
             chat.title = chat
                 .transcript
                 .as_ref()
-                .unwrap()
+                .ok_or("Missing video transcript.")?
                 .title
                 .chars()
                 .take(100)
@@ -395,7 +410,9 @@ pub(super) fn record_input(job: &Job, input: PreparedInput) -> Result<()> {
     let Some((root, id)) = job.conversation.get() else {
         return Ok(());
     };
-    let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = CHATS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     job.pending()?;
     let mut chat = read(root, id)?;
     if chat.active_task.as_deref() != Some(&job.id) {
@@ -410,7 +427,9 @@ pub(super) fn record_input(job: &Job, input: PreparedInput) -> Result<()> {
     save(root, &chat)
 }
 fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Result<Value> {
-    let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = CHATS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // Deleting a chat or retrying after cancellation must never resurrect an old turn.
     if !path(root, id)?.exists() {
         return Ok(Value::Null);
@@ -420,12 +439,18 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
         return Ok(Value::Null);
     }
     let message = chat.messages.last_mut().ok_or("Missing chat reply.")?;
-    message.content = job.state.lock().unwrap_or_else(|e| e.into_inner())["text"]
+    message.content = job
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)["text"]
         .as_str()
         .unwrap_or_default()
         .into();
     {
-        let state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+        let state = job
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         message.reasoning = state["reasoning"].as_str().unwrap_or_default().into();
         message.usage = state["usage"].clone();
         message.model = state["model"].as_str().unwrap_or_default().into();
@@ -451,7 +476,10 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
     };
     message.completed_at = now();
     {
-        let mut tape = job.activity.lock().unwrap_or_else(|e| e.into_inner());
+        let mut tape = job
+            .activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         activity::settle(
             &mut tape.blocks,
             match message.status.as_str() {
@@ -460,7 +488,7 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
                 _ => activity::Status::Completed,
             },
         );
-        message.blocks = tape.blocks.clone();
+        message.blocks.clone_from(&tape.blocks);
     }
     chat.active_task = None;
     chat.updated_at = now();
@@ -486,7 +514,9 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     }
     let definition: games::Definition = serde_json::from_str(string(call, "arguments")?)
         .map_err(|_| "Invalid game arguments. Supply all fields described by the tool schema.")?;
-    let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = CHATS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     job.pending()?;
     let mut chat = read(root, id)?;
     if chat.active_task.as_deref() != Some(&job.id) {
@@ -495,7 +525,7 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     let transcript = if let Some(reference) = &chat.transcript {
         let _guard = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Some(crate::load(
             root.to_str().ok_or("Invalid storage path.")?,
             &reference.video_id,
@@ -517,18 +547,22 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     let game = games::Game::create(definition, call_id, transcript.as_ref())?;
     let result = json!({"gameId":game.id,"title":game.definition.title,"status":"created","message":"The playable card is in chat. Briefly invite the user to play; do not repeat its HTML or answers."});
     reply.games.push(game);
-    reply.blocks = job
-        .activity
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .blocks
-        .clone();
+    reply.blocks.clone_from(
+        &job.activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .blocks,
+    );
     let snapshot = json!(reply.games);
     job.pending()?;
     save(root, &chat)?;
-    let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = job
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     state["gameCommitted"] = json!(true);
     state["games"] = snapshot;
+    drop(state);
     Ok(result)
 }
 
@@ -577,7 +611,9 @@ fn game_action(c: &Value, root: &Path) -> Result<Value> {
 
 fn game_audio(c: &Value, root: &Path) -> Result<Value> {
     let (video_id, cue) = {
-        let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CHATS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let chat = read(root, string(c, "chatId")?)?;
         let game = chat
             .messages
@@ -603,7 +639,9 @@ fn game_audio(c: &Value, root: &Path) -> Result<Value> {
 
 fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
     let (video_id, cue) = {
-        let _guard = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = CHATS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let chat = read(root, string(c, "chatId")?)?;
         let reference = chat.transcript.ok_or("This chat has no transcript.")?;
         if c["videoId"] != reference.video_id {
@@ -612,7 +650,7 @@ fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
         let track_id = string(c, "trackId")?;
         let _guard = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let allowed = crate::with_transcript(
             root.to_str().ok_or("Invalid transcript storage path.")?,
             &reference.video_id,
@@ -633,8 +671,14 @@ fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
     games::audio::prepare(root, &video_id, &cue, &c["catalog"])
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "The send transaction validates and persists one correlated conversation update before spawning its worker."
+)]
 fn send(c: Value, root: PathBuf) -> Result<Value> {
-    let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = CHATS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let existing = c["chatId"].as_str().filter(|id| !id.is_empty());
     let mut chat = if let Some(id) = existing {
         let mut chat = read(&root, id)?;
@@ -681,7 +725,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         chat.model = selected.model;
     }
     let mut p = provider(&root, &chat.provider_id)?;
-    p.model = chat.model.clone();
+    p.model.clone_from(&chat.model);
     if p.model.is_empty() {
         return Err("Choose a model in Providers first.".into());
     }
@@ -874,7 +918,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         error: None,
         reasoning: String::new(),
         usage: Value::Null,
-        _usage_details: Default::default(),
+        _usage_details: serde::de::IgnoredAny,
         model: String::new(),
         provider_label: String::new(),
         reasoning_effort: String::new(),
@@ -895,7 +939,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         error: None,
         reasoning: String::new(),
         usage: Value::Null,
-        _usage_details: Default::default(),
+        _usage_details: serde::de::IgnoredAny,
         model: String::new(),
         provider_label: String::new(),
         reasoning_effort: String::new(),
@@ -906,14 +950,14 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         max_output_tokens: None,
     });
     chat.updated_at = now();
-    wire["replyId"] = json!(chat.messages.last().unwrap().id);
+    wire["replyId"] = json!(chat.messages.last().ok_or("Missing assistant reply.")?.id);
     let job = new_job(&p.id)?;
     let _ = job.conversation.set((root.clone(), chat.id.clone()));
     chat.active_task = Some(job.id.clone());
     if let Err(error) = save(&root, &chat) {
         jobs()
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&job.id);
         return Err(error);
     }
@@ -1057,7 +1101,7 @@ fn speech_hints(c: &Value, root: &Path) -> Result<Value> {
         // Evicted captions should not prevent dictation using the conversation vocabulary.
         let _g = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let hints = crate::with_transcript(
             root.to_str().ok_or("Invalid transcript storage path.")?,
             &transcript.video_id,
@@ -1088,7 +1132,9 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     if c["op"] == "ai_chat_audio" {
         return transcript_audio(&c, &root);
     }
-    let _g = CHATS.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = CHATS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match string(&c, "op")? {
         "ai_game_action" => game_action(&c, &root),
         "ai_game_export" => game_export(&c, &root),
@@ -1144,13 +1190,16 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             if let Some(job) = chat.active_task.as_ref().and_then(|id| {
                 jobs()
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .get(id)
                     .cloned()
             }) && let Some(message) =
                 chat.messages.last_mut().filter(|m| m.status == "streaming")
             {
-                let state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                let state = job
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 message.content = state["text"].as_str().unwrap_or_default().into();
             }
             search::find(
@@ -1191,7 +1240,10 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             let id = string(&c, "chatId")?;
             if let Ok(chat) = read(&root, id)
                 && let Some(task) = chat.active_task
-                && let Some(job) = jobs().lock().unwrap_or_else(|e| e.into_inner()).get(&task)
+                && let Some(job) = jobs()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(&task)
             {
                 job.cancelled.store(true, Ordering::Relaxed);
             }

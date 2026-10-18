@@ -178,9 +178,7 @@ fn rules(definition: &Definition) -> Result<Rules> {
         || rules
             .initial_state
             .as_object()
-            .unwrap()
-            .keys()
-            .any(|s| !key(s))
+            .is_none_or(|state| state.keys().any(|s| !key(s)))
         || rules.actions.is_empty()
         || rules.actions.len() > 24
     {
@@ -276,7 +274,7 @@ fn evaluate(value: &Value, state: &Value, input: &Value, budget: &mut usize) -> 
         "get" => {
             if let Some(index) = b.as_u64() {
                 a.as_array()
-                    .and_then(|a| a.get(index as usize))
+                    .and_then(|a| a.get(usize::try_from(index).ok()?))
                     .cloned()
                     .unwrap_or(Value::Null)
             } else if let Some(name) = b.as_str().filter(|s| key(s)) {
@@ -297,10 +295,14 @@ fn evaluate(value: &Value, state: &Value, input: &Value, budget: &mut usize) -> 
                 "remove" => list.retain(|v| v != &b),
                 "concat" => list.extend(b.as_array().ok_or("concat requires arrays.")?.clone()),
                 _ => {
-                    let end = evaluate(&args[2], state, input, budget)?
-                        .as_u64()
-                        .ok_or("Invalid slice end.")? as usize;
-                    let start = b.as_u64().ok_or("Invalid slice start.")? as usize;
+                    let end = usize::try_from(
+                        evaluate(&args[2], state, input, budget)?
+                            .as_u64()
+                            .ok_or("Invalid slice end.")?,
+                    )
+                    .unwrap_or(usize::MAX);
+                    let start = usize::try_from(b.as_u64().ok_or("Invalid slice start.")?)
+                        .unwrap_or(usize::MAX);
                     list = list
                         .get(start.min(list.len())..end.min(list.len()).max(start.min(list.len())))
                         .unwrap_or_default()

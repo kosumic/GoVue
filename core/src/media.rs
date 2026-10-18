@@ -199,7 +199,7 @@ pub(crate) fn catalog(command: &Value) -> Result<Value> {
         streams.push(
             json!({"itag":itag,"key":key,"url":url,"kind":kind,"mimeType":mime,"userAgent":user_agent,
             "fps":format["fps"].as_u64().unwrap_or(0).min(240),"audioKey":audio_id,
-            "audioSampleRate":format["audioSampleRate"].as_u64().or_else(||format["audioSampleRate"].as_str()?.parse().ok()).unwrap_or(0).min(384000),
+            "audioSampleRate":format["audioSampleRate"].as_u64().or_else(||format["audioSampleRate"].as_str()?.parse().ok()).unwrap_or(0).min(384_000),
             "audioChannels":format["audioChannels"].as_u64().unwrap_or(0).min(32),
             "audioLabel":clean(format["audioTrack"]["displayName"].as_str().unwrap_or("Default")),
             "audioDefault":format["audioTrack"]["audioIsDefault"]==true,
@@ -229,7 +229,7 @@ pub(crate) fn catalog(command: &Value) -> Result<Value> {
     let chapters = chapter_list(&media["chapters"]);
     Ok(
         json!({"videoId":id,"origin":Url::parse(string(command,"origin")?).map_err(|_|"Invalid media origin.")?.origin().ascii_serialization(),"title":clean(media["title"].as_str().unwrap_or("YouTube video")),
-        "author":clean(media["author"].as_str().unwrap_or("")),"duration":media["duration"].as_f64().filter(|n|*n>0.0&&*n<=604800.0).unwrap_or_else(||formats.iter().filter_map(|f|f["approxDurationMs"].as_u64().or_else(||f["approxDurationMs"].as_str()?.parse().ok())).filter(|n|*n>0&&*n<=604800000).max().unwrap_or(0) as f64/1000.0),
+        "author":clean(media["author"].as_str().unwrap_or("")),"duration":media["duration"].as_f64().filter(|n|*n>0.0&&*n<=604_800.0).unwrap_or_else(||f64::from(formats.iter().filter_map(|f|f["approxDurationMs"].as_u64().or_else(||f["approxDurationMs"].as_str()?.parse().ok())).filter(|n|*n>0&&*n<=604_800_000).filter_map(|n|u32::try_from(n).ok()).max().unwrap_or(0))/1000.0),
         "position":media["position"].as_f64().unwrap_or(0.0).max(0.0),"live":media["live"]==true,
         "streams":streams,"hlsUrl":hls,"hlsUserAgent":media["hlsUserAgent"].as_str().filter(|s|s.len()<=1000&&!s.chars().any(char::is_control)).unwrap_or(""),"audioTracks":audio_tracks,
         "subtitles":media["subtitles"].as_array().map(|items|items.iter().take(300).filter_map(|t|{
@@ -247,7 +247,7 @@ pub(crate) fn catalog(command: &Value) -> Result<Value> {
 fn chapter_list(raw: &Value) -> Vec<Value> {
     let mut chapters=raw.as_array().map(|items|items.iter().take(300).filter_map(|chapter|{
         let parsed=||{let fields=chapter["timestamp"].as_str()?.split(':').map(str::parse::<u32>).collect::<std::result::Result<Vec<_>,_>>().ok()?;if !(2..=3).contains(&fields.len())||fields.iter().skip(1).any(|n|*n>=60){return None;}Some(fields.iter().fold(0.0,|total,n|total*60.0+f64::from(*n)))};
-        let start=chapter["start"].as_f64().or_else(parsed).filter(|n|n.is_finite()&&*n>=0.0&&*n<604800.0)?;
+        let start=chapter["start"].as_f64().or_else(parsed).filter(|n|n.is_finite()&&*n>=0.0&&*n<604_800.0)?;
         let preview = chapter["previewUrl"].as_str().and_then(|raw| crate::gallery::allowed(raw).ok()).map(|url| url.to_string());
         Some(json!({"start":start,"title":clean(chapter["title"].as_str().unwrap_or("Segments")),"previewUrl":preview}))
     }).collect::<Vec<_>>()).unwrap_or_default();
@@ -263,6 +263,11 @@ fn chapter_list(raw: &Value) -> Vec<Value> {
     chapters
 }
 
+#[allow(
+    clippy::too_many_lines,
+    clippy::float_cmp,
+    reason = "Keep media command routing together; point highlights require exactly equal segment endpoints."
+)]
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     match string(command, "op")? {
         "downloads_config"
@@ -278,13 +283,13 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         | "downloads_prepared"
         | "downloads_event"
         | "downloads_remove"
-        | "downloads_restore" => crate::downloads::dispatch(command, root),
-        "downloads_clear_history" => crate::downloads::dispatch(command, root),
-        "downloads_publication_plan"
+        | "downloads_restore"
+        | "downloads_clear_history"
+        | "downloads_publication_plan"
         | "downloads_publication_check"
         | "downloads_publication_target"
-        | "downloads_publication_verified" => crate::downloads::dispatch(command, root),
-        "downloads_transfer_start"
+        | "downloads_publication_verified"
+        | "downloads_transfer_start"
         | "downloads_transfer_poll"
         | "downloads_transfer_pause"
         | "downloads_transfer_cancel"
@@ -343,7 +348,8 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             if !video_id(id) {
                 return Err("Invalid video identity.".into());
             }
-            let mut url = Url::parse("https://www.youtube.com/oembed").unwrap();
+            let mut url = Url::parse("https://www.youtube.com/oembed")
+                .map_err(|_| "Invalid video metadata endpoint.")?;
             url.query_pairs_mut()
                 .append_pair("url", &format!("https://www.youtube.com/watch?v={id}"))
                 .append_pair("format", "json");
@@ -411,7 +417,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 "https://sponsor.ajay.app/api/skipSegments/{}",
                 &prefix[..4]
             ))
-            .unwrap();
+            .map_err(|_| "Invalid SponsorBlock endpoint.")?;
             url.query_pairs_mut().append_pair("service", "YouTube")
                 .append_pair("categories", r#"["sponsor","selfpromo","interaction","intro","outro","preview","music_offtopic","filler","poi_highlight"]"#)
                 .append_pair("actionTypes", r#"["skip","poi"]"#);
@@ -466,8 +472,8 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             segments.sort_by(|a, b| {
                 a["start"]
                     .as_f64()
-                    .unwrap()
-                    .total_cmp(&b["start"].as_f64().unwrap())
+                    .unwrap_or_default()
+                    .total_cmp(&b["start"].as_f64().unwrap_or_default())
             });
             Ok(json!(segments))
         }
@@ -625,7 +631,7 @@ mod tests {
             let mut cache = CATALOGS.get().unwrap().lock().unwrap();
             assert!(cache.len() <= 3);
             for entry in cache.iter_mut().filter(|entry| entry.root == root) {
-                entry.at = Instant::now() - Duration::from_secs(91);
+                entry.at = Instant::now().checked_sub(Duration::from_secs(91)).unwrap();
             }
         }
         assert_eq!(cached_catalog(&root, "00000000003"), None);
@@ -636,7 +642,7 @@ mod tests {
         let mut command = json!({"op":"media_plan","itag":137,"catalog":{"streams":[
             {"itag":137,"kind":"video","mimeType":"video/mp4","url":"https://r1.googlevideo.com/video","label":"1080p · MP4"},
             {"itag":139,"kind":"audio","mimeType":"audio/mp4","url":"https://r1.googlevideo.com/low-audio","bitrate":48000},
-            {"itag":140,"kind":"audio","mimeType":"audio/mp4","url":"https://r1.googlevideo.com/audio","bitrate":128000}
+            {"itag":140,"kind":"audio","mimeType":"audio/mp4","url":"https://r1.googlevideo.com/audio","bitrate":128_000}
         ]}});
         let plan = dispatch(&command, "").unwrap();
         assert_eq!(plan["parts"][0]["itag"], 137);

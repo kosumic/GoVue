@@ -56,7 +56,7 @@ fn item(value: &Value) -> Result<Item> {
         author: clean(value["author"].as_str().unwrap_or("")),
         position: value["position"]
             .as_f64()
-            .filter(|n| n.is_finite() && *n >= 0.0 && *n <= 604800.0)
+            .filter(|n| n.is_finite() && *n >= 0.0 && *n <= 604_800.0)
             .unwrap_or(0.0),
         playlist_id: value["playlistId"]
             .as_str()
@@ -91,6 +91,10 @@ fn snapshot(library: &Library, current: &str, next: Option<&Item>) -> Value {
         "hasNext":if library.enabled {if library.loop_mode==3 {library.queue.iter().any(|i|i.video_id!=current)}else{index.map_or(!library.queue.is_empty(),|i|i+1<library.queue.len())}}else{page_current&&library.page.next.is_some()},"next":next})
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep each operation and its shared state validation and persistence in one dispatcher."
+)]
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     if command["op"] == "player_chapter" {
         let starts = command["starts"]
@@ -101,7 +105,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             .iter()
             .map(|v| {
                 v.as_f64()
-                    .filter(|n| n.is_finite() && (0.0..604800.0).contains(n))
+                    .filter(|n| n.is_finite() && (0.0..604_800.0).contains(n))
                     .ok_or("Invalid chapter position.")
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -141,7 +145,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     if command["op"] == "player_live_seek" {
         let offset = command["offset"]
             .as_f64()
-            .filter(|v| v.is_finite() && (0.0..=604800.0).contains(v))
+            .filter(|v| v.is_finite() && (0.0..=604_800.0).contains(v))
             .ok_or("The live position is not available yet.")?;
         let target = command["target"]
             .as_f64()
@@ -150,10 +154,14 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         return Ok(json!((offset - target).max(0.0)));
     }
     if command["op"] == "player_mini" {
-        let _guard = WRITES.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = WRITES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         return mini::layout(command, root);
     }
-    let _lock = WRITES.lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = WRITES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let op = string(command, "op")?;
     let current = command["videoId"].as_str().unwrap_or("");
     let mut library = load(root);
@@ -272,16 +280,20 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     .position(|item| item.video_id == id)
                     .ok_or("This queue item was removed.")?
             } else {
-                command["from"].as_u64().ok_or("Invalid queue position.")? as usize
+                usize::try_from(command["from"].as_u64().ok_or("Invalid queue position.")?)
+                    .map_err(|_| "Invalid queue position.")?
             };
             let to = if let Some(offset) = command["offset"]
                 .as_i64()
                 .filter(|offset| (-500..=500).contains(offset))
             {
-                (from as i64 + offset).clamp(0, library.queue.len().saturating_sub(1) as i64)
-                    as usize
+                from.saturating_add_signed(
+                    isize::try_from(offset).map_err(|_| "Invalid queue offset.")?,
+                )
+                .min(library.queue.len().saturating_sub(1))
             } else {
-                command["to"].as_u64().ok_or("Invalid queue position.")? as usize
+                usize::try_from(command["to"].as_u64().ok_or("Invalid queue position.")?)
+                    .map_err(|_| "Invalid queue position.")?
             };
             if from >= library.queue.len() || to >= library.queue.len() {
                 return Err("Queue position changed.".into());
@@ -351,14 +363,14 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 } else if library.page.video_id == current
                     && (op != "player_ended" || library.page.autoplay)
                 {
-                    next = library.page.next.clone();
+                    next.clone_from(&library.page.next);
                 }
             }
         }
         "player_position" => {
             let position = command["position"]
                 .as_f64()
-                .filter(|n| n.is_finite() && *n >= 0.0 && *n <= 604800.0)
+                .filter(|n| n.is_finite() && *n >= 0.0 && *n <= 604_800.0)
                 .ok_or("Invalid playback position.")?;
             if let Some(entry) = library.history.iter_mut().find(|i| i.video_id == current) {
                 entry.position = position;

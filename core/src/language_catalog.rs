@@ -308,7 +308,7 @@ pub(super) fn choices(command: &Value) -> Result<Value> {
         })
         .collect();
     let sections = if key.is_empty() {
-        use LanguageId::*;
+        use LanguageId::{Ar, De, En, Es, Fr, Hi, It, Ja, Ko, Pt, Ru, Zh};
         let common = [En, Es, Fr, De, Zh, Ja, Ko, It, Pt, Ar, Hi, Ru];
         let popular: Vec<_> = common
             .iter()
@@ -326,6 +326,6 @@ pub(super) fn choices(command: &Value) -> Result<Value> {
         vec![json!({"title":"Languages", "data":options})]
     };
     Ok(
-        json!({"selected":resolve(&request.selected), "sections":sections.into_iter().filter(|section| !section["data"].as_array().unwrap().is_empty()).collect::<Vec<_>>()}),
+        json!({"selected":resolve(&request.selected), "sections":sections.into_iter().filter(|section| section["data"].as_array().is_some_and(|data| !data.is_empty())).collect::<Vec<_>>()}),
     )
 }
