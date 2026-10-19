@@ -40,6 +40,30 @@ async function harness() {
 
 const nextPoll = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 180)); });
 
+test('branch creation switches to the saved copy once and ignores completion after navigation', async t => {
+  const env = await harness(); t.after(env.unmount);
+  const original = conversation('high', 'Answer', 'completed');
+  await act(() => { void env.chat().open('chat'); });
+  await env.reply('ai_chat_get', original);
+  let pending, duplicate;
+  await act(() => { pending = env.chat().branch('reply'); duplicate = env.chat().branch('reply'); });
+  assert.equal(await duplicate, undefined);
+  assert.equal(env.chat().loading, true);
+  assert.deepEqual(env.pending('ai_chat_branch').command, { op: 'ai_chat_branch', chatId: 'chat', messageId: 'reply' });
+  const branched = { ...original, id: 'branch', title: 'Branch of Fixture' };
+  await env.reply('ai_chat_branch', branched);
+  assert.equal((await pending).id, 'branch');
+  assert.equal(env.chat().conversation.id, 'branch');
+  assert.equal(env.chat().loading, false);
+  assert.equal(env.calls.some(entry => entry.command.op === 'ai_chat_send'), false);
+  await act(() => { pending = env.chat().branch('reply'); });
+  await act(() => env.chat().newChat());
+  await env.reply('ai_chat_branch', { ...branched, id: 'late-branch' });
+  assert.equal(await pending, undefined);
+  assert.equal(env.chat().conversation, null);
+  assert.equal(env.chat().loading, false);
+});
+
 test('messages sent during startup queue in order and streamed steering switches to the new reply', async t => {
   const env = await harness(); t.after(env.unmount);
   let first, followup, second;

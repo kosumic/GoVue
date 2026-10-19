@@ -42,6 +42,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const [chatVideoId, setChatVideoId] = useState(videoId);
+  const [contextChatId, setContextChatId] = useState<string | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState('');
   const [contextRetry, setContextRetry] = useState(0);
@@ -79,7 +80,13 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   const availableTranscript = chats.conversation?.transcript?.videoId === chatVideoId ? chats.conversation.transcript : null;
   const contextReady = !chatVideoId || (!contextLoading && !contextError && chats.conversation?.videoId === chatVideoId && !!availableTranscript);
   useEffect(() => { if (chats.conversation) setAttachment(chats.conversation.transcript); }, [chats.conversation?.id, chats.conversation?.transcript]);
-  useEffect(() => { if (visible) setChatVideoId(videoId ?? chats.conversation?.videoId ?? null); else setPage('chat'); }, [visible, videoId]);
+  useEffect(() => {
+    if (visible) {
+      const id = videoId ?? chats.conversation?.videoId ?? null;
+      setChatVideoId(id);
+      setContextChatId(id && chats.conversation?.videoId === id ? chats.conversation.id : null);
+    } else setPage('chat');
+  }, [visible, videoId]);
   useEffect(() => {
     setContextTranscript(null);
     if (!visible || !chatVideoId) { setContextLoading(false); setContextError(''); return; }
@@ -87,7 +94,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
     contextAbort.current = controller;
     setContextLoading(true); setContextError(''); setAttachment(null); setPrompt('');
     void (async () => {
-      const chat = await chats.openVideo(chatVideoId, transcript?.videoId === chatVideoId ? transcript.title : undefined);
+      const chat = await chats.openVideo(chatVideoId, transcript?.videoId === chatVideoId ? transcript.title : undefined, undefined, contextChatId ?? undefined);
       if (!chat || controller.signal.aborted) return;
       const trackId = chat.transcript?.trackId;
       let data = transcript?.videoId === chatVideoId && (!trackId || transcript.trackId === trackId) ? transcript : null;
@@ -97,13 +104,13 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
         data = cached && (!trackId || cached.trackId === trackId) ? cached : await extractTranscript(chatVideoId, trackId ?? 'default', controller.signal);
       }
       if (controller.signal.aborted) return;
-      await chats.openVideo(chatVideoId, data.title, { videoId: data.videoId, trackId: data.trackId, title: data.title, language: data.language });
+      await chats.openVideo(chatVideoId, data.title, { videoId: data.videoId, trackId: data.trackId, title: data.title, language: data.language }, chat.id);
       if (!controller.signal.aborted) { setContextTranscript(data); setContextLoading(false); }
     })().catch(error => {
       if (!controller.signal.aborted) { setContextError(error instanceof Error ? error.message : 'Could not load this video’s transcript.'); setContextLoading(false); }
     });
     return () => { controller.abort(); if (contextAbort.current === controller) contextAbort.current = null; };
-  }, [visible, chatVideoId, contextRetry]);
+  }, [visible, chatVideoId, contextChatId, contextRetry]);
 
   function close() { Keyboard.dismiss(); onClose(); }
   function closeFind() { Keyboard.dismiss(); setFind(null); }
@@ -112,7 +119,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
     if (page === 'practice' && next === 'chat') void chats.refreshGames().catch(() => {});
     setPage(next);
   }
-  function newChat() { contextAbort.current?.abort(); setChatVideoId(null); chats.newChat(); setNewChatVersion(value => value + 1); setPrompt(''); setAttachment(null); showPage('chat'); }
+  function newChat() { contextAbort.current?.abort(); setChatVideoId(null); setContextChatId(null); chats.newChat(); setNewChatVersion(value => value + 1); setPrompt(''); setAttachment(null); showPage('chat'); }
   async function choose(id: string, model: string) {
     const p = targets.find(p => p.id === id);
     if (!p?.connected || !p.enabled || p.needsReauth) { showPage('providers'); return; }
@@ -128,17 +135,26 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
     setPrompt('');
     const saved = chats.history.find(chat => chat.id === id);
     if (saved?.videoId) {
-      setChatVideoId(saved.videoId); setContextRetry(value => value + 1); showPage('chat');
+      setChatVideoId(saved.videoId); setContextChatId(id); setContextRetry(value => value + 1); showPage('chat');
       if (query) setFind({ chatId: id, query });
       return;
     }
     const chat = await chats.open(id);
     if (!chat) return;
     setChatVideoId(chat.videoId ?? chat.transcript?.videoId ?? null);
+    setContextChatId(chat.id);
     setAttachment(chat.transcript);
     if (targets.some(p => p.id === chat.providerId)) await ai.select(chat.providerId);
     showPage('chat');
     if (query) setFind({ chatId: chat.id, query });
+  }
+  async function branchChat(messageId: string) {
+    const chat = await chats.branch(messageId);
+    if (!chat) return;
+    contextAbort.current?.abort();
+    setChatVideoId(chat.videoId ?? chat.transcript?.videoId ?? null);
+    setContextChatId(chat.id);
+    setPrompt(''); setAttachment(chat.transcript); showPage('chat');
   }
   function deleteChat(chat: SavedChat) {
     Alert.alert('Delete chat?', chat.title, [{ text: 'Keep', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { if (chats.conversation?.id === chat.id) newChat(); void chats.remove(chat.id).then(() => chatViewports.current.delete(chat.id)); } }]);
@@ -191,6 +207,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
             connected={!!selected?.connected && !!selected?.enabled && !selected?.needsReauth && !!selectedModel && !ai.busy} loading={!ai.ready || !chats.ready || chats.loading || contextLoading} contextReady={contextReady}
             reasoning={reasoningName(chats.reasoningEffort ?? savedReasoning)} providerId={selected?.id} model={selectedModel}
             onSend={sendMessage} onRetry={messageId => { if (contextReady && selected?.connected && selected.enabled && !selected.needsReauth && selectedModel) void chats.send(selected.id, '', attachment, undefined, true, undefined, undefined, messageId); }}
+            onBranch={messageId => { void branchChat(messageId); }}
             onAttach={attachCurrent} onDetach={chatVideoId ? undefined : () => setAttachment(null)} onOpenTranscript={() => { Keyboard.dismiss(); setTranscriptVisible(true); }} onSummarize={summarize} onModels={() => showPage('models')} />
         </> : page === 'practice' ? <GamePractice onBeforeAudio={onBeforeGameAudio} onOpenSource={onOpenVideo} /> : page === 'models' ? <AiModels ai={ai} selectedId={selected?.id} selectedModel={selectedModel} onSelect={(id, model) => { void choose(id, model); }} onManage={() => showPage('providers')} /> : <AiProviders ai={ai} onUsage={() => { Keyboard.dismiss(); setUsageVisible(true); }} />}
         </View>

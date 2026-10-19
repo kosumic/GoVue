@@ -63,7 +63,7 @@ const reply = blocks => ({ id: 'reply', role: 'assistant', content: 'BeforeAfter
 const props = (message, busy = false) => ({
   chat: { conversation: { id: 'chat', messages: [message] }, busy, settingsBusy: false, error: '', gameAction: noop, stop: noop },
   draft: '', onDraftChange: noop, attachment: null, availableTranscript: null, connected: true, loading: false, voiceEnabled: false,
-  onSend: noop, onRetry: noop, onAttach: noop, onOpenTranscript: noop, onSummarize: noop, onModels: noop, reasoning: 'Low',
+  onSend: noop, onRetry: noop, onBranch: noop, onAttach: noop, onOpenTranscript: noop, onSummarize: noop, onModels: noop, reasoning: 'Low',
 });
 async function render(t, message, busy = false) {
   let root;
@@ -72,6 +72,27 @@ async function render(t, message, busy = false) {
   return { root, update: (message, busy) => act(async () => root.update(h(AiChat, props(message, busy)))) };
 }
 const labels = root => root.root.findAllByType('Text').map(node => node.children.join(''));
+
+test('branch action targets its reply while offline and waits for streaming or pending writes', async t => {
+  const branched = [];
+  const value = { ...props(reply([text('answer', 'Answer')])), connected: false, onBranch: id => branched.push(id) };
+  let root;
+  await act(async () => { root = create(h(AiChat, value)); });
+  t.after(() => act(async () => root.unmount()));
+  const button = () => root.root.findByProps({ accessibilityLabel: 'Branch in new chat' });
+  assert.equal(button().props.disabled, false);
+  await act(() => button().props.onPress());
+  assert.deepEqual(branched, ['reply']);
+  for (const changes of [
+    { loading: true },
+    { chat: { ...value.chat, busy: true } },
+    { chat: { ...value.chat, settingsBusy: true } },
+    { chat: { ...value.chat, conversation: { ...value.chat.conversation, messages: [{ ...reply([]), status: 'streaming' }] } } },
+  ]) {
+    await act(() => root.update(h(AiChat, { ...value, ...changes })));
+    assert.equal(button().props.disabled, true);
+  }
+});
 
 test('sending while busy queues without stopping and undelivered messages can be resent after stop', async t => {
   let sends = 0, stops = 0;

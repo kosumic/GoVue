@@ -84,6 +84,11 @@ Reasoning changes made during a response apply to the next message. Each respons
 has a regenerate button beside its copy action. Regenerating an earlier response
 replaces that response and all later messages using its original prompt.
 
+Tap **Branch in new chat** (the branch icon beside regenerate) to explore a
+different direction from any finished response. The new saved chat includes
+messages through that response and keeps the model, reasoning setting, and video
+transcript. The original conversation stays intact, and both appear in the drawer.
+
 You can send another message while the assistant is working. It appears in a
 queue and steers the current work after the next batch of tool results, before
 the model continues. If the assistant finishes without a tool call, queued

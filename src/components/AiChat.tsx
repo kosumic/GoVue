@@ -34,7 +34,7 @@ function UserPrompt({ content, onEdit, disabled }: { content: string; onEdit: ()
   </View>;
 }
 
-const Message = memo(function Message({ message, last, busy, onRetry, retryDisabled, onEdit, editDisabled, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio, reading, readDisabled, onRead }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; retryDisabled: boolean; onEdit: () => void; editDisabled: boolean; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void; reading: boolean; readDisabled: boolean; onRead: () => void }) {
+const Message = memo(function Message({ message, last, busy, onRetry, retryDisabled, onBranch, branchDisabled, onEdit, editDisabled, reduceMotion, chatId, activeGameId, onActiveGame, gamesEnabled, onGameAction, onBeforeGameAudio, reading, readDisabled, onRead }: { message: ChatMessage; last: boolean; busy: boolean; onRetry: () => void; retryDisabled: boolean; onBranch: () => void; branchDisabled: boolean; onEdit: () => void; editDisabled: boolean; reduceMotion: boolean; chatId: string; activeGameId: string | null; onActiveGame: (id: string | null) => void; gamesEnabled: boolean; onGameAction: GameAction; onBeforeGameAudio?: () => Promise<void> | void; reading: boolean; readDisabled: boolean; onRead: () => void }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const entrance = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
@@ -64,7 +64,7 @@ const Message = memo(function Message({ message, last, busy, onRetry, retryDisab
       {message.games?.filter(game => !linkedGames.has(game.id)).map(gameCard)}
       {message.error && <Text accessibilityRole="alert" style={styles.error}>{message.error}</Text>}
       {message.status === 'stopped' && !message.error && <Text style={styles.muted}>Response stopped</Text>}
-      <AiMessageDetails message={message} last={last} retryDisabled={retryDisabled} onRetry={onRetry} reading={reading} readDisabled={readDisabled} onRead={onRead} />
+      <AiMessageDetails message={message} last={last} retryDisabled={retryDisabled} onRetry={onRetry} branchDisabled={branchDisabled} onBranch={onBranch} reading={reading} readDisabled={readDisabled} onRead={onRead} />
     </>}
   </Animated.View>;
 });
@@ -99,7 +99,7 @@ function ChatThread({ chatId, messages, viewports, jumpRequest, reduceMotion, em
   </ChatExpansionContext.Provider>;
 }
 
-export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, viewports, findQuery, onCloseFind = () => {}, onBeforeGameAudio, onSend, onRetry, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
+export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, viewports, findQuery, onCloseFind = () => {}, onBeforeGameAudio, onSend, onRetry, onBranch, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
   chat: ChatController;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -115,6 +115,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   onBeforeGameAudio?: () => Promise<void> | void;
   onSend: (editMessageId?: string) => void | Promise<boolean>;
   onRetry: (messageId: string) => void;
+  onBranch: (messageId: string) => void;
   onAttach: () => void;
   onDetach?: () => void;
   onOpenTranscript: () => void;
@@ -181,6 +182,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
           </View> : <Pressable accessibilityRole="button" onPress={onModels} style={styles.connect}><Text style={styles.connectText}>Choose a model</Text></Pressable>}
         </View>}
         renderMessage={(item, index) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={() => onRetry(item.id)} retryDisabled={chat.busy || loading || chat.settingsBusy || !connected || !contextReady} onEdit={() => edit(item)} editDisabled={chat.busy || loading || chat.settingsBusy} reduceMotion={reduceMotion}
+          onBranch={() => onBranch(item.id)} branchDisabled={chat.busy || loading || chat.settingsBusy || voice.active}
           chatId={chat.conversation?.id ?? ''} activeGameId={activeGameId} onActiveGame={setActiveGameId} gamesEnabled={voiceEnabled && contextReady && !loading && !voice.active}
           onGameAction={chat.gameAction} onBeforeGameAudio={beforeGameAudio} reading={speech.active === item.id} readDisabled={!readEnabled}
           onRead={() => { if (speech.active === item.id) void speech.stop(); else void speech.speak(item.id, item.content); }} />}

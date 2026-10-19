@@ -21,12 +21,18 @@ async function harness(videoId, restore = async id => transcript(id)) {
     switch (command.op) {
       case 'ai_chats': return { chats: [...saved.values()] };
       case 'ai_chat_video_open': {
-        const id = `video_${command.videoId}`;
+        const id = command.chatId ?? `video_${command.videoId}`;
         const chat = saved.get(id) ?? { id, videoId: command.videoId, title: command.title || 'Video chat', providerId: provider.id, providerLabel: provider.label, model: provider.model, messages: [], transcript: null, activeTask: null };
         if (command.transcript) chat.transcript = transcript(command.videoId);
         saved.set(id, chat); return structuredClone(chat);
       }
       case 'ai_chat_get': return structuredClone(saved.get(command.chatId));
+      case 'ai_chat_branch': {
+        const source = saved.get(command.chatId);
+        const chat = structuredClone({ ...source, id: `branch_${saved.size}`, title: `Branch of ${source.title}`,
+          messages: source.messages.slice(0, source.messages.findIndex(message => message.id === command.messageId) + 1) });
+        saved.set(chat.id, chat); return structuredClone(chat);
+      }
       case 'ai_chat_model': {
         const chat = saved.get(command.chatId); chat.model = provider.model; return structuredClone(chat);
       }
@@ -144,4 +150,34 @@ test('a late transcript cannot attach to a replacement video chat', async t => {
   assert.deepEqual(env.opened, [second]);
   assert.equal(env.calls.filter(c => c.op === 'ai_chat_video_open' && c.transcript?.videoId === first).length, 0);
   assert.equal(env.calls.filter(c => c.op === 'ai_chat_send').length, 0);
+});
+
+test('video branches keep their own history, transcript, and identity when reopened', async t => {
+  const env = await harness(first); t.after(env.unmount);
+  const sourceId = `video_${first}`;
+  const source = env.saved.get(sourceId);
+  source.messages = ['First question', 'First answer', 'Later question', 'Later answer'].map((content, index) => ({
+    id: `message_${index}`, role: index % 2 ? 'assistant' : 'user', status: 'completed', content,
+  }));
+  await act(async () => env.props().chat.open(sourceId));
+  await act(async () => env.props().onBranch('message_1'));
+  const branchId = env.props().chat.conversation.id;
+  assert.notEqual(branchId, sourceId);
+  assert.equal(env.props().contextReady, true);
+  assert.equal(env.props().attachment.videoId, first);
+  assert.equal(env.props().chat.conversation.messages.length, 2);
+  assert.equal(env.saved.get(sourceId).messages.length, 4);
+  const drawer = () => env.root.root.findByType('AiHistoryDrawer');
+  assert.ok(drawer().props.chats.some(chat => chat.id === branchId));
+  await act(async () => drawer().props.onOpen(sourceId));
+  assert.equal(env.props().chat.conversation.id, sourceId);
+  assert.equal(env.props().chat.conversation.messages.length, 4);
+  await act(async () => drawer().props.onOpen(branchId));
+  assert.equal(env.props().chat.conversation.id, branchId);
+  assert.equal(env.props().chat.conversation.messages.length, 2);
+  await env.render({ visible: false });
+  await env.render({ visible: true });
+  assert.equal(env.props().chat.conversation.id, branchId);
+  assert.equal(env.props().contextReady, true);
+  assert.equal(env.calls.filter(command => command.op === 'ai_chat_send').length, 0);
 });

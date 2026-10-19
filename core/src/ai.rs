@@ -2072,6 +2072,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         | "ai_chat_find"
         | "ai_chat_update"
         | "ai_chat_get"
+        | "ai_chat_branch"
         | "ai_chat_delete"
         | "ai_chat_send"
         | "ai_chat_reasoning"

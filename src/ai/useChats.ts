@@ -16,7 +16,7 @@ export type ChatBlock =
 export type ChatTranscript = { videoId: string; trackId: string; title: string; language: string };
 export type QueuedMessage = { id: string; content: string };
 export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; games?: LearningGame[]; blocks?: ChatBlock[]; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; usageDetails?: MessageUsageDetails; model?: string; modelName?: string; providerLabel?: string; completedAt?: number };
-export type Conversation = { id: string; videoId?: string | null; title: string; pinned?: boolean; archived?: boolean; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null; pendingMessages?: QueuedMessage[] };
+export type Conversation = { id: string; branchedFrom?: { chatId: string; messageId: string }; videoId?: string | null; title: string; pinned?: boolean; archived?: boolean; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null; pendingMessages?: QueuedMessage[] };
 export type SavedChat = Pick<Conversation, 'id' | 'videoId' | 'title' | 'pinned' | 'archived' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string; searchMatch?: ChatSearchHit | null };
 type Started = { taskId: string; conversation: Conversation };
 
@@ -31,6 +31,7 @@ export function useChats(visible: boolean, contextId: string) {
   const reasoningDraft = useRef<string | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const settingsPending = useRef(false);
+  const branching = useRef(false);
   const reasoningRevision = useRef(0);
   const starting = useRef<Promise<Started> | null>(null);
   const current = useRef<Conversation | null>(null);
@@ -175,7 +176,7 @@ export function useChats(visible: boolean, contextId: string) {
     return work;
   }
   async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false, focusGameId?: string, editMessageId?: string, retryMessageId?: string, queuedMessageId?: string) {
-    if (settingsPending.current) return false;
+    if (settingsPending.current || branching.current) return false;
     if (sending.current) return !retry && !editMessageId && !retryMessageId && !intent && !focusGameId && !queuedMessageId ? queue(prompt) : false;
     cancel(!!editMessageId || !!retryMessageId); const version = epoch.current;
     sending.current = true; setBusy(true); setError('');
@@ -241,8 +242,27 @@ export function useChats(visible: boolean, contextId: string) {
     } catch (e) { if (mounted.current && version === epoch.current) setError(e instanceof Error ? e.message : 'Could not open this chat.'); }
     finally { if (mounted.current && version === epoch.current) setLoading(false); }
   }
+  async function branch(messageId: string) {
+    const chat = current.current;
+    if (!chat || sending.current || settingsPending.current || branching.current || loading) return;
+    const version = epoch.current;
+    branching.current = true;
+    setError(''); setLoading(true);
+    try {
+      const saved = await aiRequest<Conversation>({ op: 'ai_chat_branch', chatId: chat.id, messageId });
+      if (mounted.current) void refresh().catch(() => {});
+      if (!mounted.current || version !== epoch.current || current.current?.id !== chat.id) return;
+      stop(); update(saved);
+      return saved;
+    } catch (e) {
+      if (mounted.current && version === epoch.current) setError(e instanceof Error ? e.message : 'Could not branch this chat.');
+    } finally {
+      branching.current = false;
+      if (mounted.current && version === epoch.current) setLoading(false);
+    }
+  }
   async function setReasoning(effort: string) {
-    if (settingsPending.current) return false;
+    if (settingsPending.current || branching.current) return false;
     const version = epoch.current;
     settingsPending.current = true;
     setSettingsBusy(true); setError('');
@@ -260,11 +280,11 @@ export function useChats(visible: boolean, contextId: string) {
     } catch (e) { if (mounted.current && version === epoch.current) setError(e instanceof Error ? e.message : 'Could not save reasoning.'); return false; }
     finally { settingsPending.current = false; if (mounted.current) setSettingsBusy(false); }
   }
-  async function openVideo(videoId: string, title?: string, transcript?: ChatTranscript) {
+  async function openVideo(videoId: string, title?: string, transcript?: ChatTranscript, chatId?: string) {
     stop(); const version = epoch.current;
     setError(''); setLoading(true);
     try {
-      const chat = await aiRequest<Conversation>({ op: 'ai_chat_video_open', videoId, ...(title ? { title } : {}), ...(transcript ? { transcript: { videoId: transcript.videoId, trackId: transcript.trackId } } : {}) });
+      const chat = await aiRequest<Conversation>({ op: 'ai_chat_video_open', videoId, ...(chatId ? { chatId } : {}), ...(title ? { title } : {}), ...(transcript ? { transcript: { videoId: transcript.videoId, trackId: transcript.trackId } } : {}) });
       if (!mounted.current || version !== epoch.current) return;
       update(chat);
       void refresh().catch(() => {});
@@ -323,6 +343,6 @@ export function useChats(visible: boolean, contextId: string) {
     if (previousContext.current === contextId) return;
     previousContext.current = contextId; stop();
   }, [contextId]);
-  return { conversation, history, busy, loading, ready, error, settingsBusy, gameAction, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, openVideo, selectModel, remove, change, newChat, refresh, refreshGames };
+  return { conversation, history, busy, loading, ready, error, settingsBusy, gameAction, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, branch, openVideo, selectModel, remove, change, newChat, refresh, refreshGames };
 }
 export type ChatController = ReturnType<typeof useChats>;
