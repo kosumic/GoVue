@@ -13,6 +13,27 @@ installs CocoaPods dependencies, and compiles an unsigned arm64 release app.
 status check. Android APK/lint reports and the unsigned iOS app are retained for
 seven days. The unsigned iOS artifact is for compile validation.
 
+The manual `Build Android APK` workflow follows Whip's release build workflow.
+Run it from Actions with a tag matching the versions in `package.json` and
+`app.json`, for example `v0.1.0`. It generates the native Android project, builds a
+standalone `arm64-v8a` release APK with embedded JavaScript, and uploads
+`govue-arm64.apk` and its SHA-256 checksum as a `govue-arm64-apk` artifact. It also
+creates or updates the GitHub Release for that tag and replaces its APK/checksum
+assets. New tags point to the workflow's selected commit.
+
+After Android succeeds, the workflow generates the Rust XCFramework and iOS
+project on Apple Silicon, installs CocoaPods dependencies outside Nix, and
+compiles an unsigned arm64 release app with embedded JavaScript. The
+`govue-ios-unsigned-compile-only` artifact contains the app ZIP for compile
+validation; it requires signing before installation on a device. The manual
+workflow retains its artifacts for 14 days, while ordinary CI retains them for
+seven days.
+
+The release APK currently uses Expo's development signing key, matching local
+release builds. Production Android signing is not configured. This workflow
+requires no signing secrets or EAS account, and the iOS app is only uploaded as
+an Actions artifact.
+
 Dependabot updates are squash-merged after the entire CI workflow succeeds.
 TypeScript stays within Expo SDK 57's supported `~6.0.3` range; update its
 Dependabot bound when upgrading Expo.

@@ -1,0 +1,182 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to create or update (for example, v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: production
+
+jobs:
+  build:
+    name: Build release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Free disk space for Android build
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/share/powershell /opt/ghc
+          df -h /
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Validate release tag against app version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const { expo } = JSON.parse(readFileSync('app.json', 'utf8'));
+          assert.equal(expo.version, version, 'app.json and package.json versions must match');
+          assert.equal(process.env.RELEASE_TAG.replace(/^v/, ''), version,
+            `Release tag must match version ${version}`);
+          NODE
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+
+      # Enter Nix before generating outputs so path:. does not copy them into
+      # the Nix store. Expo's generated release variant uses the development key.
+      - name: Generate native project and build arm64 release APK
+        run: |
+          nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
+            npm ci --include=dev
+            npm run core:android
+            npx expo prebuild --platform android --no-install
+            android/gradlew -p android :app:assembleRelease \
+              -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon
+          NIX_SHELL
+
+      - name: Package APK
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk govue-arm64.apk
+          sha256sum govue-arm64.apk > govue-arm64.apk.sha256
+
+      - name: Upload APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: govue-arm64-apk
+          path: |
+            govue-arm64.apk
+            govue-arm64.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Create GitHub Release and upload APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --generate-notes \
+              --latest \
+              --title "GoVue $RELEASE_TAG"
+          else
+            gh release edit "$RELEASE_TAG" \
+              --prerelease=false \
+              --latest \
+              --title "GoVue $RELEASE_TAG"
+          fi
+
+          gh release upload "$RELEASE_TAG" \
+            "govue-arm64.apk#GoVue APK (arm64-v8a)" \
+            "govue-arm64.apk.sha256#SHA-256 checksum" \
+            --clobber
+
+  build-ios:
+    name: Compile unsigned iOS app
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Report Apple toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Generate Rust XCFramework and iOS project
+        id: native
+        run: |
+          test "$(uname -m)" = arm64
+          nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
+            npm ci --include=dev
+            npm run prebuild:ios -- --no-install
+            printf "pod=%s\n" "$(command -v pod)" >> "$GITHUB_OUTPUT"
+          NIX_SHELL
+
+      # CocoaPods and Xcode run outside Nix's compiler/SDK environment.
+      - name: Install native dependencies
+        env:
+          POD_COMMAND: ${{ steps.native.outputs.pod }}
+        run: |
+          "$POD_COMMAND" install --project-directory=ios
+
+      - name: Compile and validate unsigned iOS device app
+        run: |
+          xcodebuild -quiet \
+            -workspace ios/GoVue.xcworkspace -scheme GoVue \
+            -configuration Release -sdk iphoneos -destination generic/platform=iOS \
+            -derivedDataPath "$RUNNER_TEMP/GoVueDerivedData" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES FORCE_BUNDLING=1 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+            AD_HOC_CODE_SIGNING_ALLOWED=NO build
+          app_path="$RUNNER_TEMP/GoVueDerivedData/Build/Products/Release-iphoneos/GoVue.app"
+          test -s "$app_path/main.jsbundle"
+          test "$(lipo -archs "$app_path/GoVue")" = arm64
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$app_path" "$RUNNER_TEMP/govue-ios-unsigned-compile-only.app.zip"
+
+      - name: Upload compile-only iOS artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: govue-ios-unsigned-compile-only
+          path: ${{ runner.temp }}/govue-ios-unsigned-compile-only.app.zip
+          if-no-files-found: error
+          retention-days: 14
