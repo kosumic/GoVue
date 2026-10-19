@@ -386,6 +386,12 @@ and browser bundles are ignored. Keep persistent native configuration in
 [modules/govue-core](modules/govue-core/). Regenerate bindings with
 `npm run core:android` or `npm run core:ios`.
 
+The app version comes from `package.json` through [app.config.js](app.config.js),
+including Android, iOS, About, and diagnostics. Bump it with
+`npm version patch --no-git-tag-version` (or `minor`, `major`, or an explicit
+version). Release tags must match that version; `npm run check:app-version`
+checks the Expo configuration.
+
 Android builds `expo-video` from source to include `scripts/patch-video.ts`;
 keep its postinstall patch and autolinking override together.
 

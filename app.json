@@ -3,7 +3,6 @@
     "name": "GoVue",
     "slug": "govue",
     "icon": "./assets/icon.png",
-    "version": "0.1.0",
     "scheme": ["govue", "lingoplay"],
     "orientation": "default",
     "userInterfaceStyle": "automatic",

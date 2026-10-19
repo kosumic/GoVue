@@ -40,6 +40,7 @@ import { haptic } from '../player/Haptics';
 import { useReducedMotion } from '../player/useReducedMotion';
 import { AiSettings } from './AiSettings';
 import { LanguageSettings } from './LanguageSettings';
+import { version as appVersion } from '../../package.json';
 
 type Node = {
   id?: string;
@@ -117,7 +118,7 @@ export function ExtensionSettings({
       'govue-diagnostics.json',
       {
         app: 'GoVue',
-        version: '0.1.0',
+        version: appVersion,
         core: await coreRequest({ op: 'info' }),
         transport: await coreRequest({ op: 'media_transport_status' }),
       },
@@ -380,7 +381,7 @@ export function ExtensionSettings({
               </View>
               <Text style={s.name}>GoVue</Text>
               <Text style={[s.detail, { marginTop: 0 }]}>
-                0.1.0 · LiTube port
+                {appVersion} · LiTube port
               </Text>
             </View>
             <SheetRow

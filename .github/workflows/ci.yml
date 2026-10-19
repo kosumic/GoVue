@@ -68,6 +68,9 @@ jobs:
       - name: Check types
         run: npm run typecheck
 
+      - name: Check app version configuration
+        run: npm run check:app-version
+
       - name: Test JavaScript and browser behavior
         run: npm test
 

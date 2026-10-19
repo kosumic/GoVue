@@ -13,10 +13,18 @@ installs CocoaPods dependencies, and compiles an unsigned arm64 release app.
 status check. Android APK/lint reports and the unsigned iOS app are retained for
 seven days. The unsigned iOS artifact is for compile validation.
 
+The app version lives in `package.json`. Like Whip, `app.config.js` reads it
+through `scripts/app-version.cjs` so Expo generates both Android and iOS with
+the same version. `npm run check:app-version` validates the resolved Expo
+configuration and rejects version overrides in `app.json`; it runs in CI,
+`npm run check`, and release builds. Use `npm version patch --no-git-tag-version`
+(or `minor`, `major`, or an explicit version) to update the package and lockfile.
+
 The manual `Build Android APK` workflow follows Whip's release build workflow.
-Run it from Actions with a tag matching the versions in `package.json` and
-`app.json`, for example `v0.1.0`. It generates the native Android project, builds a
-standalone `arm64-v8a` release APK with embedded JavaScript, and uploads
+Run it from Actions with a tag matching `package.json`, for example `v0.1.0`.
+The shared version helper rejects mismatched tags. The workflow generates the
+native Android project, builds a standalone `arm64-v8a` release APK with embedded
+JavaScript, and uploads
 `govue-arm64.apk` and its SHA-256 checksum as a `govue-arm64-apk` artifact. It also
 creates or updates the GitHub Release for that tag and replaces its APK/checksum
 assets. New tags point to the workflow's selected commit.
