@@ -5,31 +5,6 @@ import MediaPlayer
 import UIKit
 import WebKit
 
-private final class NativeMediaHttp: MediaHttp, @unchecked Sendable {
-  func fetchRange(url: String, userAgent: String, origin: String, method: String, start: UInt64, end: UInt64) -> MediaRangeReply {
-    guard end >= start, end - start < 1048576, var components = URLComponents(string: url), components.scheme == "https", components.user == nil, components.password == nil, components.port == nil || components.port == 443 else { return MediaRangeReply(status:0,body:Data(),location:nil) }
-    // Keep signed query bytes unchanged when appending the bounded range.
-    let query = components.percentEncodedQuery ?? ""
-    components.percentEncodedQuery = query + (query.isEmpty ? "" : "&") + "range=\(start)-\(end)"
-    guard let address = components.url else { return MediaRangeReply(status:0,body:Data(),location:nil) }
-    var request = URLRequest(url:address)
-    request.httpMethod = method
-    if method == "POST" { request.httpBody = Data([0x78,0]) }
-    request.setValue("identity",forHTTPHeaderField:"Accept-Encoding")
-    request.setValue(userAgent,forHTTPHeaderField:"User-Agent")
-    request.setValue(origin,forHTTPHeaderField:"Origin")
-    request.setValue(origin+"/",forHTTPHeaderField:"Referer")
-    let signal = DispatchSemaphore(value:0)
-    var reply = MediaRangeReply(status:0,body:Data(),location:nil)
-    let task = BoundedHttp(request: request, limit: Int(end - start + 2), timeout: 12) { status, data, location in
-      reply = MediaRangeReply(status: Int32(status), body: data, location: location)
-      signal.signal()
-    }
-    if signal.wait(timeout: .now() + 15) == .timedOut { task.cancel(); return MediaRangeReply(status: 0, body: Data(), location: nil) }
-    return reply
-  }
-}
-
 public final class GoVueCoreModule: Module {
   private var pendingExport: FileExport?
   private var preparingExport = false
@@ -130,7 +105,9 @@ public final class GoVueCoreModule: Module {
       return String(data: try JSONSerialization.data(withJSONObject: keys), encoding: .utf8)!
     }
     OnCreate {
-      installMediaHttp(backend: NativeMediaHttp())
+      let mediaHttp = NativeMediaHttp()
+      installMediaHttp(backend: mediaHttp)
+      installMediaStreamHttp(backend: mediaHttp)
       installExtractionHttp(backend: NativeExtractionHttp())
       installAiPlatform(platform: NativeAiPlatform())
     }

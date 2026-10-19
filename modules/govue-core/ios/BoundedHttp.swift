@@ -2,7 +2,6 @@ import Foundation
 
 /// Platform byte transport only. Rust owns URL policy, media planning and caches.
 final class BoundedHttp: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-  private var session: URLSession?
   private var task: URLSessionDataTask?
   private let limit: Int
   private let prefixOnly: Bool
@@ -19,6 +18,7 @@ final class BoundedHttp: NSObject, URLSessionDataDelegate, @unchecked Sendable {
   private var rejectedResponse = false
 
   init(request: URLRequest, limit: Int, destination: URL? = nil, prefixOnly: Bool = false, timeout: TimeInterval = 15,
+       session: URLSession = NativeHttpSession.shared,
        responseHeaders: ((HTTPURLResponse) -> Void)? = nil,
        completion: @escaping (Int, Data, String?) -> Void) {
     self.limit = limit
@@ -27,16 +27,11 @@ final class BoundedHttp: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     self.completion = completion
     self.responseHeaders = responseHeaders
     super.init()
-    let configuration = URLSessionConfiguration.ephemeral
-    configuration.httpCookieStorage = nil
-    configuration.httpShouldSetCookies = false
-    configuration.urlCredentialStorage = nil
-    configuration.timeoutIntervalForRequest = timeout
-    configuration.timeoutIntervalForResource = timeout + 2
-    let queue = OperationQueue()
-    queue.maxConcurrentOperationCount = 1
-    session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
-    task = session?.dataTask(with: request)
+    var input = request
+    input.timeoutInterval = timeout
+    task = session.dataTask(with: input)
+    // URLSession retains this delegate until the task completes (iOS 15+).
+    task?.delegate = self
     task?.resume()
   }
 
@@ -64,18 +59,16 @@ final class BoundedHttp: NSObject, URLSessionDataDelegate, @unchecked Sendable {
       return
     }
     responseHeaders?(response)
-    do {
-      guard prefixOnly || response.expectedContentLength <= Int64(limit) else {
-        failed = true; completionHandler(.cancel); return
-      }
-      if let destination {
-        do {
-          guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
-            throw CocoaError(.fileWriteUnknown)
-          }
-          file = try FileHandle(forWritingTo: destination)
-        } catch { failed = true; completionHandler(.cancel); return }
-      }
+    guard prefixOnly || response.expectedContentLength <= Int64(limit) else {
+      failed = true; completionHandler(.cancel); return
+    }
+    if let destination {
+      do {
+        guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
+          throw CocoaError(.fileWriteUnknown)
+        }
+        file = try FileHandle(forWritingTo: destination)
+      } catch { failed = true; completionHandler(.cancel); return }
     }
     completionHandler(.allow)
   }
@@ -103,8 +96,6 @@ final class BoundedHttp: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     }
     completion((error == nil || rejectedResponse || prefixComplete) && !failed ? status : 0, body, location)
     body.removeAll()
-    session.finishTasksAndInvalidate()
     self.task = nil
-    self.session = nil
   }
 }
