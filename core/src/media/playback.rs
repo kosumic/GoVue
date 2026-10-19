@@ -1,6 +1,6 @@
 //! Playback choices and HLS byte-range playlists for YouTube's indexed files.
 //! Playlists and signed source addresses remain in the loopback proxy's memory.
-use super::{Result, media_url};
+use super::{Result, container, media_url};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 
@@ -20,6 +20,29 @@ pub(crate) fn indexed(stream: &Value) -> bool {
 }
 
 pub(crate) fn videos(catalog: &Value) -> Result<Vec<&Value>> {
+    let mut videos = video_formats(catalog)?;
+    videos.dedup_by_key(|s| (s["height"].as_u64(), s["fps"].as_u64()));
+    videos.truncate(16);
+    Ok(videos)
+}
+
+// Auto must retain a complete ladder inside the selected codec's adaptation
+// set. Deduplicating across codecs can leave VP9 with only 1440p/2160p while
+// AVC wins every smaller size, forcing a large first segment.
+pub(crate) fn adaptive_videos<'a>(catalog: &'a Value, selected: &Value) -> Result<Vec<&'a Value>> {
+    let family = codecs(selected)?.split('.').next();
+    let mut videos = video_formats(catalog)?;
+    videos.retain(|s| {
+        s["kind"] == "video"
+            && container(s) == container(selected)
+            && codecs(s).is_ok_and(|codec| codec.split('.').next() == family)
+    });
+    videos.dedup_by_key(|s| (s["height"].as_u64(), s["fps"].as_u64()));
+    videos.truncate(16);
+    Ok(videos)
+}
+
+fn video_formats(catalog: &Value) -> Result<Vec<&Value>> {
     if catalog["live"] == true {
         return Err("Resolution selection is unavailable for this live stream.".into());
     }
@@ -56,12 +79,19 @@ pub(crate) fn videos(catalog: &Value) -> Result<Vec<&Value>> {
             s["bitrate"].as_u64().unwrap_or(0),
         ))
     });
-    videos.dedup_by_key(|s| (s["height"].as_u64(), s["fps"].as_u64()));
-    videos.truncate(16);
     if videos.is_empty() {
         return Err("No playable video formats are available. Refresh the video.".into());
     }
     Ok(videos)
+}
+
+pub(crate) fn startup_height(videos: &[&Value]) -> u64 {
+    let heights = || videos.iter().filter_map(|stream| stream["height"].as_u64());
+    heights()
+        .filter(|height| *height <= 480)
+        .max()
+        .or_else(|| heights().min())
+        .unwrap_or(0)
 }
 
 pub(crate) fn audio(catalog: &Value) -> Option<&Value> {

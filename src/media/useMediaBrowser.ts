@@ -36,6 +36,7 @@ type Playback = {
   qualityHeight: number;
   qualityFps?: number;
 };
+type NativeSource = VideoSource & { govueStartupHeight?: number };
 type LiveTrackPlayer = {
   govueSelectVideoTrack?: (
     expectedUri: string,
@@ -127,6 +128,9 @@ export function useMediaBrowser(
     player.timeUpdateEventInterval = 0.25;
     player.audioMixingMode = 'doNotMix';
     player.preservesPitch = true;
+    // Begin once a small playable buffer is ready; continue filling the normal
+    // forward buffer during playback rather than delaying the first frame.
+    player.bufferOptions = { minBufferForPlayback: 0.25 };
   });
   const pagePlayback = useTranscriptPosition(webView, player, videoId, !!videoId && !playback, null);
   const cast = useCastSession({
@@ -635,7 +639,7 @@ export function useMediaBrowser(
   }
   async function openPlayer(
     data: Playback,
-    source: VideoSource,
+    source: NativeSource,
     position: number | null,
     resume = true,
     stillCurrent: () => boolean = () => true,

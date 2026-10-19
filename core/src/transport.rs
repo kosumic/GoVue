@@ -20,6 +20,8 @@ use std::{
 };
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
+pub(crate) mod streaming;
+
 const CHUNK: u64 = 1_048_576;
 const INITIAL_CHUNK: u64 = 32_768;
 pub(crate) struct Source {
@@ -272,13 +274,26 @@ struct Body {
     source: Arc<Source>,
     next: u64,
     end: u64,
-    bytes: io::Cursor<Vec<u8>>,
+    bytes: Box<dyn Read + Send>,
+    prefix: io::Cursor<Vec<u8>>,
     chunk: u64,
 }
 impl Body {
     fn fill(&mut self) -> io::Result<()> {
         let end = (self.next + self.chunk - 1).min(self.end);
-        self.bytes = io::Cursor::new(range_bytes(&self.source, self.next, end)?);
+        self.bytes = streaming::open(&self.source, self.next, end)?;
+        // Receive a small prefix before sending success, without waiting for
+        // an entire range when the platform supports incremental byte reads.
+        let mut prefix = vec![0; 8192];
+        let count = self.bytes.read(&mut prefix)?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Empty media range.",
+            ));
+        }
+        prefix.truncate(count);
+        self.prefix = io::Cursor::new(prefix);
         self.next = end + 1;
         self.chunk = (self.chunk * 2).min(CHUNK);
         Ok(())
@@ -289,6 +304,10 @@ impl Read for Body {
         if buffer.is_empty() {
             return Ok(0);
         }
+        let ready = self.prefix.read(buffer)?;
+        if ready > 0 {
+            return Ok(ready);
+        }
         let ready = self.bytes.read(buffer)?;
         if ready > 0 {
             return Ok(ready);
@@ -297,7 +316,7 @@ impl Read for Body {
             return Ok(0);
         }
         self.fill()?;
-        self.bytes.read(buffer)
+        self.prefix.read(buffer)
     }
 }
 
@@ -421,11 +440,16 @@ fn serve(
         source,
         next: start,
         end,
-        bytes: io::Cursor::new(Vec::new()),
-        chunk: INITIAL_CHUNK,
+        bytes: Box::new(io::empty()),
+        prefix: io::Cursor::new(Vec::new()),
+        chunk: if streaming::available() {
+            CHUNK
+        } else {
+            INITIAL_CHUNK
+        },
     };
     let head = request.method() == &Method::Head;
-    // Validate the first small range before promising a successful response.
+    // Validate initial bytes before promising a successful response.
     // Later reads grow to the normal cap as the player consumes the stream.
     if !head && body.fill().is_err() {
         let _ = request.respond(Response::empty(StatusCode(502)));
@@ -635,12 +659,14 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
     let mut lists = Vec::new();
     if command["manifest"] == "dash" {
         let variants: Vec<_> = if requested == 0 {
-            videos
-                .into_iter()
-                .filter(|s| s["kind"] == "video")
-                .collect()
+            playback::adaptive_videos(catalog, selected)?
         } else {
             vec![selected]
+        };
+        let startup_height = if requested == 0 {
+            playback::startup_height(&variants)
+        } else {
+            0
         };
         let mut tracks = Vec::new();
         for (index, stream) in std::iter::once(audio).chain(variants).enumerate() {
@@ -670,7 +696,7 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
         playlists.insert(root.clone(), Arc::new(Playlist::Dash(text)));
         drop(playlists);
         return Ok(
-            json!({"uri":format!("http://127.0.0.1:{}/{root}.mpd",server.port),"contentType":"dash","qualityHeight":requested,"qualityFps":selected["fps"].as_u64().unwrap_or(0)}),
+            json!({"uri":format!("http://127.0.0.1:{}/{root}.mpd",server.port),"contentType":"dash","qualityHeight":requested,"qualityFps":selected["fps"].as_u64().unwrap_or(0),"startupHeight":startup_height}),
         );
     }
     if container(audio) != Some("audio/mp4") || container(selected) != Some("video/mp4") {

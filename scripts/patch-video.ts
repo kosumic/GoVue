@@ -380,10 +380,16 @@ function patchPlayer(before: string, after: string) {
 const sourceTiming = `    android.os.Trace.beginSection("GoVue playback: prepare")
     android.os.Trace.endSection()
     govueSourceAt = android.os.SystemClock.elapsedRealtime()`;
-const firstFrameTiming = `        govueFirstFrameMs = (android.os.SystemClock.elapsedRealtime() - govueSourceAt).coerceAtLeast(0).also {
+const previousFirstFrameTiming = `        govueFirstFrameMs = (android.os.SystemClock.elapsedRealtime() - govueSourceAt).coerceAtLeast(0).also {
           android.os.Trace.beginSection("GoVue playback: first frame")
           android.os.Trace.endSection()
         }`;
+const firstFrameTiming = previousFirstFrameTiming.replace(
+  '          android.os.Trace.endSection()',
+  '          android.os.Trace.endSection()\n          govueReleaseStartupLimit()',
+);
+if (playerSource.includes(previousFirstFrameTiming))
+  playerSource = playerSource.replace(previousFirstFrameTiming, firstFrameTiming);
 // Upgrade an already patched install as well as a fresh expo-video checkout.
 if (!playerSource.includes(sourceTiming)) playerSource = playerSource.replace(
   '    govueSourceAt = android.os.SystemClock.elapsedRealtime()', sourceTiming,
@@ -424,4 +430,84 @@ ${sourceTiming}
     govueAudioDecoder = null
     availableVideoTracks = listOf()`,
 );
+// The initial Auto rendition must not inherit an optimistic estimate from the
+// preceding video. Rust selects a supported starting height; after the first
+// frame the existing adaptive ladder can choose any supported resolution.
+const previousStartupLimit = `  private var govueStartupHeight = 0
+  private fun govueReleaseStartupLimit() {
+    val height = player.videoFormat?.height ?: 0
+    android.os.Trace.beginSection("GoVue playback: first height $height")
+    android.os.Trace.endSection()
+    if (govueStartupHeight > 0) {
+      govueStartupHeight = 0
+      player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+        .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE).build()
+      android.os.Trace.beginSection("GoVue playback: release startup limit")
+      android.os.Trace.endSection()
+    }
+  }
+
+  var govueSourceAt: Long = 0L`;
+const startupLimit = previousStartupLimit.replace(
+  '    val height = player.videoFormat?.height ?: 0',
+  `    android.os.Trace.beginSection("GoVue playback: first position \${player.currentPosition.coerceAtLeast(0)}")
+    android.os.Trace.endSection()
+    val height = player.videoFormat?.height ?: 0`,
+);
+if (playerSource.includes(previousStartupLimit))
+  playerSource = playerSource.replace(previousStartupLimit, startupLimit);
+patchPlayer('  var govueSourceAt: Long = 0L', startupLimit);
+
+// Correlate quality changes and buffering with the current source. Numeric
+// positions/dimensions and an allowlisted codec label reveal no source URL.
+patchPlayer(
+  '    override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {',
+  `    override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {
+      if (govueCurrentEvent(eventTime)) {
+        android.os.Trace.beginSection("GoVue playback: state $state")
+        android.os.Trace.endSection()
+      }
+    }
+    override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {`,
+);
+patchPlayer(
+  '    override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {',
+  `    override fun onIsPlayingChanged(eventTime: AnalyticsListener.EventTime, isPlaying: Boolean) {
+      if (govueCurrentEvent(eventTime)) {
+        android.os.Trace.beginSection("GoVue playback: playing $isPlaying")
+        android.os.Trace.endSection()
+      }
+    }
+    override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {`,
+);
+patchPlayer(
+  '      currentVideoTrack = availableVideoTracks.firstOrNull { it.format?.id == format.id }',
+  `      currentVideoTrack = availableVideoTracks.firstOrNull { it.format?.id == format.id }
+      if (govueCurrentEvent(eventTime)) {
+        val codec = when (format.sampleMimeType) {
+          "video/avc" -> "avc"
+          "video/x-vnd.on2.vp9" -> "vp9"
+          "video/av01" -> "av1"
+          "video/hevc" -> "hevc"
+          else -> "other"
+        }
+        val fps = format.frameRate.takeIf { it.isFinite() && it > 0 }?.toInt() ?: 0
+        android.os.Trace.beginSection("GoVue playback: format \${format.width}x\${format.height} \${fps}fps $codec")
+        android.os.Trace.endSection()
+      }`,
+);
+patchPlayer('    val newSource = uncommittedSource', `    val newSource = uncommittedSource
+    govueStartupHeight = newSource?.govueStartupHeight?.takeIf { it in 1..8640 } ?: 0
+    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+      .setMaxVideoSize(Int.MAX_VALUE, govueStartupHeight.takeIf { it > 0 } ?: Int.MAX_VALUE).build()`);
 writeFileSync(playerPath, playerSource);
+
+const videoSourcePath = 'node_modules/expo-video/android/src/main/java/expo/modules/video/records/VideoSource.kt';
+let videoSource = readFileSync(videoSourcePath, 'utf8');
+const sourceField = '  @Field var govueStartupHeight: Int = 0,\n';
+if (!videoSource.includes(sourceField)) {
+  const anchor = '  @Field var useCaching: Boolean = false,';
+  if (!videoSource.includes(anchor)) throw Error('Expo Video source record changed; review startup selection.');
+  videoSource = videoSource.replace(anchor, sourceField + anchor);
+  writeFileSync(videoSourcePath, videoSource);
+}

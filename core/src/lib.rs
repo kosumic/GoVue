@@ -63,6 +63,33 @@ pub fn install_media_http(backend: Box<dyn MediaHttp>) {
     transport::install_http(backend);
 }
 
+/// Incremental HTTPS byte adapter. Rust owns ranges, redirects and bounds.
+#[derive(uniffi::Record)]
+pub struct MediaStreamReply {
+    pub status: i32,
+    pub handle: u64,
+    pub length: i64,
+    pub location: Option<String>,
+}
+#[uniffi::export(callback_interface)]
+pub trait MediaStreamHttp: Send + Sync {
+    fn open_range(
+        &self,
+        url: String,
+        user_agent: String,
+        origin: String,
+        method: String,
+        start: u64,
+        end: u64,
+    ) -> MediaStreamReply;
+    fn read(&self, handle: u64, max_bytes: u32) -> Vec<u8>;
+    fn close(&self, handle: u64);
+}
+#[uniffi::export]
+pub fn install_media_stream_http(backend: Box<dyn MediaStreamHttp>) {
+    transport::streaming::install(backend);
+}
+
 /// OS TLS and Wi-Fi access only. Protocol, routes and session ownership stay in Rust.
 #[uniffi::export(callback_interface)]
 pub trait CastPlatform: Send + Sync {

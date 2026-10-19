@@ -153,6 +153,7 @@ export type PlaybackSource = {
   qualityHeight: number;
   qualityFps?: number;
   headers?: Record<string, string>;
+  startupHeight?: number;
 };
 
 export const mediaSettings = (settings?: Partial<MediaSettings>) =>

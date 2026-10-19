@@ -146,10 +146,67 @@ fn finish(root: &str) {
     }
 }
 
+fn launch_preparation(control: &Control) {
+    let root = std::env::temp_dir().join(format!(
+        "govue-launch-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.to_str().unwrap();
+    let launch =
+        |text: &str| json!({"op":"extract_launch","requestId":"prepare:media","text":text});
+    for text in [
+        "",
+        "https://example.org/watch?v=launchVid01",
+        "https://youtube.com.evil.test/watch?v=launchVid01",
+        "https://m.youtube.com/shorts/launchVid01",
+    ] {
+        assert_eq!(call(root, launch(text))["prepared"], false);
+    }
+    let id = "launchVid01";
+    control.block(id);
+    // Android can prepare before a browser document or React navigation exists.
+    call(
+        root,
+        launch("Shared video: https://youtu.be/launchVid01?t=372"),
+    );
+    control.entered(id);
+    call(
+        root,
+        json!({"op":"browser_open","url":"https://m.youtube.com/watch?v=launchVid01&t=372"}),
+    );
+    assert_eq!(start(root, id, false)["prepared"], true);
+    control.unblock(id);
+    finish(root);
+    assert_eq!(
+        control.count(id),
+        2,
+        "Launch and playback must share one extraction"
+    );
+    call(
+        root,
+        json!({"op":"media_settings","settings":{"adBlock":false,"backgroundPlayback":false,"autoPip":false}}),
+    );
+    assert_eq!(
+        call(root, launch("https://youtu.be/launchVid02"))["prepared"],
+        false
+    );
+    assert_eq!(
+        control.count("launchVid02"),
+        0,
+        "Disabled native playback must not prefetch"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn selected_preparation_is_shared_bounded_and_correlated_with_navigation() {
     let control = Arc::new(Control::default());
     install_extraction_http(Box::new(Http(control.clone())));
+    launch_preparation(&control);
     let root = root("handoff");
     let first = "abcdefghijk";
     let request = prepare(first);

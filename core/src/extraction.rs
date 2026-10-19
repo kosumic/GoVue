@@ -516,7 +516,7 @@ fn configuration(
     let mut html = String::new();
     if !need_page {
         let _span = crate::trace::Section::begin(c"GoVue extraction: configuration prefix");
-        let reply = fetch_response_bounded(job, &address, None, false, &[], 131_072)?;
+        let reply = fetch_response_bounded(job, &address, None, false, &[], 65_536)?;
         if reply.status != 200 {
             return Err(format!(
                 "YouTube extraction request failed (HTTP {}).",
@@ -963,6 +963,32 @@ fn claim_preparation(jobs: &mut Jobs, root: &str, id: &str, request: &str, fresh
     true
 }
 
+// OS launches have no page document yet. Canonicalize their shared text in
+// Rust and use the same bounded, video-correlated slot as page preparation.
+fn launch_video(command: &Value, root: &str) -> Result<Option<String>> {
+    let settings = crate::player::preferences::settings(&json!({}), root)?;
+    if !["adBlock", "backgroundPlayback", "autoPip"]
+        .iter()
+        .any(|key| settings[key] == true)
+    {
+        return Ok(None);
+    }
+    Ok(crate::browser::dispatch(
+        &json!({"op":"browser_shared_url","text":command["text"]}),
+        root,
+    )
+    .ok()
+    .and_then(|target| Url::parse(target.as_str()?).ok())
+    .filter(|target| target.path() == "/watch")
+    .and_then(|target| {
+        target
+            .query_pairs()
+            .find(|(key, _)| key == "v")
+            .map(|(_, id)| id.into_owned())
+            .filter(|id| video_id(id))
+    }))
+}
+
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let op = string(command, "op")?;
     let request = string(command, "requestId")?;
@@ -974,15 +1000,22 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     {
         return Err("Invalid extraction request identity.".into());
     }
-    if request == PREPARATION_REQUEST && !matches!(op, "extract_prepare" | "extract_release") {
+    if request == PREPARATION_REQUEST
+        && !matches!(op, "extract_prepare" | "extract_launch" | "extract_release")
+    {
         return Err("Reserved extraction request identity.".into());
     }
-    let selected = if op == "extract_prepare" {
+    let selected = if matches!(op, "extract_prepare" | "extract_launch") {
         let _span = crate::trace::Section::begin(c"GoVue extraction: prepare media");
         if request != PREPARATION_REQUEST {
             return Err("Invalid media preparation identity.".into());
         }
-        let Some(id) = crate::browser::preparation_video(command, root) else {
+        let id = if op == "extract_launch" {
+            launch_video(command, root)?
+        } else {
+            crate::browser::preparation_video(command, root)
+        };
+        let Some(id) = id else {
             return Ok(json!({"prepared":false}));
         };
         Some(id)
@@ -1003,7 +1036,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         }
     });
     match op {
-        "extract_start" | "extract_prepare" => {
+        "extract_start" | "extract_prepare" | "extract_launch" => {
             let preparing = selected.is_some();
             let id = if let Some(id) = &selected {
                 id.as_str()
