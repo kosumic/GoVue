@@ -23,8 +23,9 @@ video, follow its captions, replay a phrase, save an unfamiliar word, or ask you
 chosen AI model about what you just watched. Comments, recommendations,
 subscriptions, and account pages remain available through YouTube's web interface.
 
-The app ports [LiTube](https://github.com/HydeYYHH/Litube) to shared React Native
-presentation and a Rust core, with small Kotlin and Swift platform adapters.
+GoVue began as a Rust-native port of [LiTube](https://github.com/HydeYYHH/Litube).
+It now combines shared React Native presentation with a Rust core and small
+Kotlin and Swift platform adapters.
 Android is the first implementation and verification target; the port is in
 progress. See [project status](#project-status) for verified behavior and open work.
 
@@ -444,10 +445,13 @@ steps to reproduce, and any relevant public video when reporting a problem.
 
 ## Credits
 
-GoVue ports LiTube's browser integration and player experience to React Native
-and Rust. [Whip](https://github.com/KaminariOS/whip) is an engineering and
-documentation reference. Upstream attribution and dependency licenses are in
-[third-party notices](notices/README.md).
+GoVue began as a Rust-native port of [LiTube](https://github.com/HydeYYHH/Litube),
+whose browser integration and player experience underpin the app. The model
+provider implementation is also ported from
+[OpenMinis](https://github.com/OpenMinis/OpenMinis) into the shared Rust core.
+[Whip](https://github.com/KaminariOS/whip) is an engineering and documentation
+reference. Thanks to these projects and their contributors. Upstream attribution
+and dependency licenses are in [third-party notices](notices/README.md).
 
 ## License
 
