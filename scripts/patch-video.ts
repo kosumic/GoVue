@@ -511,3 +511,72 @@ if (!videoSource.includes(sourceField)) {
   videoSource = videoSource.replace(anchor, sourceField + anchor);
   writeFileSync(videoSourcePath, videoSource);
 }
+
+// AVPlayer sees the fast loopback HLS connection rather than the bounded
+// upstream requests. Its automatic startup estimate can wait tens of seconds.
+// Use a small target only until this exact item plays, then let AVPlayer build
+// its normal forward buffer. Keep automatic stall recovery enabled.
+const iosPlayerPath = 'node_modules/expo-video/ios/VideoPlayer.swift';
+let iosPlayer = readFileSync(iosPlayerPath, 'utf8');
+function patchIosPlayer(before: string, after: string, name: string) {
+  if (iosPlayer.includes(after)) return;
+  if (!iosPlayer.includes(before))
+    throw Error(`Expo Video iOS player changed; review the ${name} patch.`);
+  iosPlayer = iosPlayer.replace(before, after);
+}
+patchIosPlayer(
+  '  private(set) var isPlaying = false',
+  `  private let govueStartupItem = Mutex<VideoPlayerItem?>(nil)
+
+  private func govueInitialForwardBufferDuration(for item: VideoPlayerItem) -> Double {
+    let duration = bufferOptions.preferredForwardBufferDuration
+    return duration == 0 && item.isHls && item.videoSource.uri?.scheme == "http"
+      && item.videoSource.uri?.host == "127.0.0.1" ? 3 : duration
+  }
+
+  private func govueRestoreForwardBuffer(player: AVPlayer) {
+    guard player.timeControlStatus == .playing else { return }
+    let item = govueStartupItem.withLock { pending -> VideoPlayerItem? in
+      guard let item = pending, player.currentItem === item,
+        item.status == .readyToPlay else { return nil }
+      pending = nil
+      return item
+    }
+    // Release the lock before changing a property that can trigger observers.
+    item?.preferredForwardBufferDuration = bufferOptions.preferredForwardBufferDuration
+  }
+
+  private(set) var isPlaying = false`,
+  'startup buffer state',
+);
+patchIosPlayer(
+  '    playerItem.preferredForwardBufferDuration = bufferOptions.preferredForwardBufferDuration',
+  '    playerItem.preferredForwardBufferDuration = govueInitialForwardBufferDuration(for: playerItem)',
+  'synchronous startup buffer',
+);
+patchIosPlayer(
+  '    playerItem.preferredForwardBufferDuration = self.bufferOptions.preferredForwardBufferDuration',
+  '    playerItem.preferredForwardBufferDuration = self.govueInitialForwardBufferDuration(for: playerItem)',
+  'asynchronous startup buffer',
+);
+patchIosPlayer(
+  '    let payload = IsPlayingEventPayload(isPlaying: newIsPlaying, oldIsPlaying: oldIsPlaying)',
+  `    if newIsPlaying { govueRestoreForwardBuffer(player: player) }
+    let payload = IsPlayingEventPayload(isPlaying: newIsPlaying, oldIsPlaying: oldIsPlaying)`,
+  'restore forward buffering',
+);
+patchIosPlayer(
+  '    newVideoPlayerItem?.preferredForwardBufferDuration = bufferOptions.preferredForwardBufferDuration',
+  `    if let item = newVideoPlayerItem {
+      let duration = govueInitialForwardBufferDuration(for: item)
+      item.preferredForwardBufferDuration = duration
+      govueStartupItem.withLock { pending in
+        pending = duration != bufferOptions.preferredForwardBufferDuration ? item : nil
+      }
+      govueRestoreForwardBuffer(player: player)
+    } else {
+      govueStartupItem.withLock { $0 = nil }
+    }`,
+  'correlate startup buffer with current item',
+);
+writeFileSync(iosPlayerPath, iosPlayer);

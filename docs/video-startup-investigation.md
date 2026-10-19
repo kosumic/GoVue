@@ -8,6 +8,78 @@ the phone was reconnected later on October 18, but verification failures
 returned during the study and reliable browser parity remains unmet. The earlier verification failures and
 cumulative timings below describe the historical investigation before the study.
 
+## iPad follow-up, October 19
+
+iOS now installs the same incremental byte interface as Android. Rust can send
+the first 8 KiB while the rest of its bounded range downloads. The Swift adapter
+limits active handles, suspends upstream tasks when unread bytes accumulate, and
+wakes pending readers on cancellation. A shared ephemeral URLSession reuses
+connections across extraction and media requests, with cookies, credential
+storage and URL caching disabled. Rust still owns redirects, retries and range
+validation.
+
+The installed streaming adapter alone did not resolve the reported delay. On
+the physical iPad mini 6 (iPadOS 26.6), one Bunny open had a frame ready at
+4.056 s but AVPlayer did not enter `playing` until 28.821 s. A later cold Bunny
+control, with its saved resume position reset to zero, had a frame at 3.006 s
+and entered `playing` at 10.446 s. These are different endpoints: a ready frame
+does not establish that playback has started.
+
+The iOS Expo Video patch now gives loopback HLS items a three-second initial
+forward-buffer target. Once that exact current item is ready and playing, it
+restores the configured forward-buffer target (normally zero, AVPlayer's
+automatic policy). State is cleared on source replacement, and restoration
+happens once per item. Automatic stall recovery stays enabled. Explicit buffer
+settings, direct live HLS and offline files retain their configured behavior.
+This does not change the quality selection. Both platforms must build
+`expo-video` from source so the postinstall patch reaches the installed binary.
+
+Keeping a one- or three-second target throughout playback was rejected after
+repeat runs rebuffered. Increasing the target to 20 seconds after startup also
+had stalls, including one run with very slow subsequent upstream transfers.
+Restoring the normal automatic policy avoids leaving the small startup target
+in effect for the whole video. Apple's documentation describes
+[zero as automatic buffering](https://developer.apple.com/documentation/avfoundation/avplayeritem/preferredforwardbufferduration)
+and the increased stall risk of small fixed targets.
+
+The permanent native patch, without experimental buffer overrides, produced:
+
+| Cold open | First frame | First playing | Later waiting |
+| --- | ---: | ---: | --- |
+| Bunny, first run | 3.515 s | 3.748 s | None before the next test at about 29 s |
+| TED, first run | 4.197 s | 4.481 s | One approximately 0.084 s interval in 45 s |
+| Bunny, repeat | 3.320 s | 3.490 s | None in 45 s |
+
+The saved quality setting was 1080p/30 with remember-quality enabled throughout;
+the available formats returned by YouTube varied (TED reported 480p in the
+final native probe). These are individual device observations, not a matched
+encoding distribution or a p95 claim. An earlier startup-to-automatic profile
+also started Bunny in 3.712 s without waiting during its 45-second recording;
+another profile run had a later five-second stall. Sustained playback under
+varying CDN/network conditions remains a separate limitation.
+
+Measurements use monotonic native timestamps from accepted browser navigation
+to AVPlayer's first-frame and time-control callbacks. Diagnostic logs contain
+only static phase labels, numeric fields and HTTP status codes. The temporary
+probes and buffer override flags are removed from the final app. Original
+history is restored after the controlled resume-position probes; app data and
+saved quality settings are preserved. Recordings live in the isolated Mac
+checkout's ignored `build/startup-investigation/` directory.
+Selected sanitized recordings are also in the local ignored
+`.cache/ios-device-startup/results/` directory. After rebuilding without probes,
+the clean signed release advanced the native playhead to 13.871 s by the check
+18 seconds after launch, without diagnostic environment variables. This is a
+final playback sanity check, not another precise startup measurement. The
+original history was then restored and verified byte for byte.
+
+The adapters were typechecked against the iOS SDK and actual UniFFI bindings on
+`mini`. A live HTTPS probe delivered the same 30,320-byte static file in three
+successive streamed requests and verified bounded extraction-prefix reads.
+`npm run test:ios-http` runs eight Swift adapter checks on a Mac and is included
+in iOS CI. `npm run check` and `npx expo install --check` pass. Native changes
+require rebuilding the app; a JavaScript reload cannot update these adapters
+or the player patch.
+
 ## Outcome before the ablation
 
 The Android fixes substantially improve the worst observed case, but **browser
@@ -35,8 +107,8 @@ it is not evidence that the transport candidate works or fails.
   Rust can deliver the first 8 KiB before the rest of a bounded 1 MiB range
   arrives. This removes whole-body buffering without increasing the 1 MiB cap.
   Rust still validates range sizes, redirects and response lengths, owns retries
-  and POST fallback, and closes every upstream handle. iOS retains its existing
-  adapter path and has not been measured in this work.
+  and POST fallback, and closes every upstream handle. The original Android
+  investigation did not measure iOS; see the later iPad follow-up above.
 - Preserve a complete resolution ladder for Auto within the selected codec,
   independently of the deduplicated manual-quality menu. Begin Android Auto at
   an actual available height no greater than 480 (or the smallest available

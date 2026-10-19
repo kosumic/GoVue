@@ -4,6 +4,11 @@
   "private": true,
   "expo": {
     "autolinking": {
+      "ios": {
+        "buildFromSource": [
+          "expo-video"
+        ]
+      },
       "android": {
         "buildFromSource": [
           "expo-video"
@@ -26,6 +31,7 @@
     "core:ios": "node scripts/build-core.ts ios",
     "prebuild:ios": "npm run core:ios && expo prebuild --platform ios",
     "test": "node --test tests/*.test.*",
+    "test:ios-http": "node scripts/test-ios-http.ts",
     "fmt:core": "cargo fmt --all --check",
     "lint:core": "cargo clippy --locked --workspace --all-targets -- -D warnings",
     "test:core": "cargo test --locked -p govue-core",
