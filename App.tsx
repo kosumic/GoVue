@@ -116,6 +116,7 @@ function Browser() {
   const handles = useRef(new Map<number, TabHandle>());
   const browserWrites = useRef(Promise.resolve());
   const navigationSequence = useRef(0);
+  const pendingWatchNavigation = useRef<{ id: number; previousUrl?: string; url: string } | null>(null);
   const backAvailable = useRef(new Map<number, boolean>());
   const [watch, setWatch] = useState<{ id: number; videoId: string } | null>(
     null,
@@ -205,6 +206,7 @@ function Browser() {
     const sequence = ++navigationSequence.current;
     run(async () => {
       const current = mediaRef.current;
+      const previousTabs = browserRef.current.tabs;
       const next = await browserAction('open', {
         ...(typeof target === 'string' ? { url: target } : target),
         suspendWatch:
@@ -213,6 +215,14 @@ function Browser() {
           current.settings.miniPlayer,
       });
       if (sequence !== navigationSequence.current) return;
+      pendingWatchNavigation.current = null;
+      if (next.target && youtubeVideoId(next.target.url) && !new URL(next.target.url).pathname.startsWith('/shorts/')) {
+        const previousUrl = previousTabs.find(tab => tab.id === next.target!.id)?.url;
+        // Rust has accepted the target already. Page loading and player layout
+        // can proceed independently of standalone native extraction.
+        updateUrl(next.target.id, next.target.url, backAvailable.current.get(next.target.id) ?? false);
+        pendingWatchNavigation.current = { id: next.target.id, previousUrl, url: next.target.url };
+      }
       if (next.target?.load)
         handles.current.get(next.target.id)?.navigate(next.target.url);
       setPage(null);
@@ -396,6 +406,11 @@ function Browser() {
   }, [goBack]);
   function updateUrl(id: number, url: string, back: boolean) {
     if (!isWebUrl(url)) return;
+    const pendingTarget = pendingWatchNavigation.current;
+    if (pendingTarget?.id === id) {
+      if (url !== pendingTarget.url && url === pendingTarget.previousUrl) return;
+      pendingWatchNavigation.current = null;
+    }
     if (id === watchRef.current?.id && youtubeVideoId(url) !== watchRef.current.videoId)
       sessionRef.current.transcript.close();
     backAvailable.current.set(id, back);

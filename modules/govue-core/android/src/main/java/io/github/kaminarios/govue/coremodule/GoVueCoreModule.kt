@@ -26,6 +26,9 @@ import java.nio.ByteBuffer
 import io.github.kaminarios.govue.core.MediaHttp
 import io.github.kaminarios.govue.core.MediaRangeReply
 import io.github.kaminarios.govue.core.installMediaHttp
+import io.github.kaminarios.govue.core.MediaStreamHttp
+import io.github.kaminarios.govue.core.MediaStreamReply
+import io.github.kaminarios.govue.core.installMediaStreamHttp
 import io.github.kaminarios.govue.core.installExtractionHttp
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -37,45 +40,121 @@ import io.github.kaminarios.govue.coremodule.cast.CastDiscovery
 import io.github.kaminarios.govue.coremodule.cast.NativeCastPlatform
 import io.github.kaminarios.govue.core.installCastPlatform
 
-private class NativeMediaHttp : MediaHttp {
+private class NativeMediaHttp(context: Context) : MediaHttp, MediaStreamHttp {
   private val client = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS)
-    .readTimeout(12, TimeUnit.SECONDS).callTimeout(18, TimeUnit.SECONDS).followRedirects(false).build()
+    .readTimeout(12, TimeUnit.SECONDS).callTimeout(18, TimeUnit.SECONDS)
+    .followRedirects(false).followSslRedirects(false).build()
+  private class Stream(val response: okhttp3.Response, val input: java.io.InputStream, var remaining: Int)
+  private val streams = java.util.concurrent.ConcurrentHashMap<ULong, Stream>()
+  private val sequence = java.util.concurrent.atomic.AtomicLong(0)
+  private val capacity = java.util.concurrent.Semaphore(24)
+  private val http3 = if (Build.VERSION.SDK_INT >= 34) NativeMediaEngine(context, capacity) else null
+
   override fun fetchRange(url: String, userAgent: String, origin: String, method: String, start: ULong, end: ULong): MediaRangeReply {
+    val head = openRange(url, userAgent, origin, method, start, end)
+    if (head.handle == 0uL) return MediaRangeReply(head.status, byteArrayOf(), head.location)
     return try {
+      val bytes = java.io.ByteArrayOutputStream()
+      while (true) {
+        val part = read(head.handle, 65536u)
+        if (part.isEmpty()) break
+        bytes.write(part)
+      }
+      MediaRangeReply(head.status, bytes.toByteArray(), head.location)
+    } finally { close(head.handle) }
+  }
+
+  override fun openRange(url: String, userAgent: String, origin: String, method: String, start: ULong, end: ULong): MediaStreamReply {
+    if (Build.VERSION.SDK_INT >= 34 && method == "GET")
+      http3?.openRange(url, userAgent, origin, start, end)?.let { return it }
+    if (!capacity.tryAcquire()) return MediaStreamReply(0, 0uL, -1, null)
+    var response: okhttp3.Response? = null
+    var retained = false
+    try {
+      require(end >= start && end - start < 1048576uL)
+      require(method == "GET" || method == "POST")
       val parsed = url.toHttpUrl().newBuilder().addQueryParameter("range", "$start-$end").build()
       val builder = Request.Builder().url(parsed).header("User-Agent",userAgent).header("Origin",origin).header("Referer","$origin/").header("Accept-Encoding","identity")
       if(method == "POST") builder.post(byteArrayOf(0x78,0).toRequestBody())
       val request = builder.build()
-      val response = mediaTrace(if (method == "POST") "GoVue transport: POST headers" else "GoVue transport: GET headers") {
+      val opened = mediaTrace(if (method == "POST") "GoVue transport: POST headers" else "GoVue transport: GET headers") {
         client.newCall(request).execute()
       }
-      response.use {
-        mediaTrace("GoVue transport: HTTP ${response.code}") {}
-        mediaTrace(when (response.code) {
-          200, 206 -> "GoVue transport: accepted"
-          403 -> "GoVue transport: forbidden"
-          else -> "GoVue transport: rejected"
-        }) {}
-        val location = response.header("Location")?.takeIf { it.length <= 30000 }
-        if (response.code != 200 && response.code != 206)
-          return MediaRangeReply(response.code, byteArrayOf(), location)
-        val buffer = ByteArray((end-start+2u).toInt())
-        var count = 0
-        mediaTrace(if (buffer.size <= 65537) "GoVue transport: small body" else "GoVue transport: large body") {
-          response.body?.byteStream()?.use { input ->
-            while(count < buffer.size) { val n = input.read(buffer,count,buffer.size-count); if(n<0) break; count+=n }
-          }
-        }
-        MediaRangeReply(response.code,buffer.copyOf(count),location)
+      response = opened
+      mediaTrace(if (opened.protocol == okhttp3.Protocol.HTTP_2) "GoVue transport: protocol h2" else "GoVue transport: protocol http1") {}
+      mediaTrace("GoVue transport: HTTP ${opened.code}") {}
+      val location = opened.header("Location")?.takeIf { it.length <= 30000 }
+      val length = opened.body?.contentLength() ?: -1L
+      if (opened.code != 200 && opened.code != 206)
+        return MediaStreamReply(opened.code, 0uL, length, location)
+      val input = opened.body?.byteStream() ?: return MediaStreamReply(0, 0uL, -1, null)
+      val handle = sequence.incrementAndGet().toULong()
+      streams[handle] = Stream(opened, input, (end - start + 2uL).toInt())
+      retained = true
+      return MediaStreamReply(opened.code, handle, length, location)
+    } catch (_: Exception) { return MediaStreamReply(0, 0uL, -1, null) }
+    finally {
+      if (!retained) {
+        response?.close()
+        capacity.release()
       }
-    } catch (_: Exception) { MediaRangeReply(0,byteArrayOf(),null) }
+    }
+  }
+
+  override fun read(handle: ULong, maxBytes: UInt): ByteArray {
+    if (Build.VERSION.SDK_INT >= 34 && NativeMediaEngine.owns(handle)) return http3?.read(handle, maxBytes) ?: byteArrayOf()
+    val stream = streams[handle] ?: return byteArrayOf()
+    return try {
+      require(maxBytes in 1u..65536u)
+      synchronized(stream) {
+        if (stream.remaining <= 0) { close(handle); return byteArrayOf() }
+        val buffer = ByteArray(minOf(maxBytes.toInt(), stream.remaining))
+        val count = mediaTrace("GoVue transport: stream read") { stream.input.read(buffer) }
+        if (count < 0) { close(handle); return byteArrayOf() }
+        stream.remaining -= count
+        buffer.copyOf(count)
+      }
+    } catch (_: Exception) { close(handle); byteArrayOf() }
+  }
+
+  override fun close(handle: ULong) {
+    if (Build.VERSION.SDK_INT >= 34 && NativeMediaEngine.owns(handle)) { http3?.close(handle); return }
+    streams.remove(handle)?.let { stream ->
+      try { stream.response.close() } finally { capacity.release() }
+    }
   }
 }
 
 // Phase labels and HTTP status numbers only; addresses and headers stay private.
-private inline fun <T> mediaTrace(name: String, block: () -> T): T {
+internal inline fun <T> mediaTrace(name: String, block: () -> T): T {
   Trace.beginSection(name)
   try { return block() } finally { Trace.endSection() }
+}
+
+private class NativeMediaCapabilities {
+  private data class Decoder(val hardware: Boolean, val video: android.media.MediaCodecInfo.VideoCapabilities?)
+  private val codecs by lazy { MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.filter { !it.isEncoder } }
+  private val capabilities = java.util.concurrent.ConcurrentHashMap<String, List<Decoder>>()
+
+  fun supports(mime: String, width: Int, height: Int, fps: Int): Boolean {
+    val candidates = capabilities.computeIfAbsent(mime) {
+      codecs.filter { codec -> codec.supportedTypes.any { it.equals(mime, ignoreCase = true) } }.mapNotNull { codec ->
+        runCatching {
+          val hardware = if (Build.VERSION.SDK_INT >= 29) codec.isHardwareAccelerated
+            else !codec.name.startsWith("OMX.google.") && !codec.name.startsWith("c2.android.")
+          Decoder(hardware, if (mime.startsWith("audio/")) null else codec.getCapabilitiesForType(mime).videoCapabilities)
+        }.getOrNull()
+      }
+    }
+    return candidates.any { decoder -> runCatching {
+      if (mime.startsWith("audio/")) true
+      else if (!decoder.hardware && (mime == "video/av01" || height > 1080)) false
+      else if (width <= 0 || height <= 0) mime != "video/av01" && height <= 1080
+      else decoder.video?.let { video ->
+        if (fps > 0) video.areSizeAndRateSupported(width, height, fps.toDouble()) else video.isSizeSupported(width, height)
+      } ?: false
+    }.getOrDefault(false) }
+  }
 }
 
 class GoVueCoreModule : Module() {
@@ -83,6 +162,7 @@ class GoVueCoreModule : Module() {
   private var physicalOrientation: PhysicalOrientation? = null
   private var castDiscovery: CastDiscovery? = null
   private var pipControls: PipControls? = null
+  private val mediaCapabilities = NativeMediaCapabilities()
   @androidx.annotation.RequiresApi(26)
   private fun ensurePipControls(): PipControls? {
     if (Build.VERSION.SDK_INT < 26) return null
@@ -117,6 +197,15 @@ class GoVueCoreModule : Module() {
     synchronized(browserLaunches) {
       if (browserLaunches.size >= 8) browserLaunches.removeFirst()
       browserLaunches.addLast(text)
+    }
+    // Rust validates the OS-delivered text and settings, then starts a bounded
+    // worker. React claims the same job after accepting the navigation target.
+    appContext.reactContext?.let { context ->
+      mediaTrace("GoVue extraction: launch preparation") {
+        execute(org.json.JSONObject().put("op", "extract_launch")
+          .put("requestId", "prepare:media").put("text", text).toString(),
+          File(context.filesDir, "transcripts").path)
+      }
     }
   }
   private var pendingSave: Pair<File, Promise>? = null
@@ -270,10 +359,13 @@ class GoVueCoreModule : Module() {
       Unit
     }
     OnCreate {
-      installMediaHttp(NativeMediaHttp())
-      installExtractionHttp(NativeExtractionHttp())
+      val mediaHttp = NativeMediaHttp(requireNotNull(appContext.reactContext).applicationContext)
+      installMediaHttp(mediaHttp)
+      installMediaStreamHttp(mediaHttp)
+      installExtractionHttp(NativeExtractionHttp(requireNotNull(appContext.reactContext).applicationContext))
       installCastPlatform(NativeCastPlatform(requireNotNull(appContext.reactContext).applicationContext))
       installAiPlatform(NativeAiPlatform(requireNotNull(appContext.reactContext)))
+      captureInitialBrowserLaunch()
     }
     Function("dictation") { request: String -> dictationExecute(request) }
     AsyncFunction("ai") Coroutine { request: String ->
@@ -302,10 +394,10 @@ class GoVueCoreModule : Module() {
       }
     }
     AsyncFunction("supportedMediaFormats") { raw: String ->
+      mediaTrace("GoVue playback: format support") {
       require(raw.length <= 200000) { "Too many media formats." }
       val formats = JSONArray(raw)
       require(formats.length() <= 500) { "Too many media formats." }
-      val decoders = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.filter { !it.isEncoder }
       val result = JSONArray()
       for (i in 0 until formats.length()) {
         val format = formats.getJSONObject(i)
@@ -322,23 +414,11 @@ class GoVueCoreModule : Module() {
         val width = format.optInt("width")
         val height = format.optInt("height")
         val fps = format.optInt("fps")
-        val supported = decoders.any { decoder ->
-          runCatching {
-            val hardware = if (Build.VERSION.SDK_INT >= 29) decoder.isHardwareAccelerated else !decoder.name.startsWith("OMX.google.") && !decoder.name.startsWith("c2.android.")
-            if (!decoder.supportedTypes.any { it.equals(mime, ignoreCase = true) }) false
-            else if (mime.startsWith("audio/")) true
-            else if (!hardware && (mime == "video/av01" || height > 1080)) false
-            else {
-              val video = decoder.getCapabilitiesForType(mime).videoCapabilities
-              if (width <= 0 || height <= 0) mime != "video/av01" && height <= 1080
-              else if (fps > 0) video.areSizeAndRateSupported(width, height, fps.toDouble())
-              else video.isSizeSupported(width, height)
-            }
-          }.getOrDefault(false)
-        }
+        val supported = mediaCapabilities.supports(mime, width, height, fps)
         if (supported) result.put(format.optString("key"))
       }
       result.toString()
+      }
     }
     AsyncFunction("getSystemVolume") {
       val audio = requireNotNull(appContext.reactContext).getSystemService(Context.AUDIO_SERVICE) as AudioManager
