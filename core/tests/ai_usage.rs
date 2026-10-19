@@ -276,6 +276,26 @@ fn usage_survives_provider_changes_normalizes_protocols_and_preserves_legacy_his
         ok(root, json!({"op":"ai_usage"}))["stats"]["inputTokens"],
         500
     );
+    // Copied replies share usage with their source, including across nested branches.
+    let branch = ok(
+        root,
+        json!({"op":"ai_chat_branch","chatId":saved[0]["id"],"messageId":saved[0]["messages"][1]["id"]}),
+    );
+    assert!(branch["messages"][1]["usageChatId"].is_null());
+    let nested = ok(
+        root,
+        json!({"op":"ai_chat_branch","chatId":branch["id"],"messageId":branch["messages"][1]["id"]}),
+    );
+    let totals = ok(root, json!({"op":"ai_usage"}));
+    assert_eq!(totals["stats"]["inputTokens"], 500);
+    assert_eq!(totals["stats"]["outputTokens"], 100);
+    assert_eq!(totals["stats"]["replyCount"], 5);
+    ok(root, json!({"op":"ai_chat_delete","chatId":branch["id"]}));
+    assert_eq!(
+        ok(root, json!({"op":"ai_usage"}))["stats"]["inputTokens"],
+        500
+    );
+    ok(root, json!({"op":"ai_chat_delete","chatId":nested["id"]}));
     assert_eq!(
         request(root, json!({"op":"ai_usage","chatId":"../providers"}))["ok"],
         false

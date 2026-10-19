@@ -24,6 +24,8 @@ pub(super) struct PreparedInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Message {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    usage_chat_id: Option<String>,
     role: String,
     content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,6 +65,7 @@ impl Message {
     fn new(role: &str, content: String) -> Result<Self> {
         Ok(Self {
             id: random()?,
+            usage_chat_id: None,
             role: role.into(),
             content,
             prepared_input: None,
@@ -97,8 +100,16 @@ struct QueuedMessage {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BranchRef {
+    chat_id: String,
+    message_id: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Conversation {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    branched_from: Option<BranchRef>,
     #[serde(default)]
     pinned: bool,
     #[serde(default)]
@@ -128,10 +139,9 @@ fn presentation(chat: &Conversation) -> Result<Value> {
         .as_array_mut()
         .ok_or("Invalid chat messages.")?
     {
-        message
-            .as_object_mut()
-            .ok_or("Invalid chat message.")?
-            .remove("preparedInput");
+        let fields = message.as_object_mut().ok_or("Invalid chat message.")?;
+        fields.remove("preparedInput");
+        fields.remove("usageChatId");
         message["usageDetails"] = usage::details(&message["usage"]);
     }
     Ok(value)
@@ -154,6 +164,9 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
     let mut chat: Conversation =
         serde_json::from_slice(&bytes).map_err(|_| "This saved chat is unreadable.")?;
     if chat.id != id
+        || chat.branched_from.as_ref().is_some_and(|branch| {
+            !valid_id(&branch.chat_id) || branch.chat_id == chat.id || !valid_id(&branch.message_id)
+        })
         || !(valid_id(&chat.provider_id) || chat.provider_id.is_empty() && chat.messages.is_empty())
         || chat
             .video_id
@@ -184,6 +197,9 @@ fn read(root: &Path, id: &str) -> Result<Conversation> {
         || !chat.messages.len().is_multiple_of(2)
         || chat.messages.iter().enumerate().any(|(i, m)| {
             !valid_id(&m.id)
+                || m.usage_chat_id
+                    .as_ref()
+                    .is_some_and(|id| m.role != "assistant" || !valid_id(id))
                 || m.role != if i % 2 == 0 { "user" } else { "assistant" }
                 || !matches!(
                     m.status.as_str(),
@@ -336,19 +352,24 @@ fn visible_chats(root: &Path) -> Result<Vec<Conversation>> {
     let rows = list(root)?;
     let bound: std::collections::HashSet<_> = rows
         .iter()
+        .filter(|chat| chat.branched_from.is_none())
         .filter_map(|chat| chat.video_id.as_ref())
         .collect();
     let mut seen = std::collections::HashSet::new();
     Ok(rows
         .iter()
         .filter(|chat| {
-            !(chat.video_id.is_none()
+            !(chat.branched_from.is_none()
+                && chat.video_id.is_none()
                 && chat
                     .transcript
                     .as_ref()
                     .is_some_and(|t| bound.contains(&t.video_id)))
         })
         .filter(|chat| {
+            if chat.branched_from.is_some() {
+                return true;
+            }
             let video = chat
                 .video_id
                 .as_ref()
@@ -389,15 +410,29 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
         return Err("Invalid video identity.".into());
     }
     let rows = list(root)?;
-    let existing = rows
-        .iter()
-        .find(|chat| chat.video_id.as_deref() == Some(id))
-        .or_else(|| {
-            rows.iter().find(|chat| {
-                chat.video_id.is_none()
-                    && chat.transcript.as_ref().is_some_and(|t| t.video_id == id)
+    let candidates = rows.iter().filter(|chat| chat.branched_from.is_none());
+    let existing = if let Some(value) = c.get("chatId") {
+        let chat = rows
+            .iter()
+            .find(|chat| Some(chat.id.as_str()) == value.as_str())
+            .ok_or("This chat is no longer available.")?;
+        if chat.video_id.as_deref() != Some(id)
+            && chat.transcript.as_ref().is_none_or(|t| t.video_id != id)
+        {
+            return Err("This chat belongs to a different video.".into());
+        }
+        Some(chat)
+    } else {
+        candidates
+            .clone()
+            .find(|chat| chat.video_id.as_deref() == Some(id))
+            .or_else(|| {
+                candidates.clone().find(|chat| {
+                    chat.video_id.is_none()
+                        && chat.transcript.as_ref().is_some_and(|t| t.video_id == id)
+                })
             })
-        });
+    };
     let mut chat = if let Some(chat) = existing {
         chat.clone()
     } else {
@@ -413,6 +448,7 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
         let p = selected.as_deref().and_then(|id| provider(root, id).ok());
         Conversation {
             id: format!("video_{id}"),
+            branched_from: None,
             pinned: false,
             archived: false,
             title_edited: false,
@@ -455,6 +491,49 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
     }
     save(root, &chat)?;
     Ok(chat)
+}
+
+fn branch(root: &Path, c: &Value) -> Result<Value> {
+    let mut chat = read(root, string(c, "chatId")?)?;
+    recover(root, &mut chat)?;
+    if chat.active_task.is_some() {
+        return Err("Stop the response before branching this chat.".into());
+    }
+    let message_id = string(c, "messageId")?;
+    let index = chat
+        .messages
+        .iter()
+        .position(|m| m.id == message_id && m.role == "assistant" && m.status != "streaming")
+        .ok_or("Choose a finished response to branch from.")?;
+    if list(root)?.len() >= MAX_CHATS {
+        return Err("Chat history is full. Delete an older chat first.".into());
+    }
+    let source_id = chat.id.clone();
+    chat.branched_from = Some(BranchRef {
+        chat_id: source_id.clone(),
+        message_id: message_id.into(),
+    });
+    chat.id = random()?;
+    chat.messages.truncate(index + 1);
+    for message in &mut chat.messages {
+        if message.role == "assistant" {
+            message
+                .usage_chat_id
+                .get_or_insert_with(|| source_id.clone());
+        }
+    }
+    chat.pending_messages.clear();
+    chat.active_task = None;
+    chat.pinned = false;
+    chat.archived = false;
+    chat.title = format!(
+        "Branch of {}",
+        chat.title.chars().take(190).collect::<String>()
+    );
+    chat.created_at = now();
+    chat.updated_at = chat.created_at;
+    save(root, &chat)?;
+    presentation(&chat)
 }
 /// Only completed user/assistant pairs become context for the next turn.
 pub(super) fn history(value: &Value) -> Result<Vec<Value>> {
@@ -950,6 +1029,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         let p = provider(&root, string(&c, "id")?)?;
         Conversation {
             id: random()?,
+            branched_from: None,
             pinned: false,
             archived: false,
             title_edited: false,
@@ -1228,6 +1308,7 @@ fn usage_report(command: &Value, root: &Path) -> Result<Value> {
     }
     let cfg = config(root)?;
     let mut turns = Vec::new();
+    let mut counted = std::collections::HashSet::new();
     let mut context = Value::Null;
     for chat in chats
         .iter()
@@ -1274,6 +1355,13 @@ fn usage_report(command: &Value, root: &Path) -> Result<Value> {
                 context = json!({"used":message.usage["latestContextTokens"].as_u64().or_else(|| message.usage["inputTokens"].as_u64()),
                     "window":window,"maxOutputTokens":message.max_output_tokens.or_else(|| model.and_then(|m| m.max_output_tokens)),
                     "reasoningEffort":message.reasoning_effort,"model":model_id,"providerLabel":label});
+            }
+            // Only branch copies share usage; legacy chats may reuse message identities.
+            if !counted.insert((
+                message.usage_chat_id.as_ref().unwrap_or(&chat.id),
+                &message.id,
+            )) {
+                continue;
             }
             turns.push(usage::Turn {
                 chat_id: chat.id.clone(),
@@ -1475,6 +1563,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             )
         }
         "ai_chat_video_open" => presentation(&open_video(&root, &c)?),
+        "ai_chat_branch" => branch(&root, &c),
         "ai_chat_model" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;
             recover(&root, &mut chat)?;

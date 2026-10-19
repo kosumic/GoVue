@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Check, ChevronDown, ChevronRight, CircleCheck, CircleHelp, CircleX, Copy, RotateCw, Square, Volume2 } from 'lucide-react-native';
+import { Check, ChevronDown, ChevronRight, CircleCheck, CircleHelp, CircleX, Copy, GitBranch, RotateCw, Square, Volume2 } from 'lucide-react-native';
 import type { ChatMessage } from '../ai/useChats';
 import { formatTokens } from '../ai/usage';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -17,7 +17,7 @@ function Detail({ label, value }: { label: string; value: string | undefined }) 
   return value === undefined ? null : <View style={s.detail}><Text style={s.label}>{label}</Text><Text selectable style={s.value}>{value}</Text></View>;
 }
 
-export function AiMessageDetails({ message, last, retryDisabled, onRetry, reading, readDisabled, onRead }: { message: ChatMessage; last: boolean; retryDisabled: boolean; onRetry: () => void; reading: boolean; readDisabled: boolean; onRead: () => void }) {
+export function AiMessageDetails({ message, last, retryDisabled, onRetry, branchDisabled, onBranch, reading, readDisabled, onRead }: { message: ChatMessage; last: boolean; retryDisabled: boolean; onRetry: () => void; branchDisabled: boolean; onBranch: () => void; reading: boolean; readDisabled: boolean; onRead: () => void }) {
   const colors = useThemeColors();
   const s = useThemeStyles(makeStyles);
   const { copied, copyText } = useCopyFeedback();
@@ -34,6 +34,7 @@ export function AiMessageDetails({ message, last, retryDisabled, onRetry, readin
   const summary = [message.modelName || message.model, tokens, streamTime ? `Stream duration: ${streamTime}` : null].filter(Boolean).join(' · ');
   const disabled = retryDisabled || message.status === 'streaming';
   const speechDisabled = readDisabled || message.status === 'streaming' || !message.content.trim();
+  const cannotBranch = branchDisabled || message.status === 'streaming';
   return <View style={s.footer}>
     <View style={s.row}>
       <Pressable accessibilityRole="button" accessibilityLabel="Response details" accessibilityHint={cacheLabel} accessibilityState={{ expanded }} onPress={() => setExpanded(!expanded)} style={s.summary}>
@@ -49,6 +50,7 @@ export function AiMessageDetails({ message, last, retryDisabled, onRetry, readin
         {copied ? <Check size={16} color={colors.action} /> : <Copy size={16} color={colors.muted} />}
       </Pressable>}
       <Pressable accessibilityRole="button" accessibilityLabel={message.status === 'failed' || message.status === 'stopped' ? 'Try again' : 'Regenerate response'} accessibilityHint={last ? 'Generate a new response to this prompt' : 'Replaces this response and later messages'} accessibilityState={{ disabled }} disabled={disabled} onPress={onRetry} style={[s.action, disabled && s.disabled]}><RotateCw size={16} color={colors.muted} /></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Branch in new chat" accessibilityHint="Start a separate conversation with messages up to this response" accessibilityState={{ disabled: cannotBranch }} disabled={cannotBranch} onPress={onBranch} style={[s.action, cannotBranch && s.disabled]}><GitBranch size={16} color={colors.muted} /></Pressable>
     </View>
     {expanded && <View style={s.details}>
       <Detail label="Model" value={message.modelName || message.model} />

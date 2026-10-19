@@ -105,6 +105,135 @@ fn wait(root: &Path, started: &Value) {
     panic!("Video chat fixture timed out");
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Exercise branching, reopening, continuation, and source preservation in one fixture."
+)]
+fn verify_branch(root: &Path, backend: &Backend, id: &str, provider: &str) {
+    let source = ok(
+        root,
+        json!({"op":"ai_chat_update","chatId":id,"pinned":true,"archived":true}),
+    );
+    let file = root.join(format!("ai/chats/{id}.json"));
+    let bytes = fs::read(&file).unwrap();
+    let usage = ok(root, json!({"op":"ai_usage"}))["stats"].clone();
+    let requests = backend.requests.lock().unwrap().len();
+    for message in [
+        json!("missing"),
+        json!("../invalid"),
+        Value::Null,
+        source["messages"][0]["id"].clone(),
+    ] {
+        assert_eq!(
+            call(
+                root,
+                json!({"op":"ai_chat_branch","chatId":id,"messageId":message})
+            )["ok"],
+            false
+        );
+        assert_eq!(fs::read(&file).unwrap(), bytes);
+    }
+    let reply = &source["messages"][1]["id"];
+    let branch = ok(
+        root,
+        json!({"op":"ai_chat_branch","chatId":id,"messageId":reply}),
+    );
+    let branch_id = branch["id"].as_str().unwrap();
+    assert_ne!(branch_id, id);
+    assert_eq!(
+        branch["branchedFrom"],
+        json!({"chatId":id,"messageId":reply})
+    );
+    assert_eq!(
+        branch["messages"],
+        json!(&source["messages"].as_array().unwrap()[..2])
+    );
+    for field in [
+        "videoId",
+        "transcript",
+        "providerId",
+        "providerLabel",
+        "model",
+        "reasoningEffort",
+    ] {
+        assert_eq!(branch[field], source[field], "{field}");
+    }
+    assert_eq!(branch["pinned"], false);
+    assert_eq!(branch["archived"], false);
+    assert!(branch["activeTask"].is_null());
+    assert!(branch["pendingMessages"].is_null());
+    assert!(branch["title"].as_str().unwrap().starts_with("Branch of "));
+    assert!(branch["messages"][0]["preparedInput"].is_null());
+    assert_eq!(ok(root, json!({"op":"ai_usage"}))["stats"], usage);
+    assert_eq!(backend.requests.lock().unwrap().len(), requests);
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+    assert_eq!(
+        ok(root, json!({"op":"ai_chat_get","chatId":branch_id})),
+        branch
+    );
+    assert!(
+        ok(root, json!({"op":"ai_chats"}))["chats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == branch_id)
+    );
+    assert!(
+        ok(root, json!({"op":"ai_chats","archived":true}))["chats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == id)
+    );
+    if let Some(video) = source["videoId"].as_str() {
+        assert_eq!(
+            ok(root, json!({"op":"ai_chat_video_open","videoId":video}))["id"],
+            id
+        );
+        assert_eq!(
+            ok(
+                root,
+                json!({"op":"ai_chat_video_open","videoId":video,"chatId":branch_id})
+            )["id"],
+            branch_id
+        );
+        assert_eq!(
+            call(
+                root,
+                json!({"op":"ai_chat_video_open","videoId":"different01","chatId":branch_id})
+            )["ok"],
+            false
+        );
+    }
+    let continued = ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":branch_id,"id":provider,"prompt":"Explore another direction"}),
+    );
+    wait(root, &continued);
+    assert_eq!(continued["conversation"]["id"], branch_id);
+    let wire = backend.requests.lock().unwrap().last().unwrap().to_string();
+    assert!(wire.contains(source["messages"][0]["content"].as_str().unwrap()));
+    assert!(!wire.contains(source["messages"][2]["content"].as_str().unwrap()));
+    if source["transcript"].is_object() {
+        assert!(wire.contains("Caption context for the question."));
+    }
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+    let nested = ok(
+        root,
+        json!({"op":"ai_chat_branch","chatId":branch_id,"messageId":reply}),
+    );
+    ok(root, json!({"op":"ai_chat_delete","chatId":branch_id}));
+    assert_eq!(
+        ok(root, json!({"op":"ai_chat_get","chatId":nested["id"]}))["messages"],
+        branch["messages"]
+    );
+    ok(root, json!({"op":"ai_chat_delete","chatId":nested["id"]}));
+    ok(
+        root,
+        json!({"op":"ai_chat_update","chatId":id,"pinned":false,"archived":false}),
+    );
+}
+
 #[test]
 #[allow(
     clippy::too_many_lines,
@@ -256,6 +385,7 @@ fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
     assert_eq!(backend.requests.lock().unwrap().len(), 2);
     let saved = ok(root, json!({"op":"ai_chat_get","chatId":id}));
     assert_eq!(saved["messages"].as_array().unwrap().len(), 4);
+    verify_branch(root, &backend, &id, provider);
 
     // Legacy duplicates remain on disk, while navigation exposes one canonical video chat.
     let mut legacy = saved.clone();
@@ -436,4 +566,18 @@ fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
         oldest["conversation"]["messages"][1]["id"]
     );
     wait(root, &latest);
+
+    // Conversations without a video use the same branching and persistence boundary.
+    let ordinary = ok(
+        root,
+        json!({"op":"ai_chat_send","id":provider,"prompt":"First ordinary question"}),
+    );
+    wait(root, &ordinary);
+    let ordinary_id = ordinary["conversation"]["id"].as_str().unwrap();
+    let followup = ok(
+        root,
+        json!({"op":"ai_chat_send","chatId":ordinary_id,"id":provider,"prompt":"Later ordinary question"}),
+    );
+    wait(root, &followup);
+    verify_branch(root, &backend, ordinary_id, provider);
 }
