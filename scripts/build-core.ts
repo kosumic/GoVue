@@ -6,7 +6,11 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const moduleRoot = join(root, 'modules/govue-core');
 const platform = process.argv[2] || 'host';
-const run = (command: string, args: string[], extra: ExecFileSyncOptions = {}) => execFileSync(command, args, { cwd: root, stdio: 'inherit', env: { ...process.env, CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS || '2' }, ...extra });
+let gitCommit = '';
+try {
+  gitCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+} catch { /* Source archives may not have Git metadata. */ }
+const run = (command: string, args: string[], extra: ExecFileSyncOptions = {}) => execFileSync(command, args, { cwd: root, stdio: 'inherit', env: { ...process.env, GOVUE_GIT_COMMIT: gitCommit, CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS || '2' }, ...extra });
 const lib = process.platform === 'darwin' ? 'libgovue_core.dylib' : 'libgovue_core.so';
 
 // Generate bindings from the host library; the host CLI is not a mobile input.
@@ -41,7 +45,7 @@ if (platform === 'android') {
   delete discoveryEnv.DEVELOPER_DIR;
   delete discoveryEnv.SDKROOT;
   const appleEnv = {
-    ...process.env, CARGO_BUILD_JOBS: '2',
+    ...process.env, GOVUE_GIT_COMMIT: gitCommit, CARGO_BUILD_JOBS: '2',
     PATH: '/usr/bin:/bin:' + process.env.PATH,
     DEVELOPER_DIR: execFileSync('/usr/bin/xcode-select', ['-p'], { encoding: 'utf8', env: discoveryEnv }).trim(),
     IPHONEOS_DEPLOYMENT_TARGET: '16.4',

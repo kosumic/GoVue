@@ -11,6 +11,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 uniffi.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 url = "2"
 roxmltree = "0.21"
 html-escape = "0.3"

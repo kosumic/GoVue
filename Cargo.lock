@@ -399,6 +399,7 @@ dependencies = [
  "jsonwebtoken",
  "pulldown-cmark",
  "roxmltree",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

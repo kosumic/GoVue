@@ -2,7 +2,6 @@ import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { useEffect, useState } from 'react';
 import {
   Alert,
-  Linking,
   LayoutAnimation,
   Pressable,
   ScrollView,
@@ -17,7 +16,6 @@ import {
   Download,
   Hand,
   Play,
-  BrandMark,
   PictureInPicture2,
   Reset,
   Settings,
@@ -38,6 +36,7 @@ import { haptic } from '../player/Haptics';
 import { useReducedMotion } from '../player/useReducedMotion';
 import { AiSettings } from './AiSettings';
 import { LanguageSettings } from './LanguageSettings';
+import { AboutContent } from './AboutContent';
 import { version as appVersion } from '../../package.json';
 
 type Node = {
@@ -372,99 +371,7 @@ export function ExtensionSettings({
           </>
         )}
         {page === 'about' && (
-          <>
-            <View style={s.brand}>
-              <View style={s.mark}>
-                <BrandMark size={108} color={colors.ink} />
-              </View>
-              <Text style={s.name}>GoVue</Text>
-              <Text style={[s.detail, { marginTop: 0 }]}>
-                {appVersion} · LiTube port
-              </Text>
-            </View>
-            <SheetRow
-              labelColor={colors.action}
-              title="Source code"
-              onPress={() =>
-                run(() =>
-                  Linking.openURL('https://github.com/kosumic/GoVue'),
-                )
-              }
-            />
-            <View style={s.line} />
-            <SheetRow
-              labelColor={colors.action}
-              title="Check for stable updates"
-              onPress={() =>
-                run(() =>
-                  Linking.openURL(
-                    'https://github.com/kosumic/GoVue/releases/latest',
-                  ),
-                )
-              }
-            />
-            <SheetRow
-              labelColor={colors.action}
-              title="Open latest stable release"
-              onPress={() =>
-                run(() =>
-                  Linking.openURL(
-                    'https://github.com/kosumic/GoVue/releases/latest',
-                  ),
-                )
-              }
-            />
-            <SheetRow
-              labelColor={colors.action}
-              title="Clear cache"
-              onPress={() =>
-                Alert.alert(
-                  'Clear cache?',
-                  'Remove cached web resources from YouTube.',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Clear',
-                      onPress: () => {
-                        onClearCache();
-                        setNotice('Cache cleared.');
-                      },
-                    },
-                  ],
-                )
-              }
-            />
-            <SheetRow
-              labelColor={colors.action}
-              title="Export diagnostic logs"
-              onPress={() => run(() => exportDiagnostics(true))}
-            />
-            <SheetRow
-              labelColor={colors.action}
-              title="Save diagnostic logs"
-              onPress={() => run(() => exportDiagnostics(false))}
-            />
-            <SheetRow
-              labelColor={colors.action}
-              title="LiTube"
-              detail="Based on HydeYYHH/Litube · GPL-3.0"
-              onPress={() =>
-                run(() => Linking.openURL('https://github.com/HydeYYHH/Litube'))
-              }
-            />
-            <SheetRow
-              labelColor={colors.action}
-              title="License"
-              detail="GNU General Public License v3.0"
-              onPress={() =>
-                run(() =>
-                  Linking.openURL(
-                    'https://github.com/kosumic/GoVue/blob/master/LICENSE',
-                  ),
-                )
-              }
-            />
-          </>
+          <AboutContent onClearCache={onClearCache} onExportDiagnostics={exportDiagnostics} />
         )}
         {!!notice && (
           <Text accessibilityLiveRegion="polite" style={s.notice}>
@@ -506,19 +413,5 @@ const makeStyles = (colors: ThemeColors) =>
     label: { color: colors.ink, fontSize: 14, lineHeight: 20 },
     detail: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
     slider: { paddingHorizontal: 16, paddingTop: 8 },
-    brand: { alignItems: 'center', paddingVertical: 24 },
-    mark: {
-      width: 72,
-      height: 72,
-      overflow: 'hidden',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    name: { color: colors.ink, fontSize: 22, lineHeight: 28 },
-    line: {
-      height: 1,
-      backgroundColor: colors.separator,
-      marginHorizontal: 16,
-    },
-    notice: { color: '#ccc', padding: 16, fontSize: 13 },
+    notice: { color: colors.muted, padding: 16, fontSize: 13 },
   });

@@ -13,6 +13,7 @@ use url::Url;
 
 uniffi::setup_scaffolding!();
 mod ai;
+mod app;
 mod browser;
 mod caption_tracks;
 mod caption_words;
@@ -523,6 +524,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    if op.starts_with("app_") {
+        return app::dispatch(&command);
+    }
     if op.starts_with("transcript_session_") {
         return transcript_session::dispatch(&command, root);
     }
@@ -563,7 +567,10 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         return gallery::dispatch(&command, root);
     }
     if op == "info" {
-        return Ok(json!({"engine": "rust", "version": env!("CARGO_PKG_VERSION")}));
+        return Ok(
+            json!({"engine": "rust", "version": env!("CARGO_PKG_VERSION"),
+            "commit": option_env!("GOVUE_GIT_COMMIT")}),
+        );
     }
     let id = string(&command, "videoId")?;
     if !video_id(id) {
