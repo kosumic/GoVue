@@ -37,13 +37,19 @@ impl Store {
         self.0.join("vocabulary/words.json")
     }
     fn transcript(&self, language: &str) {
+        self.transcript_segments(
+            language,
+            json!([
+                {"start":2.75,"duration":3,"text":"Hello, world! Café can't résumé."},
+                {"start":9,"duration":2,"text":"hello again"}
+            ]),
+        );
+    }
+    fn transcript_segments(&self, language: &str, segments: Value) {
         let data = json!({
             "videoId": VIDEO, "title": "Word practice", "language": language, "trackId": language,
             "tracks": [{"id": language,"label": language,"language": language,"automatic":false}],
-            "segments": [
-                {"start":2.75,"duration":3,"text":"Hello, world! Café can't résumé."},
-                {"start":9,"duration":2,"text":"hello again"}
-            ]
+            "segments": segments
         });
         self.value(json!({"op":"accept","videoId":VIDEO,"origin":format!("https://www.youtube.com/watch?v={VIDEO}"),"requestId":"words",
             "raw":json!({"type":"transcript","videoId":VIDEO,"requestId":"words","ok":true,"transcript":data}).to_string()}));
@@ -62,6 +68,67 @@ impl Drop for Store {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn selection_maps_utf16_handles_to_the_correct_words_and_normalizes_line_breaks() {
+    let store = Store::new();
+    let text = "👋 Hello, world!\nHello again.";
+    store.transcript_segments("en", json!([{"start":1,"duration":3,"text":text}]));
+    let command =
+        json!({"op":"vocabulary_selection","videoId":VIDEO,"trackId":"en","segmentIndex":0});
+    let select = |start, end| {
+        let mut command = command.clone();
+        command["selectionStart"] = json!(start);
+        command["selectionEnd"] = json!(end);
+        store.value(command)
+    };
+    let second_hello = "👋 Hello, world!\n".encode_utf16().count();
+    let selected = select(second_hello + 1, text.encode_utf16().count() - 1);
+    assert_eq!(selected["word"], "Hello again");
+    assert_eq!(selected["selectionStart"], second_hello);
+    assert_eq!(selected["selectionEnd"], text.encode_utf16().count() - 1);
+    let prepared = store
+        .value(json!({"op":"vocabulary_caption","videoId":VIDEO,"trackId":"en","segmentIndex":0}));
+    let tokens = prepared["tokens"].as_array().unwrap();
+    let repeated = tokens
+        .iter()
+        .rposition(|token| token["text"] == "Hello")
+        .unwrap();
+    assert_eq!(selected["tokenIndex"], repeated);
+    let across_lines = select("👋 Hello, ".encode_utf16().count() + 1, second_hello + 2);
+    assert_eq!(across_lines["word"], "world! Hello");
+    let mut save = Store::selection("en", 0, repeated, "Hello again");
+    save["endTokenIndex"] = selected["endTokenIndex"].clone();
+    assert_eq!(store.value(save)["entry"]["word"], "Hello again");
+}
+
+#[test]
+fn phrase_selection_rejects_invalid_handles_and_forged_text_before_saving() {
+    let store = Store::new();
+    store.transcript("en");
+    for (start, end) in [(0, 0), (5, 2), (5, 7), (0, 999)] {
+        assert_eq!(store.call(json!({"op":"vocabulary_selection","videoId":VIDEO,"trackId":"en","segmentIndex":0,"selectionStart":start,"selectionEnd":end}))["ok"], false);
+    }
+    let mut command = Store::selection("en", 0, 0, "Hello, world");
+    command["endTokenIndex"] = json!(3);
+    for (field, value) in [
+        ("word", json!("forged phrase")),
+        ("endTokenIndex", json!(1)),
+        ("endTokenIndex", json!(999)),
+        ("tokenIndex", json!(6)),
+    ] {
+        let mut invalid = command.clone();
+        invalid[field] = value;
+        assert_eq!(store.call(invalid)["ok"], false);
+    }
+    assert!(!store.file().exists());
+    store.transcript_segments(
+        "en",
+        json!([{"start":1,"duration":3,"text":format!("Hello {}", "a".repeat(256))}]),
+    );
+    assert_eq!(store.call(json!({"op":"vocabulary_selection","videoId":VIDEO,"trackId":"en","segmentIndex":0,"selectionStart":0,"selectionEnd":262}))["ok"], false);
+    assert!(!store.file().exists());
 }
 
 #[test]

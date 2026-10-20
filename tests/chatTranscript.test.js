@@ -25,7 +25,7 @@ async function harness(t, options = {}) {
     platform: 'node', format: 'cjs', jsx: 'automatic', packages: 'external',
     plugins: [{ name: 'chat-transcript-edges', setup(builder) {
       builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'test-core', external: true }));
-      builder.onResolve({ filter: /\/(theme|core\/transcripts|core\/vocabulary|player\/usePlayerTranscript|IconButton|WordTranslationSheet|TranscriptTranslations)$/ },
+      builder.onResolve({ filter: /\/(theme|core\/transcripts|core\/vocabulary|player\/usePlayerTranscript|IconButton|WordTranslationSheet|TranscriptTranslations|CaptionSelection)$/ },
         args => ({ path: args.path, external: true }));
     } }],
   });
@@ -35,6 +35,7 @@ async function harness(t, options = {}) {
     StyleSheet: { create: styles => styles, hairlineWidth: 1 },
     useWindowDimensions: () => ({ fontScale: 1 }),
     AppState: { currentState: 'active', addEventListener(_, listener) { apps.add(listener); return { remove: () => apps.delete(listener) }; } },
+    BackHandler: { addEventListener: () => ({ remove() {} }) },
     FlatList: props => React.createElement('FlatList', {}, props.data.map((item, index) =>
       React.createElement(React.Fragment, { key: props.keyExtractor(item, index) }, props.renderItem({ item, index })))),
   };
@@ -79,7 +80,7 @@ async function harness(t, options = {}) {
         { text: second, word: true, ...(!options.untimed && { start: segment.start + 1, end: segment.start + 2 }) },
       ] };
     } };
-    for (const component of ['IconButton', 'WordTranslationSheet', 'TranscriptTranslations']) {
+    for (const component of ['IconButton', 'WordTranslationSheet', 'TranscriptTranslations', 'CaptionSelection']) {
       if (name.endsWith(`/${component}`)) return { [component]: component };
     }
     return require(name);
@@ -166,4 +167,26 @@ test('chat captions without word timing still play and stop as a line', async t 
   assert.equal(env.player().playing, true);
   await env.emit('playToEnd');
   assert.equal(env.player().playing, false);
+});
+
+test('holding a word opens the card with handles and changing its range keeps both mounted', async t => {
+  const env = await harness(t);
+  const word = env.root.root.findAllByType('Text').find(node => node.children[0] === 'Hello');
+  await act(() => word.props.onLongPress({ ...event(), nativeEvent: { pageX: 40, pageY: 200 } }));
+  const handleView = env.root.root.findByType('CaptionSelection');
+  const seed = handleView.props.initial;
+  const card = () => env.root.root.findByType('WordTranslationSheet');
+  assert.equal(card().props.selection.word, 'Hello');
+  assert.equal(card().props.pending, true);
+  await act(() => {
+    handleView.props.onChange({ ...seed, word: 'Hello world', endTokenIndex: 2 });
+    handleView.props.onPending(false);
+  });
+  assert.equal(env.root.root.findByType('CaptionSelection').props.initial, seed);
+  assert.equal(card().props.selection.word, 'Hello world');
+  assert.equal(card().props.selection.endTokenIndex, 2);
+  assert.equal(card().props.pending, false);
+  await act(async () => card().props.onClose());
+  assert.equal(env.root.root.findAllByType('CaptionSelection').length, 0);
+  assert.equal(env.root.root.findAllByType('WordTranslationSheet').length, 0);
 });

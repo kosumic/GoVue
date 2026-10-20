@@ -20,7 +20,7 @@ test('caption menus stay separate, keep selected chips removable, and enforce th
   let themeReads = 0, latestCallbackCalled = false;
   const compiled = await build({ entryPoints: ['src/components/TranscriptPanel.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', packages: 'external',
     plugins: [{ name: 'transcript-presentation', setup(builder) {
-      builder.onResolve({ filter: /\/(theme|core\/transcripts|core\/vocabulary|IconButton|TranscriptWords|WordTranslationSheet)$/ }, args => ({ path: args.path, external: true }));
+      builder.onResolve({ filter: /\/(theme|core\/transcripts|core\/vocabulary|IconButton|TranscriptWords|WordTranslationSheet|CaptionSelection)$/ }, args => ({ path: args.path, external: true }));
     } }],
   });
   const colors = new Proxy({}, { get: () => '#123456' });
@@ -44,6 +44,7 @@ test('caption menus stay separate, keep selected chips removable, and enforce th
     if (name.endsWith('/IconButton')) return { IconButton: ({ label, onPress }) => React.createElement('Pressable', { accessibilityLabel: label, onPress }) };
     if (name.endsWith('/TranscriptWords')) return { TranscriptWords: () => null };
     if (name.endsWith('/WordTranslationSheet')) return { WordTranslationSheet: () => null };
+    if (name.endsWith('/CaptionSelection')) return { CaptionSelection: () => null };
     return require(name);
   }, module, module.exports);
   let props = { data, trackIds: ['.en'], loading: false, error: null, cached: false, position: null, pauseAfterLine: false,

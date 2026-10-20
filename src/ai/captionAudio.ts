@@ -2,7 +2,7 @@ import { aiRequest } from '../../modules/govue-core';
 
 export type GameScope = { gameId: string } & ({ practice: true } | { chatId: string; messageId: string });
 export type TranscriptScope = { chatId: string; videoId: string; trackId: string };
-export type WordScope = { videoId: string; trackId: string; segmentIndex: number; tokenIndex: number; word: string };
+export type WordScope = { videoId: string; trackId: string; segmentIndex: number; tokenIndex: number; endTokenIndex?: number; word: string };
 export type CaptionScope = GameScope | TranscriptScope | WordScope;
 export type Clip = { needsMedia: false; uri: string; token: string; start: number; end: number };
 export type MissingClip = { needsMedia: true; videoId: string };

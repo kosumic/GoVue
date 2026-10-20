@@ -70,7 +70,7 @@ test('every learning-language result appears independently and native options ne
   assert.match(env.text(), /Hola/); assert.match(env.text(), /Hallo/);
   assert.equal(env.saves.length, 0);
   await env.press('Save word');
-  assert.deepEqual(env.saves[0].args, [source, 0, 0, 'Hello']);
+  assert.deepEqual(env.saves[0].args, [source, 0, 0, 'Hello', undefined]);
   await env.reply(env.saves[0], { saved: true });
   assert.match(env.text(), /Word saved/);
 });
@@ -117,4 +117,29 @@ test('dismissed planning never invokes native translation and same-language fall
   await same.reply(same.plans[0], [{ ...plan('en', 'English'), sameLanguage: true }]);
   assert.equal(same.native.length, 0);
   assert.match(same.text(), /Already in English/);
+});
+
+test('dragging keeps the card nonmodal, drops old translations, and saves the updated phrase', async t => {
+  const env = await harness(); t.after(env.unmount);
+  assert.equal(env.root.root.findAllByType('Modal').length, 0, 'the source handles remain in the active window');
+  assert.ok(env.root.root.findAllByType('View').some(node => node.props.pointerEvents === 'box-none'));
+  await env.reply(env.plans[0], [plan('es', 'Spanish'), plan('de', 'German')]);
+  await env.render({ pending: true });
+  assert.equal(env.root.root.findByProps({ accessibilityLabel: 'Save word' }).props.disabled, true);
+  const next = { ...selection, word: 'Hello world', endTokenIndex: 2 };
+  await env.render({ selection: next });
+  assert.equal(env.plans.length, 1, 'pending handle movement does not translate an outdated range');
+  await env.reply(env.native[0], { translatedTexts: 'Stale greeting' });
+  assert.doesNotMatch(env.text(), /Stale greeting/);
+  assert.equal(env.native.length, 1, 'remaining translations for the old word were cancelled');
+  await env.render({ pending: false });
+  assert.deepEqual(env.plans[1].args[0], next);
+  await env.reply(env.plans[1], [plan('es', 'Spanish', 'Hello world')]);
+  assert.equal(env.native[1].args[0].input, 'Hello world');
+  await env.reply(env.native[1], { translatedTexts: 'Hola mundo' });
+  assert.match(env.text(), /Hola mundo/);
+  await env.press('Save phrase');
+  assert.deepEqual(env.saves[0].args, [source, 0, 0, 'Hello world', 2]);
+  await env.reply(env.saves[0], { saved: true });
+  assert.match(env.text(), /Phrase saved/);
 });

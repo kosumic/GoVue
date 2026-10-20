@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { BookOpen, BookmarkPlus, Check, Copy, RotateCw, Sparkles, Square, Volume2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { planWordTranslation, saveWord, wordAudioTiming, type WordSelection, type WordTranslationPlan } from '../core/vocabulary';
@@ -14,9 +14,11 @@ import { useCopyFeedback } from './useCopyFeedback';
 import { WordAiProviderPicker } from './WordAiProviderPicker';
 type Translation = { plan: WordTranslationPlan; text: string | null; error: string };
 
-export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio }: {
+export function WordTranslationSheet({ selection, anchor, pending = false, frame, onClose, onBeforeAudio }: {
   selection: WordSelection;
   anchor?: { x: number; y: number };
+  pending?: boolean;
+  frame?: { x: number; y: number; width: number; height: number };
   onClose: () => void;
   onBeforeAudio?: () => Promise<void> | void;
 }) {
@@ -26,14 +28,16 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
   const [cardHeight, setCardHeight] = useState(0);
-  const width = Math.min(420, window.width - 32);
-  const topEdge = insets.top + 16;
-  const bottomEdge = window.height - insets.bottom - 16;
-  const point = anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y) ? anchor : undefined;
+  const viewportWidth = frame?.width ?? window.width;
+  const viewportHeight = frame?.height ?? window.height;
+  const width = Math.min(420, viewportWidth - 32);
+  const topEdge = frame ? 12 : insets.top + 16;
+  const bottomEdge = frame ? viewportHeight - 12 : viewportHeight - insets.bottom - 16;
+  const point = anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y) ? { x: anchor.x - (frame?.x ?? 0), y: anchor.y - (frame?.y ?? 0) } : undefined;
   const anchorSpace = point ? Math.max(bottomEdge - point.y - 24, point.y - topEdge - 24) : bottomEdge - topEdge;
-  const maxHeight = Math.min(window.height * 0.7, bottomEdge - topEdge, Math.max(120, anchorSpace));
+  const maxHeight = Math.min(viewportHeight * 0.7, bottomEdge - topEdge, Math.max(120, anchorSpace));
   const height = Math.min(cardHeight, maxHeight);
-  const left = Math.max(16, Math.min(window.width - width - 16, (point?.x ?? window.width / 2) - width / 2));
+  const left = Math.max(16, Math.min(viewportWidth - width - 16, (point?.x ?? viewportWidth / 2) - width / 2));
   const preferredTop = point ? point.y + 24 + height <= bottomEdge ? point.y + 24 : point.y - height - 24
     : topEdge + (bottomEdge - topEdge - height) / 2;
   const top = Math.max(topEdge, Math.min(bottomEdge - height, preferredTop));
@@ -47,17 +51,20 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
   const provider = ai.providers.find(p => p.id === ai.activeId);
   const group = ai.groups.find(g => g.id === ai.activeId);
   const providerKey = `${ai.activeId ?? ''}\0${provider?.model ?? group?.name ?? ''}`;
-  const aiAvailable = ai.ready && !ai.busy && (!!group?.connected || !!provider?.enabled && provider.connected && !provider.needsReauth && provider.models.some(m => m.id === provider.model && !m.hidden));
-  const example = useWordAssistance<WordExample>(selection, 'example', providerKey);
-  const grammar = useWordAssistance<WordGrammar>(selection, 'grammar', providerKey);
-  const audio = useWordAudio({ videoId: selection.source.videoId, trackId: selection.source.trackId, segmentIndex: selection.segmentIndex, tokenIndex: selection.tokenIndex, word: selection.word }, onBeforeAudio);
+  const aiAvailable = !pending && ai.ready && !ai.busy && (!!group?.connected || !!provider?.enabled && provider.connected && !provider.needsReauth && provider.models.some(m => m.id === provider.model && !m.hidden));
+  const example = useWordAssistance<WordExample>(selection, 'example', providerKey, !pending);
+  const grammar = useWordAssistance<WordGrammar>(selection, 'grammar', providerKey, !pending);
+  const phrase = selection.endTokenIndex !== undefined && selection.endTokenIndex !== selection.tokenIndex;
+  const audio = useWordAudio({ videoId: selection.source.videoId, trackId: selection.source.trackId, segmentIndex: selection.segmentIndex, tokenIndex: selection.tokenIndex, endTokenIndex: selection.endTokenIndex, word: selection.word }, onBeforeAudio);
   const speech = useExampleSpeech(selection, async () => { stopCaptionAudio(); await onBeforeAudio?.(); });
   useEffect(() => { speech.stop(); }, [example.result]);
+  useEffect(() => { if (pending) { speech.stop(); audio.stop(); } }, [pending]);
   const activeSelection = useRef<WordSelection | null>(selection);
   activeSelection.current = selection;
   useEffect(() => {
     let active = true;
     setResults(null); setError('');
+    if (pending) return;
     void (async () => {
       const plans = await planWordTranslation(selection);
       if (!active) return;
@@ -71,7 +78,7 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
       }
     })().catch(failure => { if (active) setError(failure instanceof Error ? failure.message : 'Could not translate this word.'); });
     return () => { active = false; };
-  }, [selection, revision]);
+  }, [selection, pending, revision]);
   useEffect(() => { setSaveStatus(''); setSaving(false); }, [selection]);
   useEffect(() => {
     let active = true;
@@ -84,38 +91,28 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
     return () => { activeSelection.current = null; };
   }, [selection]);
   async function save() {
-    if (saving) return;
+    if (saving || pending) return;
     setSaving(true); setSaveStatus('');
     try {
-      const { saved } = await saveWord(selection.source, selection.segmentIndex, selection.tokenIndex, selection.word);
-      if (activeSelection.current === selection) setSaveStatus(saved ? 'Word saved' : 'Word already saved');
+      const { saved } = await saveWord(selection.source, selection.segmentIndex, selection.tokenIndex, selection.word, selection.endTokenIndex);
+      if (activeSelection.current === selection) setSaveStatus(phrase ? saved ? 'Phrase saved' : 'Phrase already saved' : saved ? 'Word saved' : 'Word already saved');
     } catch (failure) {
       if (activeSelection.current === selection) setSaveStatus(failure instanceof Error ? failure.message : 'Could not save word.');
     } finally { if (activeSelection.current === selection) setSaving(false); }
   }
 
-  return <Modal transparent visible statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={onClose}>
-    <View style={styles.backdrop}>
-      <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close word translation" onPress={onClose} />
-      <View accessibilityViewIsModal onLayout={event => setCardHeight(event.nativeEvent.layout.height)} style={[styles.card, { width, maxHeight, left, top, opacity: cardHeight > 0 ? 1 : 0 }]}>
-        <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>Translate word</Text><IconButton icon={X} label="Close word translation" onPress={onClose} /></View>
+  return <View pointerEvents="box-none" style={styles.overlay}>
+      <View onLayout={event => setCardHeight(event.nativeEvent.layout.height)} style={[styles.card, { width, maxHeight, left, top, opacity: cardHeight > 0 ? 1 : 0 }]}>
+        <View style={styles.heading}><Text accessibilityRole="header" style={styles.title}>{phrase ? 'Translate phrase' : 'Translate word'}</Text><IconButton icon={X} label="Close word translation" onPress={onClose} /></View>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.wordHeading}>
             <Text selectable style={styles.word}>{selection.word}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={copied ? 'Word copied' : 'Copy word'} accessibilityLiveRegion="polite" onPress={() => copyText(selection.word)} style={({ pressed }) => [styles.copyButton, pressed && { opacity: 0.35 }]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={phrase ? copied ? 'Phrase copied' : 'Copy phrase' : copied ? 'Word copied' : 'Copy word'} disabled={pending} accessibilityState={{ disabled: pending }} accessibilityLiveRegion="polite" onPress={() => copyText(selection.word)} style={({ pressed }) => [styles.copyButton, pressed && { opacity: 0.35 }]}>
               {copied ? <Check size={24} color={colors.accent} /> : <Copy size={24} color={colors.ink} />}
             </Pressable>
           </View>
-          <Text style={styles.context}>{selection.source.segments[selection.segmentIndex].text}</Text>
-          {timed && <Pressable accessibilityRole="button" accessibilityLabel={audio.phase === 'idle' ? 'Play word' : 'Stop word audio'} onPress={() => {
-            speech.stop();
-            if (audio.phase === 'idle') void audio.play('word').catch(() => {}); else audio.stop();
-          }} style={styles.save}>
-            {audio.phase === 'loading' ? <ActivityIndicator color={colors.accent} /> : audio.phase === 'playing' ? <Square size={19} color={colors.ink} /> : <Volume2 size={19} color={colors.ink} />}
-            <Text style={styles.saveText}>{audio.phase === 'loading' ? 'Loading audio…' : audio.phase === 'playing' ? 'Stop audio' : 'Play word'}</Text>
-          </Pressable>}
-          {!!audio.error && <Text accessibilityRole="alert" style={styles.error}>{audio.error}</Text>}
-          {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : results ? results.map(result =>
+          <Text style={styles.help}>Drag either handle to change the selection.</Text>
+          {pending ? <ActivityIndicator accessibilityLabel="Updating selection" color={colors.accent} /> : error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : results ? results.map(result =>
             <View key={result.plan.targetLangCode} accessibilityLiveRegion="polite" style={styles.result}>
               <Text style={styles.label}>{result.plan.targetLanguage}</Text>
               {result.error ? <Text accessibilityRole="alert" style={styles.error}>{result.error}</Text> : result.text !== null ?
@@ -124,12 +121,20 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
             </View>) : <ActivityIndicator accessibilityLabel="Preparing word translations" color={colors.accent} />}
           {results?.some(result => result.text === null && !result.error) && <Text style={styles.help}>The first translation may download language models.</Text>}
           {(!!error || results?.some(result => !!result.error)) && <IconButton icon={RotateCw} label="Retry word translation" onPress={() => setRevision(value => value + 1)} />}
-          <Pressable accessibilityRole="button" accessibilityLabel="Save word" accessibilityState={{ disabled: saving }} disabled={saving} onPress={() => { void save(); }} style={styles.save}>
-            <BookmarkPlus size={19} color={colors.ink} /><Text style={styles.saveText}>{saving ? 'Saving…' : 'Save word'}</Text>
+          {timed && !pending && <Pressable accessibilityRole="button" accessibilityLabel={audio.phase === 'idle' ? phrase ? 'Play phrase' : 'Play word' : 'Stop word audio'} onPress={() => {
+            speech.stop();
+            if (audio.phase === 'idle') void audio.play('word').catch(() => {}); else audio.stop();
+          }} style={styles.save}>
+            {audio.phase === 'loading' ? <ActivityIndicator color={colors.accent} /> : audio.phase === 'playing' ? <Square size={19} color={colors.ink} /> : <Volume2 size={19} color={colors.ink} />}
+            <Text style={styles.saveText}>{audio.phase === 'loading' ? 'Loading audio…' : audio.phase === 'playing' ? 'Stop audio' : phrase ? 'Play phrase' : 'Play word'}</Text>
+          </Pressable>}
+          {!!audio.error && <Text accessibilityRole="alert" style={styles.error}>{audio.error}</Text>}
+          <Pressable accessibilityRole="button" accessibilityLabel={phrase ? 'Save phrase' : 'Save word'} accessibilityState={{ disabled: saving || pending }} disabled={saving || pending} onPress={() => { void save(); }} style={styles.save}>
+            <BookmarkPlus size={19} color={colors.ink} /><Text style={styles.saveText}>{saving ? 'Saving…' : phrase ? 'Save phrase' : 'Save word'}</Text>
           </Pressable>
           {!!saveStatus && <Text accessibilityLiveRegion="polite" style={styles.help}>{saveStatus}</Text>}
           <WordAiProviderPicker ai={ai} />
-          {!aiAvailable && <Text style={styles.help}>{ai.error || (!ai.ready ? 'Loading AI providers…' : 'Choose a connected provider and model to generate examples and grammar explanations.')}</Text>}
+          {!pending && !aiAvailable && <Text style={styles.help}>{ai.error || (!ai.ready ? 'Loading AI providers…' : 'Choose a connected provider and model to generate examples and grammar explanations.')}</Text>}
           <Pressable accessibilityRole="button" accessibilityLabel="Generate example" accessibilityState={{ disabled: example.busy || !aiAvailable }} disabled={example.busy || !aiAvailable} onPress={() => { void example.generate(); }} style={[styles.save, !aiAvailable && styles.disabled]}>
             {example.busy ? <ActivityIndicator color={colors.accent} /> : <Sparkles size={19} color={colors.ink} />}<Text style={styles.saveText}>{example.busy ? 'Generating example…' : 'Generate example'}</Text>
           </Pressable>
@@ -161,12 +166,11 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
           </View>}
         </ScrollView>
       </View>
-    </View>
-  </Modal>;
+  </View>;
 }
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#0005' },
+  overlay: { ...StyleSheet.absoluteFill, zIndex: 10 },
   card: { position: 'absolute', backgroundColor: colors.dialog, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingBottom: 12, elevation: 12, boxShadow: '0 8px 32px #0008', overflow: 'hidden' },
   scroll: { flexGrow: 0, flexShrink: 1 },
   heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 20, paddingRight: 8, paddingTop: 8 },
@@ -175,7 +179,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   wordHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   word: { flexShrink: 1, color: colors.ink, fontSize: 28, fontWeight: '600' },
   copyButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  context: { color: colors.muted, fontSize: 14, lineHeight: 21 },
   label: { color: colors.muted, fontSize: 12 },
   translation: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
   result: { gap: 8, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line },

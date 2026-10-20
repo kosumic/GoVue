@@ -208,6 +208,17 @@ class GoVueCoreModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("GoVueCore")
     Events("browserLaunch", "deviceOrientation", "pipAction", "coreUpdate")
+    View(CaptionSelectionView::class) {
+      Events("onSelectionChange", "onContentSizeChange")
+      Prop("text") { view, value: String -> view.captionText = value }
+      Prop("selectionStart") { view, value: Int -> view.initialStart = value }
+      Prop("selectionEnd") { view, value: Int -> view.initialEnd = value }
+      Prop("fontSize") { view, value: Float -> view.fontSize = value }
+      Prop("lineHeight") { view, value: Float -> view.lineHeight = value }
+      Prop("textColor") { view, value: String -> view.textColor = value }
+      Prop("selectionColor") { view, value: String -> view.selectionColor = value }
+      OnViewDidUpdateProps { view -> view.update() }
+    }
     AsyncFunction("configurePipControls") { raw: String ->
       if (Build.VERSION.SDK_INT >= 26) ensurePipControls()?.configure(raw)
       Unit

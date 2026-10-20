@@ -13,6 +13,17 @@ public final class GoVueCoreModule: Module {
   public func definition() -> ModuleDefinition {
     Name("GoVueCore")
     Events("coreUpdate")
+    View(CaptionSelectionView.self) {
+      Events("onSelectionChange", "onContentSizeChange")
+      Prop("text") { (view: CaptionSelectionView, value: String) in view.captionText = value }
+      Prop("selectionStart") { (view: CaptionSelectionView, value: Int) in view.initialStart = value }
+      Prop("selectionEnd") { (view: CaptionSelectionView, value: Int) in view.initialEnd = value }
+      Prop("fontSize") { (view: CaptionSelectionView, value: Double) in view.fontSize = value }
+      Prop("lineHeight") { (view: CaptionSelectionView, value: Double) in view.lineHeight = value }
+      Prop("textColor") { (view: CaptionSelectionView, value: String) in view.textColor = value }
+      Prop("selectionColor") { (view: CaptionSelectionView, value: String) in view.selectionColor = value }
+      OnViewDidUpdateProps { (view: CaptionSelectionView) in view.update() }
+    }
     AsyncFunction("getBrowserUserAgent") { (promise: Promise) in
       let view = WKWebView(frame: .zero)
       view.evaluateJavaScript("navigator.userAgent") { [view] result, _ in

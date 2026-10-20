@@ -213,20 +213,81 @@ fn index(command: &Value, key: &str) -> Result<usize> {
         .ok_or_else(|| format!("Invalid {key}."))
 }
 
-fn selected_token<'a>(data: &'a Transcript, command: &Value) -> Result<Token<'a>> {
+struct Selection {
+    text: String,
+    token_index: usize,
+    end_token_index: usize,
+    utf16_start: usize,
+    utf16_end: usize,
+    start: Option<f64>,
+    end: Option<f64>,
+}
+
+fn selection(data: &Transcript, command: &Value, validate_text: bool) -> Result<Selection> {
     let segment = data
         .segments
         .get(index(command, "segmentIndex")?)
         .ok_or("This caption line is no longer available.")?;
-    let token = caption_tokens(segment, data.caption_metadata.as_ref())
-        .into_iter()
-        .nth(index(command, "tokenIndex")?)
-        .filter(|token| token.word)
-        .ok_or("Choose a word in the caption.")?;
-    if token.text != string(command, "word")? {
-        return Err("This caption changed. Hold the word again.".into());
+    let tokens = caption_tokens(segment, data.caption_metadata.as_ref());
+    let mut offset = 0;
+    let offsets: Vec<_> = tokens
+        .iter()
+        .map(|token| {
+            let start = offset;
+            offset += token.text.encode_utf16().count();
+            (start, offset)
+        })
+        .collect();
+    let (first, last) = if !validate_text && command.get("selectionStart").is_some() {
+        let start = index(command, "selectionStart")?;
+        let end = index(command, "selectionEnd")?;
+        if start >= end || end > offset {
+            return Err("Choose words in this caption.".into());
+        }
+        let mut matches = tokens
+            .iter()
+            .zip(&offsets)
+            .enumerate()
+            .filter_map(|(i, (token, (a, b)))| (token.word && *a < end && *b > start).then_some(i));
+        let first = matches.next().ok_or("Choose words in this caption.")?;
+        (first, matches.next_back().unwrap_or(first))
+    } else {
+        let first = index(command, "tokenIndex")?;
+        let last = if command.get("endTokenIndex").is_some() {
+            index(command, "endTokenIndex")?
+        } else {
+            first
+        };
+        (first, last)
+    };
+    if first > last
+        || !tokens.get(first).is_some_and(|token| token.word)
+        || !tokens.get(last).is_some_and(|token| token.word)
+    {
+        return Err("Choose words in this caption.".into());
     }
-    Ok(token)
+    let text = tokens[first..=last]
+        .iter()
+        .map(|token| token.text)
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.chars().count() > 256 || text.chars().any(char::is_control) {
+        return Err("Select a shorter phrase (up to 256 characters).".into());
+    }
+    if validate_text && text != string(command, "word")? {
+        return Err("This caption changed. Select the words again.".into());
+    }
+    Ok(Selection {
+        text,
+        token_index: first,
+        end_token_index: last,
+        utf16_start: offsets[first].0,
+        utf16_end: offsets[last].1,
+        start: tokens[first].start,
+        end: tokens[last].end,
+    })
 }
 
 fn source_language(data: &Transcript) -> Result<(&'static str, &'static str)> {
@@ -245,7 +306,7 @@ pub(super) fn word_context(command: &Value, root: &str) -> Result<Value> {
         string(command, "videoId")?,
         string(command, "trackId")?,
     )?;
-    let token = selected_token(&data, command)?;
+    let token = selection(&data, command, true)?;
     let (code, name) = source_language(&data)?;
     Ok(
         json!({"word":token.text,"sourceLanguage":name,"sourceLangCode":code,
@@ -259,7 +320,7 @@ pub(super) fn word_audio(command: &Value, root: &str) -> Result<Option<(f64, f64
         string(command, "videoId")?,
         string(command, "trackId")?,
     )?;
-    let token = selected_token(&data, command)?;
+    let token = selection(&data, command, true)?;
     Ok(token.start.zip(token.end).filter(|(start, end)| {
         start.is_finite() && end.is_finite() && *start >= 0.0 && end > start && end - start <= 30.0
     }))
@@ -267,6 +328,19 @@ pub(super) fn word_audio(command: &Value, root: &str) -> Result<Option<(f64, f64
 
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     match string(command, "op")? {
+        "vocabulary_selection" => {
+            let data = load(
+                root,
+                string(command, "videoId")?,
+                string(command, "trackId")?,
+            )?;
+            let selected = selection(&data, command, false)?;
+            Ok(
+                json!({"word":selected.text,"tokenIndex":selected.token_index,
+                "endTokenIndex":selected.end_token_index,"selectionStart":selected.utf16_start,
+                "selectionEnd":selected.utf16_end}),
+            )
+        }
         "vocabulary_word_audio" => Ok(word_audio(command, root)?
             .map_or(Value::Null, |(start, end)| json!({"start":start,"end":end}))),
         "vocabulary_details" => with_transcript(
@@ -330,7 +404,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 string(command, "videoId")?,
                 string(command, "trackId")?,
             )?;
-            let token = selected_token(&data, command)?;
+            let token = selection(&data, command, true)?;
             let (source_code, _) = source_language(&data)?;
             let mut plans = Vec::new();
             let mut seen = HashSet::new();
@@ -357,8 +431,8 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .segments
                 .get(index(command, "segmentIndex")?)
                 .ok_or("This caption line is no longer available.")?;
-            let token = selected_token(&data, command)?;
-            let id = identity(&data.language, token.text);
+            let token = selection(&data, command, true)?;
+            let id = identity(&data.language, &token.text);
             let start = token.start.unwrap_or(segment.start);
             let mut words = read(root)?;
             if let Some(entry) = words.iter().find(|entry| entry.id == id) {
@@ -366,7 +440,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
             let entry = SavedWord {
                 id,
-                word: token.text.to_owned(),
+                word: token.text,
                 language: data.language,
                 video_id: data.video_id,
                 title: data.title,

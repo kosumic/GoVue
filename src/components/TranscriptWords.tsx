@@ -4,7 +4,7 @@ import { captionWords, type WordToken } from '../core/vocabulary';
 import type { Transcript } from '../youtube/transcript';
 import { idleTranscriptClock, type TranscriptClock } from '../media/transcriptClock';
 
-export function TranscriptWords({ source, segmentIndex, position, clock, style, activeWordStyle, separatorStyle, selected, selectedTokenIndex, selectedWordStyle, onSeek, onSeekWord, onSave, onTranslate }: {
+export function TranscriptWords({ source, segmentIndex, position, clock, style, activeWordStyle, separatorStyle, selected, selectedTokenIndex, selectedEndTokenIndex, selectedWordStyle, onHeight, onSeek, onSeekWord, onSave, onTranslate }: {
   source: Transcript;
   segmentIndex: number;
   position: number | null;
@@ -14,7 +14,9 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
   separatorStyle?: StyleProp<TextStyle>;
   selected: boolean;
   selectedTokenIndex?: number;
+  selectedEndTokenIndex?: number;
   selectedWordStyle?: StyleProp<TextStyle>;
+  onHeight?: (height: number) => void;
   onSeek?: () => void;
   onSeekWord?: (seconds: number) => void;
   onSave: (tokenIndex: number, word: string) => void;
@@ -38,7 +40,8 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
   const tokens = parsed?.source === source && parsed.segmentIndex === segmentIndex ? parsed.tokens : null;
   const timed = !!onSeekWord && !!tokens?.some(token => token.start !== undefined);
   const spokenText = tokens?.map(token => (token.speakerChange ? ' Possible speaker change. ' : '') + token.text + (token.reading ? ` (${token.reading})` : '')).join('') ?? text;
-  return <Text style={style} accessible accessibilityLabel={spokenText} accessibilityRole={onSeek ? 'button' : undefined} accessibilityState={{ selected }}
+  const inSelection = (index: number) => selectedTokenIndex !== undefined && index >= selectedTokenIndex && index <= (selectedEndTokenIndex ?? selectedTokenIndex);
+  return <Text style={style} onLayout={onHeight ? event => onHeight(event.nativeEvent.layout.height) : undefined} accessible accessibilityLabel={spokenText} accessibilityRole={onSeek ? 'button' : undefined} accessibilityState={{ selected }}
     accessibilityHint={onSeek ? `Tap ${timed ? 'a word' : 'the line'} to play. Hold a word to translate it, or use the translate and save word actions.` : 'Hold a word to translate it, or use the translate and save word actions.'}
     accessibilityActions={tokens?.flatMap((token, index) => token.word ? [
       ...(onSeekWord && token.start !== undefined ? [{ name: `play-word-${index}`, label: `Play from ${token.text}` }] : []),
@@ -63,9 +66,9 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
     {tokens ? tokens.map((token, index) => token.word ? <Fragment key={index}>
       {token.speakerChange && <Text accessible={false} style={[{ fontSize: 12, fontWeight: '400' }, separatorStyle]}>{`${index && !tokens[index - 1].text.endsWith('\n') ? '\n' : ''}───\n`}</Text>}
       <TranscriptWord token={token} index={index} position={position} clock={clock} selected={selected}
-        activeWordStyle={activeWordStyle} selectedWordStyle={index === selectedTokenIndex ? selectedWordStyle : undefined}
+        activeWordStyle={activeWordStyle} selectedWordStyle={inSelection(index) ? selectedWordStyle : undefined}
         onSeek={onSeek} onSeekWord={onSeekWord} onTranslate={onTranslate} />
-    </Fragment> : token.text) : text}
+    </Fragment> : inSelection(index) ? <Text key={index} accessible={false} style={selectedWordStyle}>{token.text}</Text> : token.text) : text}
   </Text>;
 }
 

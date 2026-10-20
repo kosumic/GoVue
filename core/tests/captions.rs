@@ -45,6 +45,42 @@ impl Drop for Store {
 }
 
 #[test]
+fn phrase_actions_use_the_whole_range_and_bound_audio_duration() {
+    let store = Store::new();
+    for duration in [2500, 40_000] {
+        let source = json!({"events":[{"tStartMs":1000,"dDurationMs":duration,"segs":[
+            {"utf8":"Hello, ","tOffsetMs":0},
+            {"utf8":"world!\n","tOffsetMs":600},
+            {"utf8":"Hello again.","tOffsetMs":1400}
+        ]}]})
+        .to_string();
+        store.ingest(VIDEO, &source);
+        let range = store.value(json!({"op":"vocabulary_selection","videoId":VIDEO,"trackId":".en","segmentIndex":0,"selectionStart":0,"selectionEnd":25}));
+        assert_eq!(range["word"], "Hello, world! Hello again");
+        let mut command = json!({"op":"vocabulary_word_audio","videoId":VIDEO,"trackId":".en","segmentIndex":0,
+            "tokenIndex":range["tokenIndex"],"endTokenIndex":range["endTokenIndex"],"word":range["word"]});
+        let audio = store.value(command.clone());
+        assert_eq!(
+            audio,
+            if duration == 2500 {
+                json!({"start":1.0,"end":3.5})
+            } else {
+                Value::Null
+            }
+        );
+        command["op"] = json!("vocabulary_translation");
+        assert_eq!(
+            store.value(command.clone())[0]["input"],
+            "Hello, world! Hello again"
+        );
+        command["op"] = json!("vocabulary_save");
+        let saved = store.value(command);
+        assert_eq!(saved["entry"]["word"], "Hello, world! Hello again");
+        assert_eq!(saved["entry"]["start"], 1.0);
+    }
+}
+
+#[test]
 fn preserves_timing_layout_formatting_confidence_and_boundaries_across_disk_restore() {
     let store = Store::new();
     let source = json!({"baseUrl":"never-persist-signed-url","pens":[{"bAttr":1,"fcForeColor":1_122_867,"unknownSecret":"never-persist"},{"iAttr":1,"uAttr":1}],

@@ -15,7 +15,7 @@ async function release(request: Request) {
   }
 }
 
-export function useWordAssistance<T extends WordExample | WordGrammar>(selection: WordSelection, kind: 'example' | 'grammar', providerKey?: string) {
+export function useWordAssistance<T extends WordExample | WordGrammar>(selection: WordSelection, kind: 'example' | 'grammar', providerKey?: string, enabled = true) {
   const [result, setResult] = useState<T | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -26,16 +26,17 @@ export function useWordAssistance<T extends WordExample | WordGrammar>(selection
       if (current.current) void release(current.current);
       current.current = null;
     };
-  }, [selection, kind, providerKey]);
+  }, [selection, kind, providerKey, enabled]);
 
   async function generate() {
+    if (!enabled) return;
     if (current.current) void release(current.current);
     const request: Request = { active: true };
     current.current = request;
     setBusy(true); setError('');
     try {
-      const { source, segmentIndex, tokenIndex, word } = selection;
-      const started = await aiRequest<{ taskId: string }>({ op: 'ai_word_assistance', kind, videoId: source.videoId, trackId: source.trackId, segmentIndex, tokenIndex, word });
+      const { source, segmentIndex, tokenIndex, endTokenIndex, word } = selection;
+      const started = await aiRequest<{ taskId: string }>({ op: 'ai_word_assistance', kind, videoId: source.videoId, trackId: source.trackId, segmentIndex, tokenIndex, endTokenIndex, word });
       request.taskId = started.taskId;
       if (!request.active) return;
       while (request.active) {
