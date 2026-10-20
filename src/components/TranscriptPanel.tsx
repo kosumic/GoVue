@@ -1,12 +1,13 @@
-import { memo, type ComponentProps, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ActivityIndicator, Alert, BackHandler, FlatList, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { memo, type ComponentProps, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ActivityIndicator, Alert, BackHandler, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { Copy, Download, Info, LocateFixed, RotateCw, Search, Share2, Sparkles, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { currentSegmentIndex, timestamp, type Transcript } from '../youtube/transcript';
-import { exportTranscript, readTranscripts, type TranscriptReader, type TranscriptRow } from '../core/transcripts';
+import { exportTranscript, readTranscripts, type TranscriptReader } from '../core/transcripts';
 import { IconButton } from './IconButton';
 import { TranscriptWords } from './TranscriptWords';
+import { TranscriptList } from './TranscriptList';
 import { idleTranscriptClock, type TranscriptClock } from '../media/transcriptClock';
 import { TranscriptTranslations } from './TranscriptTranslations';
 import { WordTranslationSheet } from './WordTranslationSheet';
@@ -72,11 +73,8 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
   const [matches, setMatches] = useState<{ query: string; data: Transcript; comparison: Transcript | null; reader: TranscriptReader } | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [followPlayback, setFollowPlayback] = useState(true);
-  const [listWindow, setListWindow] = useState<{ reader: TranscriptReader; index: number; version: number } | null>(null);
-  const list = useRef<FlatList<TranscriptRow>>(null);
+  const [followRevision, setFollowRevision] = useState(0);
   const trackList = useRef<ScrollView>(null);
-  const scrollTarget = useRef<{ index: number; recovering: boolean } | null>(null);
-  const scrollRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { fontScale } = useWindowDimensions();
   useEffect(() => {
     let active = true;
@@ -91,7 +89,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
   }, [data, comparison, query]);
   const reader = matches?.query === query && matches.data === data && matches.comparison === comparison ? matches.reader : null;
   const searching = !!data && !reader && !searchError;
-  const rows = reader?.rows ?? [];
+  const rows = useMemo(() => reader?.rows ?? [], [reader]);
   const sources = [data, comparison];
   const selectedTracks = trackIds ?? [data?.trackId ?? ''];
   const selectionKey = selectedTracks.join('\0');
@@ -106,13 +104,12 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
   const activeKey = useSyncExternalStore(clock?.subscribe ?? idleTranscriptClock,
     () => sources.map(source => currentSegmentIndex(source?.segments ?? [], clock ? clock.getSnapshot() : position)).join(":"));
   const activeIndices = activeKey.split(":").map(Number);
-  const rowIndices = useMemo(() => {
+  const panes = useMemo(() => (comparison ? [0, 1] : [undefined]).map(track => {
+    const items = track === undefined ? rows : rows.filter(row => row.lines.some(line => line.track === track));
     const indices: number[][] = [[], []];
-    rows.forEach((row, index) => row.lines.forEach(line => { indices[line.track][line.index] = index; }));
-    return indices;
-  }, [rows]);
-  const activeIndex = rowIndices[0][activeIndices[0]] ?? rowIndices[1][activeIndices[1]] ?? -1;
-  const activeRow = rows[activeIndex];
+    items.forEach((row, index) => row.lines.forEach(line => { indices[line.track][line.index] = index; }));
+    return { track, rows: items, indices };
+  }), [rows, comparison]);
   const canPlay = !!(onSeek || onPlayLine);
   function playLine(source: Transcript, index: number) {
     clearSelection();
@@ -121,34 +118,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
     else onSeek?.(source.segments[index].start);
   }
   const following = followPlayback && !query.trim();
-  useEffect(() => {
-    if (reader) setListWindow(current => current?.reader === reader ? current : {
-      reader, index: following && activeIndex >= 0 ? activeIndex : 0, version: (current?.version ?? 0) + 1,
-    });
-  }, [reader, following, activeIndex]);
-  const scrollToCurrent = useCallback(() => {
-    if (scrollRetry.current !== null) clearTimeout(scrollRetry.current);
-    scrollRetry.current = null;
-    const target = scrollTarget.current;
-    if (target && target.index < (list.current?.props.data?.length ?? 0)) {
-      const animated = !target.recovering;
-      target.recovering = false;
-      list.current?.scrollToIndex({ index: target.index, viewPosition: 0.3, animated });
-    }
-  }, []);
-  useEffect(() => {
-    scrollTarget.current = following && activeIndex >= 0 && !loading && !error ? { index: activeIndex, recovering: false } : null;
-    scrollToCurrent();
-    return () => {
-      scrollTarget.current = null;
-      if (scrollRetry.current) clearTimeout(scrollRetry.current);
-    };
-  }, [activeIndex, reader, following, loading, error, scrollToCurrent]);
-  const stopFollowing = () => {
-    scrollTarget.current = null;
-    if (scrollRetry.current) clearTimeout(scrollRetry.current);
-    setFollowPlayback(false);
-  };
+  const stopFollowing = () => setFollowPlayback(false);
   async function saveCaptionWord(source: Transcript, index: number, tokenIndex: number, word: string) {
     if (savingWord.current) return;
     stopFollowing();
@@ -207,7 +177,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
               value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
           </View>}
           {canPlay && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
-            onPress={() => { setFollowPlayback(true); scrollToCurrent(); }} style={[styles.follow, following && styles.following]}>
+            onPress={() => { setFollowPlayback(true); setFollowRevision(value => value + 1); }} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
             <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
           </Pressable>}
@@ -238,64 +208,55 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
           value={query} onChangeText={setQuery} style={styles.searchInput} />
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>}
-        {reader && listWindow?.reader === reader ? <FlatList key={listWindow.version} ref={list} data={rows} initialScrollIndex={listWindow.index}
-          extraData={{ position, activeKey, wordSelection }} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={[styles.list, { paddingBottom: 24 + bottomInset }]}
-          onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
-          onContentSizeChange={() => { if (scrollTarget.current?.recovering) scrollToCurrent(); }}
-          onScrollToIndexFailed={({ index }) => {
-            const target = scrollTarget.current;
-            if (!target || target.index !== index) return;
-            target.recovering = true;
-            // A new initial render window mounts the target rows directly;
-            // scrolling to an estimated offset is clamped to measured content.
-            setListWindow(current => current?.reader === reader && current.index === index ? current : {
-              reader, index, version: (current?.version ?? 0) + 1,
-            });
-          }}
-          keyboardShouldPersistTaps="handled" ListEmptyComponent={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
-          renderItem={({ item, index }) => <View style={[styles.captionGroup, item === activeRow && styles.activeSegment]} onLayout={() => {
-            if (scrollTarget.current?.index !== index) return;
-            if (scrollRetry.current !== null) clearTimeout(scrollRetry.current);
-            // Let FlatList record the cell's measurements before aligning it.
-            scrollRetry.current = setTimeout(scrollToCurrent, 0);
-          }}>
-            {item.lines.map(line => {
-              const source = sources[line.track];
-              const segment = source?.segments[line.index];
-              if (!source || !segment) return null;
-              const active = activeIndices[line.track] === line.index;
-              const selecting = selectionSeed?.source === source && selectionSeed.segmentIndex === line.index;
-              return <Pressable key={`${line.track}:${line.index}`} accessible={false}
-                disabled={selecting}
-                accessibilityState={{ selected: active }}
-                accessibilityHint={canPlay ? onPlayLine ? 'Listen to this transcript line' : 'Jump to this line and play the video' : undefined}
-                onPress={canPlay && !selecting ? () => playLine(source, line.index) : undefined}
-                style={({ pressed }) => [styles.segment, pressed && styles.pressedSegment]}>
-                <Text style={styles.time} accessibilityRole={canPlay ? 'button' : undefined} accessibilityLabel={canPlay ? `Play ${source.language} line at ${timestamp(segment.start)}` : undefined}
-                  onPress={canPlay && !selecting ? event => { event.stopPropagation(); playLine(source, line.index); } : undefined}>{timestamp(segment.start)}</Text>
-                <View style={styles.lineText}>
-                  {!!comparison && <Text style={styles.lineLanguage}>{source.language}</Text>}
-                  {selecting ? <CaptionSelection initial={selectionSeed} initialHeight={captionHeights.current.get(`${line.track}:${line.index}`) ?? 24 * fontScale} onPending={setSelectionPending} onChange={next => setWordSelection(current => {
-                    if (current?.source !== next.source || current.segmentIndex !== next.segmentIndex) return current;
-                    if (current.tokenIndex === next.tokenIndex && (current.endTokenIndex ?? current.tokenIndex) === next.endTokenIndex && current.word === next.word) return current;
-                    return { ...current, ...next };
-                  })} /> : <TranscriptWords source={source} segmentIndex={line.index} position={active ? position : null} clock={active ? clock : undefined} selected={active}
-                    selectedTokenIndex={wordSelection?.source === source && wordSelection.segmentIndex === line.index ? wordSelection.tokenIndex : undefined} selectedWordStyle={styles.selectedWord}
-                    selectedEndTokenIndex={wordSelection?.endTokenIndex} onHeight={height => { captionHeights.current.set(`${line.track}:${line.index}`, height); }}
-                    style={[styles.segmentText, line.track === 1 && styles.comparisonText, active && styles.activeText]} activeWordStyle={styles.activeWord}
-                    separatorStyle={styles.speakerSeparator}
-                    onSeek={canPlay ? () => playLine(source, line.index) : undefined}
-                    onSeekWord={onSeek ? seconds => { setFollowPlayback(true); onSeek(seconds); } : undefined}
-                    onTranslate={(tokenIndex, word, anchor) => {
-                      stopFollowing(); audio?.stop();
-                      const selected = { source, segmentIndex: line.index, tokenIndex, word, anchor };
-                      setSelectionPending(true); setWordSelection(selected); setSelectionSeed(selected);
-                    }}
-                    onSave={(tokenIndex, word) => { void saveCaptionWord(source, line.index, tokenIndex, word); }} />}
-                </View>
-              </Pressable>;
-            })}
-          </View>} /> : <Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
+        {reader ? <View style={styles.reader}>
+          {panes.map(({ track, rows: paneRows, indices }) => <View key={track ?? 'single'} style={[styles.pane, comparison && styles.comparisonPane]}>
+            {track !== undefined && <View style={styles.paneHeading}><Text numberOfLines={1} style={styles.paneLanguage}>{sources[track]?.language}</Text></View>}
+            <TranscriptList rows={paneRows} activeIndex={track === undefined
+              ? indices[0][activeIndices[0]] ?? indices[1][activeIndices[1]] ?? -1
+              : indices[track][activeIndices[track]] ?? -1}
+              following={following} followRevision={followRevision} enabled={!loading && !error} comparison={!!comparison}
+              style={styles.pane} extraData={{ position, activeKey, wordSelection }} onStopFollowing={stopFollowing}
+              contentContainerStyle={[styles.list, { paddingBottom: 24 + (track === 0 ? 0 : bottomInset) }]}
+              empty={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
+              renderRow={(item, activeRow) => <View style={[styles.captionGroup, activeRow && styles.activeSegment]}>
+                {item.lines.filter(line => track === undefined || line.track === track).map(line => {
+                  const source = sources[line.track];
+                  const segment = source?.segments[line.index];
+                  if (!source || !segment) return null;
+                  const active = activeIndices[line.track] === line.index;
+                  const selecting = selectionSeed?.source === source && selectionSeed.segmentIndex === line.index;
+                  return <Pressable key={`${line.track}:${line.index}`} accessible={false}
+                    disabled={selecting}
+                    accessibilityState={{ selected: active }}
+                    accessibilityHint={canPlay ? onPlayLine ? 'Listen to this transcript line' : 'Jump to this line and play the video' : undefined}
+                    onPress={canPlay && !selecting ? () => playLine(source, line.index) : undefined}
+                    style={({ pressed }) => [styles.segment, comparison && styles.comparisonSegment, pressed && styles.pressedSegment]}>
+                    <Text style={[styles.time, comparison && styles.comparisonTime]} accessibilityRole={canPlay ? 'button' : undefined} accessibilityLabel={canPlay ? `Play ${source.language} line at ${timestamp(segment.start)}` : undefined}
+                      onPress={canPlay && !selecting ? event => { event.stopPropagation(); playLine(source, line.index); } : undefined}>{timestamp(segment.start)}</Text>
+                    <View style={comparison ? styles.comparisonLineText : styles.lineText}>
+                      {selecting ? <CaptionSelection initial={selectionSeed} initialHeight={captionHeights.current.get(`${line.track}:${line.index}`) ?? 24 * fontScale} onPending={setSelectionPending} onChange={next => setWordSelection(current => {
+                        if (current?.source !== next.source || current.segmentIndex !== next.segmentIndex) return current;
+                        if (current.tokenIndex === next.tokenIndex && (current.endTokenIndex ?? current.tokenIndex) === next.endTokenIndex && current.word === next.word) return current;
+                        return { ...current, ...next };
+                      })} /> : <TranscriptWords source={source} segmentIndex={line.index} position={active ? position : null} clock={active ? clock : undefined} selected={active}
+                        selectedTokenIndex={wordSelection?.source === source && wordSelection.segmentIndex === line.index ? wordSelection.tokenIndex : undefined} selectedWordStyle={styles.selectedWord}
+                        selectedEndTokenIndex={wordSelection?.endTokenIndex} onHeight={height => { captionHeights.current.set(`${line.track}:${line.index}`, height); }}
+                        style={[styles.segmentText, active && styles.activeText]} activeWordStyle={styles.activeWord}
+                        separatorStyle={styles.speakerSeparator}
+                        onSeek={canPlay ? () => playLine(source, line.index) : undefined}
+                        onSeekWord={onSeek ? seconds => { setFollowPlayback(true); onSeek(seconds); } : undefined}
+                        onTranslate={(tokenIndex, word, anchor) => {
+                          stopFollowing(); audio?.stop();
+                          const selected = { source, segmentIndex: line.index, tokenIndex, word, anchor };
+                          setSelectionPending(true); setWordSelection(selected); setSelectionSeed(selected);
+                        }}
+                        onSave={(tokenIndex, word) => { void saveCaptionWord(source, line.index, tokenIndex, word); }} />}
+                    </View>
+                  </Pressable>;
+                })}
+              </View>} />
+          </View>)}
+        </View> : <Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
       </> : null}
       {wordSelection && sources.includes(wordSelection.source) && !loading && !error && <WordTranslationSheet selection={wordSelection} pending={selectionPending} frame={selectionFrame} anchor={wordSelection.anchor} onBeforeAudio={onBeforeWordAudio} onClose={clearSelection} />}
     </View>
@@ -335,15 +296,21 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   search: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line, gap: 8 },
   searchInput: { flex: 1, paddingVertical: 11, color: colors.ink, fontSize: 13 },
   count: { color: colors.muted, fontSize: 11 },
+  reader: { flex: 1, minHeight: 0 },
+  pane: { flex: 1, minHeight: 0 },
+  comparisonPane: { flexBasis: 0, overflow: 'hidden', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
+  paneHeading: { paddingHorizontal: 20, paddingVertical: 5, backgroundColor: colors.background },
+  paneLanguage: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   list: { paddingHorizontal: 20, paddingBottom: 24 },
   follow: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 44, paddingHorizontal: 8, borderRadius: 8 },
   following: { backgroundColor: colors.accentSoft },
   followText: { fontSize: 11, color: colors.muted },
   captionGroup: { borderRadius: 6, borderLeftWidth: 3, borderLeftColor: 'transparent', marginBottom: 3 },
   segment: { flexDirection: 'row', gap: 12, paddingVertical: 9, paddingHorizontal: 8, minHeight: 44, borderRadius: 6 },
+  comparisonSegment: { flexDirection: 'column', gap: 3, paddingVertical: 6 },
+  comparisonTime: { alignSelf: 'flex-start', paddingTop: 0, fontSize: 10 },
+  comparisonLineText: { width: '100%' },
   lineText: { flex: 1 },
-  lineLanguage: { color: colors.muted, fontSize: 10, marginBottom: 3 },
-  comparisonText: { color: colors.muted },
   activeSegment: { backgroundColor: colors.accentSoft, borderLeftColor: colors.accent },
   activeText: { color: colors.accent, fontWeight: '600' },
   pressedSegment: { backgroundColor: colors.accentSoft },
