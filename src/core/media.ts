@@ -1,3 +1,4 @@
+import defaults from '../../core/src/player/defaults.json';
 import {
   coreRequest,
   supportedMediaFormats,
@@ -42,62 +43,7 @@ export type MediaSettings = {
   subtitleKey: string;
   subtitleStyle: SubtitleStyle;
 } & Record<GestureKey, boolean>;
-export const defaultMediaSettings: MediaSettings = {
-  adBlock: true,
-  sponsorBlock: true,
-  backgroundPlayback: true,
-  autoPip: true,
-  pauseAfterLine: false,
-  playbackSpeed: 1,
-  qualityHeight: 0,
-  qualityFps: 0,
-  categories: [
-    'sponsor',
-    'selfpromo',
-    'interaction',
-    'intro',
-    'outro',
-    'preview',
-    'music_offtopic',
-    'filler',
-    'poi_highlight',
-  ],
-  rememberPosition: true,
-  rememberQuality: true,
-  rememberSpeed: false,
-  rememberResize: false,
-  useOriginalTitle: false,
-  showDislikes: true,
-  showLikes: true,
-  hideShorts: false,
-  miniPlayer: true,
-  sponsorCountdown: true,
-  hapticStrength: 30,
-  resizeMode: 'fit',
-  audioKey: '',
-  subtitleKey: '',
-  subtitleStyle: {
-    scale: 1,
-    vertical: 1,
-    horizontal: 0,
-    background: 'semi',
-    bold: false,
-    color: '#FFFFFF',
-  },
-  ...(Object.fromEntries(
-    ['Windowed', 'Fullscreen'].flatMap((mode) =>
-      [
-        'Tap',
-        'DoubleTap',
-        'LongPress',
-        'Brightness',
-        'Volume',
-        'Seek',
-        'Fullscreen',
-      ].map((name) => [`gesture${name}${mode}`, true]),
-    ),
-  ) as Record<GestureKey, boolean>),
-};
+export const defaultMediaSettings = defaults as MediaSettings;
 export type MediaByteRange = { start: number; end: number };
 export type MediaStream = {
   itag: number;

@@ -58,12 +58,12 @@ Verification gaps remain separate from missing features: the extra account integ
 | Layer | Responsibility |
 | --- | --- |
 | React Native (`App.tsx`, `src/`) | Browser and reader, downloads, shared Expo Video playback, background audio and PiP |
-| Page bridges (`src/youtube/`, `scripts/player-decoder.js`) | Capture captions, resolve media using YouTube.js/BgUtils, block ads, control the web player |
+| Page bridges (`src/youtube/`) | Report page layout/playback, block ads, and control the web player |
 | Player runtime (`src/media/PlayerRuntime.tsx`) | Evaluate extracted signature code in a separate renderer with network/file access disabled |
-| Rust (`core/`) | Validate responses and formats, parse/search/cache captions, plan downloads, parse SponsorBlock, persist settings/history, serve bounded media ranges |
+| Rust (`core/`) | Extract and cache captions/media, coordinate playback/transcripts/downloads/chat, validate browser messages, persist settings/history, and serve bounded media ranges |
 | Expo module (`modules/govue-core/`) | UniFFI adapters, app-private paths, platform HTTPS requests and MP4 remuxing |
 
-The existing WebView supplies authenticated caption responses and resolves media. Session tokens remain in the page; raw captions cross into Rust for parsing and are never persisted. Signature solving runs outside YouTube's page, following Litube's isolation approach. Signed media URLs cross into native memory for playback/downloads, but are never saved to history or logged. A Rust loopback server adapts bounded YouTube byte requests to the HTTP ranges native players and downloaders expect, including a scoped GET-to-POST compatibility retry; only loopback allows plain HTTP. Native calls run outside the JavaScript UI thread. Generated bindings, Android libraries, and the iOS XCFramework are build outputs. Upstream license notices are in `notices/`.
+Rust owns extraction protocols and native HTTPS requests; the isolated token renderer evaluates BotGuard tasks. Raw responses, guest cookies, tokens, and signed media URLs remain in memory. Normalized transcripts stay in the native cache. A Rust loopback server adapts bounded YouTube byte requests to the HTTP ranges native players and downloaders expect, including a scoped GET-to-POST compatibility retry; only loopback allows plain HTTP. Native calls run outside the JavaScript UI thread. Generated bindings, Android libraries, and the iOS XCFramework are build outputs. See [shared workflow ownership](rust-workflows.md) and the upstream license notices in `notices/`.
 
 ## Development
 

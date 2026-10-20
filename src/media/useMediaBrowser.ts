@@ -22,8 +22,9 @@ import {
   mediaSponsorsScript,
 } from '../youtube/mediaBridge';
 import { seekScript } from '../youtube/pageScripts';
-import { coreRequest } from '../../modules/govue-core';
-import { acceptPlayerLayout, type PlayerLayout } from './playerLayout';
+import { coreRequest, stateRequest } from '../../modules/govue-core';
+import { acceptPlayerLayout } from '../core/browser';
+import type { PlayerLayout } from './playerLayout';
 import { useCastSession } from '../player/useCastSession';
 import { useTranscriptPosition } from './useTranscriptPosition';
 
@@ -79,6 +80,16 @@ export function useMediaBrowser(
   videoId: string | null,
   userAgent: string,
 ) {
+  const [sessionId] = useState(() => stateRequest<number>({ op: 'player_session_create' }));
+  const sessionAlive = useRef(true);
+  function session<T = boolean>(action: string, values: Record<string, unknown> = {}): T {
+    if (!sessionAlive.current) return null as T;
+    return stateRequest<T>({ op: `player_session_${action}`, sessionId, ...values });
+  }
+  useEffect(() => {
+    sessionAlive.current = true;
+    return () => { sessionAlive.current = false; stateRequest({ op: 'player_session_dispose', sessionId }); };
+  }, [sessionId]);
   const [settings, setSettings] = useState(defaultMediaSettings);
   const [settingsReady, setSettingsReady] = useState(false);
   const [playback, setPlayback] = useState<Playback | null>(null);
@@ -91,15 +102,11 @@ export function useMediaBrowser(
   const [sponsor, setSponsor] = useState(emptySponsor);
   const sponsorWrites = useRef(Promise.resolve());
   const [switchingQuality, setSwitchingQuality] = useState(false);
-  const qualitySequence = useRef(0);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const catalogRef = useRef(catalog);
   catalogRef.current = catalog;
   const [playerLayout, setPlayerLayout] = useState<PlayerLayout | null>(null);
-  const preparation = useRef<{ videoId: string } | null>(null);
-  const manualWeb = useRef<string | null>(null);
-  const autoRetryAt = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [sponsorStatus, setSponsorStatus] = useState('SponsorBlock is ready.');
   const [notice, setNotice] = useState<string | null>(null);
@@ -112,9 +119,7 @@ export function useMediaBrowser(
   const pending = useRef<Pending | null>(null);
   const pageAvailable = useRef(true);
   const sequence = useRef(0);
-  const nativeGeneration = useRef(0);
   const replacements = useRef(Promise.resolve());
-  const lastSkip = useRef({ key: '', at: 0 });
   const settingsWrites = useRef(Promise.resolve());
   const categoryGeneration = useRef(0);
   const temporarySpeed = useRef<number | null>(null);
@@ -233,12 +238,11 @@ export function useMediaBrowser(
     }
   }
   function pageTerminated(
-    message = 'The browser stopped. Reload the page and try again.',
+    _message = 'The browser stopped. Reload the page and try again.',
   ) {
     pageAvailable.current = false;
-    autoRetryAt.current = 0;
+    session('page_dead');
     setPlayerLayout(null);
-    ++qualitySequence.current;
     setSwitchingQuality(false);
   }
   useEffect(() => {
@@ -259,6 +263,10 @@ export function useMediaBrowser(
     return () => {
       active = false;
       cancelPending();
+      const previous = playbackRef.current;
+      playbackRef.current = null;
+      if (previous && !previous.offline)
+        void coreRequest({ op: 'media_proxy_release', uri: previous.uri }).catch(() => {});
       void coreRequest({ op: 'extract_release', requestId: 'prepare:media' }).catch(() => {});
     };
   }, []);
@@ -296,17 +304,7 @@ export function useMediaBrowser(
   useEffect(() => {
     const listener = player.addListener('statusChange', ({ status }) => {
       const current = playbackRef.current;
-      if (
-        status !== 'error' ||
-        !current ||
-        current.offline ||
-        remoteState() ||
-        identity.current !== current.videoId ||
-        preparation.current ||
-        Date.now() < autoRetryAt.current
-      )
-        return;
-      autoRetryAt.current = Date.now() + 30000;
+      if (status !== 'error' || !current || !session('recover', { remote: !!remoteState() })) return;
       recoveryTimer.current = setTimeout(() => {
         if (
           playbackRef.current === current &&
@@ -321,10 +319,8 @@ export function useMediaBrowser(
     };
   }, [player]);
   useEffect(() => {
-    preparation.current = null;
+    session('select', { videoId });
     setPreparing(false);
-    manualWeb.current = null;
-    autoRetryAt.current = 0;
     cancelPending();
     setCatalog(null);
     setQualities([]);
@@ -332,7 +328,6 @@ export function useMediaBrowser(
     setBusy(false);
     setPlayerLayout(null);
     segments.current = [];
-    ++qualitySequence.current;
     setSwitchingQuality(false);
     if (playbackRef.current && playbackRef.current.videoId !== videoId)
       closePlayer(false);
@@ -456,7 +451,7 @@ export function useMediaBrowser(
     inject(mediaSettingsScript(settings));
     if (identity.current)
       inject(mediaSponsorsScript(identity.current, segments.current));
-    if (identity.current && (playbackRef.current || preparation.current))
+    if (identity.current && (playbackRef.current || session('preparing')))
       inject(mediaNativeScript(identity.current, true));
   }
   function refreshPlayerLayout() {
@@ -566,18 +561,8 @@ export function useMediaBrowser(
     });
   }
   function autoStartNative(owner: string) {
-    if (
-      !settingsReady ||
-      identity.current !== owner ||
-      manualWeb.current === owner ||
-      playbackRef.current ||
-      preparation.current ||
-      pending.current ||
-      Date.now() < autoRetryAt.current ||
-      AppState.currentState !== 'active' ||
-      !(settings.backgroundPlayback || settings.adBlock || settings.autoPip)
-    ) return;
-    autoRetryAt.current = Date.now() + 30000;
+    if (!session('auto', { owner, ready: settingsReady, pending: !!pending.current,
+      foreground: AppState.currentState === 'active', settings: settingsRef.current })) return;
     void startNative().catch((failure) => {
       if (failure instanceof Error && failure.name === 'AbortError') return;
       if (pageAvailable.current && identity.current === owner)
@@ -612,7 +597,7 @@ export function useMediaBrowser(
     if (message.type === 'playerLayout') {
       if (
         message.videoId !== identity.current ||
-        !(playbackRef.current || preparation.current)
+        !(playbackRef.current || session('preparing'))
       )
         return;
       const layout = acceptPlayerLayout(message.layout);
@@ -622,7 +607,7 @@ export function useMediaBrowser(
     if (message.type === 'mediaReady') {
       if (
         message.videoId === identity.current &&
-        (playbackRef.current || preparation.current)
+        (playbackRef.current || session('preparing'))
       )
         inject(mediaNativeScript(message.videoId, true));
       autoStartNative(owner);
@@ -645,16 +630,16 @@ export function useMediaBrowser(
     stillCurrent: () => boolean = () => true,
     keepCast = false,
   ) {
-    const generation = ++nativeGeneration.current;
+    const generation = session<number>('replace');
     // Keep replacements ordered so an old asset cannot overwrite a newer one.
     replacements.current = replacements.current
       .catch(() => {})
       .then(async () => {
-        if (generation !== nativeGeneration.current || !stillCurrent()) return;
+        if (!session('replace_current', { token: generation }) || !stillCurrent()) return;
         if (!keepCast) await cast.stop(false);
-        if (generation !== nativeGeneration.current || !stillCurrent()) return;
+        if (!session('replace_current', { token: generation }) || !stillCurrent()) return;
         await player.replaceAsync(source);
-        if (generation !== nativeGeneration.current || !stillCurrent()) return;
+        if (!session('replace_current', { token: generation }) || !stillCurrent()) return;
         const previous = playbackRef.current;
         if (previous && !previous.offline)
           void coreRequest({
@@ -665,6 +650,7 @@ export function useMediaBrowser(
         player.playbackRate = settingsRef.current.playbackSpeed;
         if (resume) player.play();
         else player.pause();
+        session('commit', { playback: data });
         playbackRef.current = data;
         setPlayback(data);
         setError(null);
@@ -675,8 +661,8 @@ export function useMediaBrowser(
   async function startNative() {
     const id = identity.current;
     if (!id) throw Error('Open a YouTube video first.');
-    if (preparation.current) return;
-    const attempt = { videoId: id };
+    const attempt = session<{ token: number; videoId: string; settings: Partial<MediaSettings>; height: number; fps: number } | null>('begin', { settings: settingsRef.current });
+    if (!attempt) return;
     const previous =
       playbackRef.current?.videoId === id ? playbackRef.current : null;
     const previousPosition = previous ? player.currentTime : 0;
@@ -707,36 +693,27 @@ export function useMediaBrowser(
           }
         })()
       : Promise.resolve(null);
-    preparation.current = attempt;
     setPreparing(true);
-    manualWeb.current = null;
     inject(mediaNativeScript(id, true));
     try {
       const data = await resolveMedia();
       const originalTitle = await titleTask;
       if (originalTitle) data.title = originalTitle;
-      if (preparation.current !== attempt) return;
+      if (!session('current', { token: attempt.token })) return;
       if (identity.current !== data.videoId) return;
       if (catalogRef.current?.videoId === data.videoId)
         data.chapters = catalogRef.current.chapters;
       catalogRef.current = data;
       setCatalog({ ...data });
       const preferences = settingsRef.current;
-      if (!previous && !preferences.rememberSpeed)
-        updateSettings({ playbackSpeed: 1 });
-      if (!previous && !preferences.rememberResize)
-        updateSettings({ resizeMode: 'fit' });
+      if (Object.keys(attempt.settings).length) updateSettings(attempt.settings);
       const prepared = await preparePlayback(
         data,
-        previous
-          ? previous.qualityHeight
-          : preferences.rememberQuality
-            ? preferences.qualityHeight
-            : 0,
+        attempt.height,
         userAgent,
         true,
         preferences.audioKey,
-        previous?.qualityFps || preferences.qualityFps,
+        attempt.fps,
       );
       const position =
         previous && !data.live
@@ -751,7 +728,7 @@ export function useMediaBrowser(
       const { uri } = prepared;
       if (
         identity.current !== data.videoId ||
-        preparation.current !== attempt
+        !session('current', { token: attempt.token })
       ) {
         await coreRequest({ op: 'media_proxy_release', uri });
         return;
@@ -776,7 +753,7 @@ export function useMediaBrowser(
           position,
           previousPlaying,
           () =>
-            preparation.current === attempt &&
+            session('current', { token: attempt.token }) &&
             identity.current === data.videoId,
         );
       } finally {
@@ -784,12 +761,11 @@ export function useMediaBrowser(
           await coreRequest({ op: 'media_proxy_release', uri }).catch(() => {});
       }
     } catch (failure) {
-      if (identity.current === id && preparation.current === attempt)
+      if (identity.current === id && session('current', { token: attempt.token }))
         inject(mediaNativeScript(id, false));
       throw failure;
     } finally {
-      if (preparation.current === attempt) {
-        preparation.current = null;
+      if (session('finish', { token: attempt.token })) {
         setPreparing(false);
       }
     }
@@ -799,14 +775,12 @@ export function useMediaBrowser(
     data: { videoId: string; title: string; author: string },
     uri: string,
   ) {
-    preparation.current = null;
+    session('offline');
     setPreparing(false);
     cancelPending();
-    manualWeb.current = identity.current;
     catalogRef.current = null;
     setCatalog(null);
     setQualities([]);
-    ++qualitySequence.current;
     setSwitchingQuality(false);
     await openPlayer(
       { ...data, offline: true, uri, qualityHeight: 0 },
@@ -829,7 +803,8 @@ export function useMediaBrowser(
       identity.current !== data.videoId
     )
       return;
-    const request = ++qualitySequence.current;
+    const request = session<number | null>('quality_begin');
+    if (request === null) return;
     setSwitchingQuality(true);
     let uri: string | undefined;
     try {
@@ -847,7 +822,7 @@ export function useMediaBrowser(
           tracks: liveTrackMetadata(tracks),
         });
         if (
-          request !== qualitySequence.current ||
+          !session('quality_current', { token: request }) ||
           playbackRef.current !== current ||
           identity.current !== current.videoId
         )
@@ -859,7 +834,7 @@ export function useMediaBrowser(
         if (!applied)
           throw Error('The live video changed. Try the resolution again.');
         if (
-          request === qualitySequence.current &&
+          session('quality_current', { token: request }) &&
           playbackRef.current === current
         ) {
           const next = {
@@ -867,6 +842,7 @@ export function useMediaBrowser(
             qualityHeight: selected.height,
             qualityFps: selected.fps,
           };
+          session('commit', { playback: next });
           playbackRef.current = next;
           setPlayback(next);
           updateSettings({
@@ -886,7 +862,7 @@ export function useMediaBrowser(
       );
       uri = prepared.uri;
       const stillCurrent = () =>
-        request === qualitySequence.current &&
+        session('quality_current', { token: request }) &&
         playbackRef.current?.videoId === current.videoId &&
         identity.current === current.videoId;
       if (!stillCurrent()) return;
@@ -919,18 +895,15 @@ export function useMediaBrowser(
     } finally {
       if (uri && playbackRef.current?.uri !== uri)
         await coreRequest({ op: 'media_proxy_release', uri }).catch(() => {});
-      if (qualitySequence.current === request) setSwitchingQuality(false);
+      if (session('quality_finish', { token: request })) setSwitchingQuality(false);
     }
   }
   function closePlayer(resumeWeb = true, stayClosed = false) {
-    preparation.current = null;
+    session('close', { manual: resumeWeb || stayClosed });
     setPreparing(false);
     cancelPending();
     setBusy(false);
     setError(null);
-    if (resumeWeb || stayClosed) manualWeb.current = identity.current;
-    ++nativeGeneration.current;
-    ++qualitySequence.current;
     setSwitchingQuality(false);
     const current = playbackRef.current;
     const position = getPosition();

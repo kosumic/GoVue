@@ -967,7 +967,7 @@ function Browser() {
             }
             onPlay={(entry) => {
               run(async () => {
-                await media.playOffline(entry, downloads.uri(entry));
+                await media.playOffline(entry, await downloads.uri(entry));
                 setSheet(null);
                 session.setMini(false);
                 session.setLocked(false);

@@ -29,6 +29,7 @@ mod speech;
 mod trace;
 mod transcript_playback;
 mod transcript_reader;
+mod transcript_session;
 mod transport;
 mod vocabulary;
 
@@ -37,12 +38,75 @@ mod vocabulary;
 pub fn browser_url_policy(url: String) -> String {
     browser::url_policy(&url).into()
 }
+/// Small synchronous checks for UI callbacks; no storage or network access.
+#[uniffi::export]
+pub fn state_execute(request: String) -> String {
+    let result = if request.len() > 100_000 {
+        Err("Browser message is too large.".into())
+    } else {
+        serde_json::from_str(&request)
+            .map_err(|_| "Unreadable browser request.".into())
+            .and_then(|command: Value| {
+                if command["op"]
+                    .as_str()
+                    .is_some_and(|op| op.starts_with("player_session_"))
+                {
+                    player::session::dispatch(&command)
+                } else {
+                    browser::boundary(&command)
+                }
+            })
+    };
+    match result {
+        Ok(value) => json!({"ok":true,"value":value}).to_string(),
+        Err(error) => json!({"ok":false,"error":error}).to_string(),
+    }
+}
 pub use ai::{
     AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
 pub use extraction::{
     ExtractionHeader, ExtractionHttp, ExtractionReply, ExtractionRequest, install_extraction_http,
 };
+
+/// Notifications carry no application data. Consumers fetch the current Rust snapshot.
+#[uniffi::export(callback_interface)]
+pub trait CoreEvents: Send + Sync {
+    fn changed(&self, channel: String);
+}
+static EVENTS: Mutex<Option<Box<dyn CoreEvents>>> = Mutex::new(None);
+#[uniffi::export]
+pub fn install_core_events(events: Box<dyn CoreEvents>) {
+    *EVENTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(events);
+}
+pub(crate) fn changed(channel: &str) {
+    if let Some(events) = EVENTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+    {
+        events.changed(channel.into());
+    }
+}
+
+/// Blocking platform effects run only on Rust workers, outside the core/storage locks.
+#[uniffi::export(callback_interface)]
+pub trait DownloadPlatform: Send + Sync {
+    fn directory(&self) -> String;
+    fn export_directory(&self) -> String;
+    fn supported_formats(&self, formats: String) -> String;
+    fn mux(&self, video: String, audio: String, output: String) -> bool;
+    /// -1: failed, 0: platform does not publish, 1: published and verified.
+    fn publish(&self, id: String) -> i32;
+    fn delete_published(&self, uri: String) -> bool;
+    fn activity(&self, count: u32, title: String, received: u64, total: u64);
+}
+#[uniffi::export]
+pub fn install_download_platform(platform: Box<dyn DownloadPlatform>) {
+    downloads::runner::install(platform);
+}
 
 #[derive(uniffi::Record)]
 pub struct MediaRangeReply {
@@ -459,11 +523,20 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    if op.starts_with("transcript_session_") {
+        return transcript_session::dispatch(&command, root);
+    }
     if op.starts_with("extract_") {
         return extraction::dispatch(&command, root);
     }
     if op.starts_with("cast_") {
         return cast::dispatch(&command);
+    }
+    if matches!(
+        op,
+        "browser_input" | "browser_identity" | "browser_layout" | "browser_position"
+    ) {
+        return browser::boundary(&command);
     }
     if op.starts_with("browser_") {
         return browser::dispatch(&command, root);
@@ -669,6 +742,19 @@ pub fn dictation_execute(request: String) -> String {
     match speech::dispatch(&request) {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
         Err(error) => json!({"ok":false,"error":error}).to_string(),
+    }
+}
+
+pub(crate) fn request(command: &Value, root: &str) -> Result<Value> {
+    let reply: Value = serde_json::from_str(&execute(command.to_string(), root.into()))
+        .map_err(|_| "Unreadable core response.")?;
+    if reply["ok"] == true {
+        Ok(reply["value"].clone())
+    } else {
+        Err(reply["error"]
+            .as_str()
+            .unwrap_or("Core operation failed.")
+            .into())
     }
 }
 

@@ -14,6 +14,7 @@ mod mini;
 mod orientation;
 mod pip;
 pub(crate) mod preferences;
+pub(crate) mod session;
 pub(crate) mod sponsor;
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -96,6 +97,12 @@ fn snapshot(library: &Library, current: &str, next: Option<&Item>) -> Value {
     reason = "Keep each operation and its shared state validation and persistence in one dispatcher."
 )]
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
+    if command["op"]
+        .as_str()
+        .is_some_and(|op| op.starts_with("player_session_"))
+    {
+        return session::dispatch(command);
+    }
     if command["op"] == "player_chapter" {
         let starts = command["starts"]
             .as_array()

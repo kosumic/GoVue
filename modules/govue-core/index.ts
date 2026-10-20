@@ -2,10 +2,10 @@ import { requireNativeModule } from 'expo';
 
 const native = requireNativeModule<{
   browserUrlPolicy?(url: string): string;
+  state?(request: string): string;
   execute(request: string): Promise<string>;
   ai(request: string): Promise<string>;
   dictation?(request: string): string;
-  mux(video: string, audio: string, output: string): Promise<string>;
   supportedMediaFormats?(formats: string): Promise<string>;
   getSystemVolume?(): Promise<number>;
   getBrowserUserAgent?(): Promise<string>;
@@ -17,20 +17,11 @@ const native = requireNativeModule<{
   ): { remove(): void };
   setSystemVolume?(volume: number): Promise<void>;
   saveFile?(uri: string, name: string, mime: string): Promise<boolean>;
-  publishDownload?(id: string): Promise<boolean>;
-  deletePublishedDownload?(uri: string): Promise<void>;
   galleryBytes?(url: string, key: string): Promise<string>;
   castDiscoverySnapshot?(enabled: boolean): Promise<string>;
   castNeedsLocalPermission?(): Promise<boolean>;
   configurePipControls?(raw: string): Promise<void>;
   pipBackgroundAudio?(videoId: string): Promise<boolean>;
-  getDownloadActivityCount?(): Promise<number>;
-  setDownloadActivity?(
-    count: number,
-    title: string,
-    received: number,
-    total: number,
-  ): Promise<void>;
   transcriptTrace?(
     requestId: string,
     stage: string,
@@ -43,6 +34,17 @@ export const browserUrlPolicy = (url: string): 'internal' | 'external' | 'blocke
   const policy = native.browserUrlPolicy?.(url);
   return policy === 'internal' || policy === 'external' ? policy : 'blocked';
 };
+
+export const observeCoreUpdates = (channel: string, listener: () => void) =>
+  native.addListener?.('coreUpdate', sample => { if (sample?.channel === channel) listener(); });
+
+export function stateRequest<T>(command: Record<string, unknown>): T {
+  if (!native.state) throw Error('Install an updated GoVue build to use shared app state.');
+  const reply = JSON.parse(native.state(JSON.stringify(command)));
+  if (reply?.ok !== true) throw Error(reply?.error || 'Could not update shared app state.');
+  return reply.value as T;
+}
+export const browserRequest = stateRequest;
 
 export function dictationRequest<T>(command: Record<string, unknown>): T {
   if (!native.dictation) throw Error('Install an updated GoVue build to use voice input.');
@@ -69,14 +71,8 @@ export async function aiRequest<T>(
   return reply.value as T;
 }
 
-export const muxMedia = (video: string, audio: string, output: string) =>
-  native.mux(video, audio, output);
 export const saveFileToDevice = (uri: string, name: string, mime: string) =>
   native.saveFile?.(uri, name, mime) ?? Promise.resolve(null);
-export const publishDownloadToLibrary = (id: string) =>
-  native.publishDownload?.(id) ?? Promise.resolve(false);
-export const deletePublishedDownload = (uri: string) =>
-  native.deletePublishedDownload?.(uri) ?? Promise.resolve();
 export const getBrowserUserAgent = () =>
   native.getBrowserUserAgent?.() ?? Promise.resolve(null);
 export const takeBrowserLaunches = () =>
@@ -167,17 +163,6 @@ export const getSystemVolume = () =>
   native.getSystemVolume?.() ?? Promise.resolve(1);
 export const setSystemVolume = (volume: number) =>
   native.setSystemVolume?.(volume) ?? Promise.resolve();
-export const setDownloadActivity = (
-  count: number,
-  title: string,
-  received: number,
-  total: number,
-) =>
-  native.setDownloadActivity?.(count, title, received, total) ??
-  Promise.resolve();
-export const getDownloadActivityCount = () =>
-  native.getDownloadActivityCount?.() ?? Promise.resolve(0);
-
 export async function coreRequest<T>(
   command: Record<string, unknown>,
 ): Promise<T> {

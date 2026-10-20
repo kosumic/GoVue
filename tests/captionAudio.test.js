@@ -12,16 +12,18 @@ const clip = token => ({ needsMedia: false, token, uri: `http://127.0.0.1:1234/$
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
 async function harness(t, respond = async command => clip(command.cueId), options = {}) {
-  const calls = [], extractions = [], players = [], apps = new Set();
+  const calls = [], cancellations = [], players = [], apps = new Set();
   let transcript, game;
   const result = await build({ entryPoints: ['src/ai/useGameAudio.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'caption-edges', setup(builder) {
       builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'mock-core', external: true }));
-      builder.onResolve({ filter: /\/core\/media$/ }, () => ({ path: 'mock-media', external: true }));
     } }],
   });
-  const core = { async aiRequest(command) { calls.push(command); return command.op.endsWith('_release') ? null : respond(command); } };
-  const media = { async extractMedia(videoId, signal, fresh) { extractions.push({ videoId, signal, fresh }); return { videoId }; } };
+  const core = { async aiRequest(command) {
+    if (command.op === 'ai_caption_audio_cancel') { cancellations.push(command); return null; }
+    if (command.op === 'ai_caption_audio') command = command.command;
+    calls.push(command); return command.op.endsWith('_release') ? null : respond(command);
+  } };
   function useVideoPlayer(_, setup) {
     const [player] = React.useState(() => {
       const listeners = new Map();
@@ -41,7 +43,6 @@ async function harness(t, respond = async command => clip(command.cueId), option
   const module = { exports: {} };
   Function('require', 'module', 'exports', result.outputFiles[0].text)(name => {
     if (name === 'mock-core') return core;
-    if (name === 'mock-media') return media;
     if (name === 'expo-video') return { useVideoPlayer };
     if (name === 'react-native') return { AppState: { currentState: 'active', addEventListener(_, listener) { apps.add(listener); return { remove: () => apps.delete(listener) }; } } };
     return require(name);
@@ -55,7 +56,7 @@ async function harness(t, respond = async command => clip(command.cueId), option
   let root;
   await act(async () => { root = create(createElement(Audio)); });
   t.after(() => act(async () => root.unmount()));
-  return { calls, extractions, players, apps, transcript: () => transcript, game: () => game, pausedVideo: () => pausedVideo,
+  return { calls, cancellations, players, apps, transcript: () => transcript, game: () => game, pausedVideo: () => pausedVideo,
     unmount: () => act(async () => root.unmount()) };
 }
 
@@ -77,7 +78,7 @@ test('a cached transcript line plays only its caption range and releases its loc
     assert.equal(player.source, null);
     assert.equal(env.transcript().phase, 'idle');
   }
-  assert.equal(env.extractions.length, 0, 'cached replay requires no media extraction');
+  assert.equal(env.cancellations.length, 0);
   assert.deepEqual(env.calls.filter(c => c.op === 'ai_chat_audio'), Array(2).fill({ op: 'ai_chat_audio', ...scope, cueId: 'cue-7' }));
   assert.equal(env.calls.filter(c => c.op === 'ai_game_audio_release').length, 2);
 });
@@ -113,14 +114,13 @@ test('games and transcript lines share audio focus, and backgrounding cancels pl
   assert.equal(env.calls.filter(c => c.op === 'ai_game_audio_release').length, 2);
 });
 
-test('closing the reader cancels extraction and releases a clip returned after unmount', async t => {
+test('closing the reader cancels Rust preparation and releases a late clip', async t => {
   const pending = deferred();
-  const env = await harness(t, command => command.catalog ? pending.promise : { needsMedia: true, videoId: scope.videoId });
+  const env = await harness(t, () => pending.promise);
   let playing;
   await act(() => { playing = env.transcript().play('cue-0'); });
-  assert.equal(env.extractions.length, 1);
   await env.unmount();
-  assert.equal(env.extractions[0].signal.aborted, true);
+  assert.equal(env.cancellations.length, 1);
   pending.resolve(clip('late'));
   assert.equal(await playing, undefined);
   assert.equal(env.players[0].sources.length, 0);
@@ -173,11 +173,11 @@ test('displaying a practice game prepares its captions without taking audio focu
   assert.equal(env.pausedVideo(), 0);
   let playing;
   await act(() => { playing = env.game().play('cue-0'); });
-  assert.equal(env.calls.length, 1, 'Play joins the pending preparation');
+  assert.equal(env.calls.length, 2, 'Play waits for Rust to finish preparation');
   await act(async () => { pending.resolve({ needsMedia: false }); });
   assert.equal(env.game().cachePhase, 'ready');
   assert.equal(env.game().phase, 'playing');
-  assert.equal(env.calls.filter(command => command.prefetch).length, 1);
+  assert.equal(env.calls.filter(command => command.prefetch).length, 2);
   assert.equal(env.calls.filter(command => command.op === 'ai_practice_audio' && !command.prefetch).length, 1);
   await act(async () => { env.players[1].emit('playToEnd'); await playing; });
   assert.ok(env.calls.some(command => command.op === 'ai_game_audio_release' && command.token === 'practice'));
@@ -188,18 +188,16 @@ test('preparing another card leaves playing transcript audio alone and retries a
   let attempt = 0;
   const env = await harness(t, command => {
     if (!command.prefetch) return clip('transcript');
-    if (command.catalog) return pending.promise;
-    return ++attempt === 1 ? { needsMedia: true, videoId: scope.videoId } : { needsMedia: false };
+    return ++attempt === 1 ? pending.promise : { needsMedia: false };
   }, { cueIds: ['cue-0'] });
-  assert.equal(env.extractions.length, 1);
-  assert.equal(env.extractions[0].signal.aborted, false);
+  assert.equal(env.cancellations.length, 0);
   let playing;
   await act(() => { playing = env.transcript().play('cue-1'); });
   assert.equal(env.players[0].playing, true);
   assert.equal(env.players[1].playing, false);
   assert.equal(env.game().cachePhase, 'loading');
   await act(async () => { for (const listener of env.apps) listener('background'); await playing; });
-  assert.equal(env.extractions[0].signal.aborted, true);
+  assert.ok(env.cancellations.length >= 1);
   await act(async () => { pending.resolve({ needsMedia: false }); });
   assert.equal(env.game().cachePhase, 'loading', 'an obsolete completion cannot report success');
   await act(async () => { for (const listener of env.apps) listener('active'); });

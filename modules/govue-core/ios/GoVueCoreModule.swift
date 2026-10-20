@@ -12,6 +12,7 @@ public final class GoVueCoreModule: Module {
   private var galleryActive = 0
   public func definition() -> ModuleDefinition {
     Name("GoVueCore")
+    Events("coreUpdate")
     AsyncFunction("getBrowserUserAgent") { (promise: Promise) in
       let view = WKWebView(frame: .zero)
       view.evaluateJavaScript("navigator.userAgent") { [view] result, _ in
@@ -105,6 +106,8 @@ public final class GoVueCoreModule: Module {
       return String(data: try JSONSerialization.data(withJSONObject: keys), encoding: .utf8)!
     }
     OnCreate {
+      installDownloadPlatform(platform: NativeDownloadPlatform())
+      installCoreEvents(events: NativeCoreEvents { [weak self] channel in self?.sendEvent("coreUpdate", ["channel": channel]) })
       let mediaHttp = NativeMediaHttp()
       installMediaHttp(backend: mediaHttp)
       installDownloadHttp(backend: NativeDownloadHttp())
@@ -113,6 +116,7 @@ public final class GoVueCoreModule: Module {
       installAiPlatform(platform: NativeAiPlatform())
     }
     Function("browserUrlPolicy") { (url: String) -> String in browserUrlPolicy(url: url) }
+    Function("state") { (request: String) -> String in stateExecute(request: request) }
     Function("dictation") { (request: String) -> String in dictationExecute(request: request) }
     AsyncFunction("ai") { (request: String) -> String in
       let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -124,41 +128,6 @@ public final class GoVueCoreModule: Module {
         .appendingPathComponent("LingoPlay/transcripts", isDirectory: true)
       return execute(request: request, storagePath: directory.path)
     }.runOnQueue(.global(qos: .userInitiated))
-    AsyncFunction("mux") { (video: String, audio: String, output: String) async throws -> String in
-      func local(_ value: String) throws -> URL {
-        guard let url = URL(string: value), url.isFileURL,
-          url.resolvingSymlinksInPath().path.hasPrefix(NSHomeDirectory() + "/") else {
-          throw NSError(domain: "GoVue", code: 1, userInfo: [NSLocalizedDescriptionKey: "Media must be in app storage."])
-        }
-        return url
-      }
-      let target = try local(output)
-      guard !FileManager.default.fileExists(atPath: target.path) else {
-        throw NSError(domain: "GoVue", code: 2, userInfo: [NSLocalizedDescriptionKey: "Output already exists."])
-      }
-      let composition = AVMutableComposition()
-      for (path, type) in [(video, AVMediaType.video), (audio, AVMediaType.audio)] {
-        let asset = AVURLAsset(url: try local(path))
-        guard let source = try await asset.loadTracks(withMediaType: type).first,
-          let track = composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-          throw NSError(domain: "GoVue", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing media track."])
-        }
-        let duration = try await asset.load(.duration)
-        try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: .zero)
-      }
-      guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
-        throw NSError(domain: "GoVue", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not combine media."])
-      }
-      exporter.outputURL = target
-      exporter.outputFileType = .mp4
-      await withCheckedContinuation { continuation in
-        exporter.exportAsynchronously { continuation.resume() }
-      }
-      guard exporter.status == .completed else {
-        try? FileManager.default.removeItem(at: target)
-        throw exporter.error ?? NSError(domain: "GoVue", code: 5, userInfo: [NSLocalizedDescriptionKey: "Combining media failed."])
-      }
-      return target.absoluteString
-    }
+
   }
 }

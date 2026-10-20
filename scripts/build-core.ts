@@ -14,7 +14,7 @@ run('cargo', ['build', '--locked', '--release', '-p', 'govue-core', '-p', 'govue
 for (const language of ['kotlin', 'swift']) {
   const output = join(moduleRoot, language === 'kotlin' ? 'generated/kotlin' : 'ios/generated');
   mkdirSync(output, { recursive: true });
-  run(join(root, 'target/release/govue-bindgen'), ['generate', '--library', join(root, 'target/release', lib), '--language', language, '--config', join(root, 'core/uniffi.toml'), '--out-dir', output, '--no-format']);
+  run(join(root, 'target/release/govue-bindgen'), ['generate', '--library', join(root, 'target/release', lib), '--language', language, '--out-dir', output, '--no-format']);
   if (language === 'swift') {
     // The C ABI is private to this Expo module. Consumers of its Swift module
     // should not need the Rust FFI module in their own compiler search paths.

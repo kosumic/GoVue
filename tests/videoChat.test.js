@@ -16,7 +16,15 @@ async function harness(videoId, restore = async id => transcript(id)) {
   let chatProps;
   const provider = { id: 'fixture', label: 'Fixture', model: 'first', connected: true, enabled: true, models: [] };
   const ai = { providers: [provider], groups: [], activeId: provider.id, ready: true, busy: '', clear() {}, stop() {}, async select(id, model) { if (model) provider.model = model; return true; } };
-  const core = { async aiRequest(command) {
+  const core = {
+    observeCoreUpdates: () => ({ remove() {} }),
+    async coreRequest(command) {
+      if (command.op === 'transcript_session_load') return { version: command.version, documents: [{ data: command.initial, cached: true }], loading: false, error: null };
+      return null;
+    },
+    async aiRequest(command) {
+    if (command.op === 'ai_chat_session_cancel' || command.op === 'ai_chat_session_feedback') return null;
+    if (command.op === 'ai_chat_session_forget') return null;
     calls.push(command);
     switch (command.op) {
       case 'ai_chats': return { chats: [...saved.values()] };

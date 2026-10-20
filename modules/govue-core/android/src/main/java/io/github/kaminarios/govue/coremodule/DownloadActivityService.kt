@@ -5,14 +5,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
-import com.facebook.react.HeadlessJsTaskService
-import com.facebook.react.bridge.Arguments
-import com.facebook.react.jstasks.HeadlessJsTaskConfig
+import android.app.Service
+import android.os.IBinder
 
-/** Keeps React Native's platform orchestration scheduled in the background.
- * Transfer state, addresses and work scheduling remain exclusively in Rust. */
-class DownloadActivityService : HeadlessJsTaskService() {
-  private var taskStarted=false
+/** Keeps Rust workers eligible for background execution; no React timers are needed. */
+class DownloadActivityService : Service() {
+  override fun onBind(intent: Intent?): IBinder? = null
   companion object { @Volatile var activeCount=0; private set }
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val count = intent?.getIntExtra("count", 0) ?: 0
@@ -31,10 +29,6 @@ class DownloadActivityService : HeadlessJsTaskService() {
     val total = intent?.getLongExtra("total", 0) ?: 0
     builder.setProgress(100, if (total > 0) (received.coerceIn(0, total) * 100 / total).toInt() else 0, total <= 0)
     startForeground(1047, builder.build())
-    if(!taskStarted) {
-      taskStarted=true
-      startTask(HeadlessJsTaskConfig("GoVueDownloads", Arguments.createMap(), 0L, true))
-    }
     return START_NOT_STICKY
   }
   override fun onDestroy() { activeCount=0; super.onDestroy() }

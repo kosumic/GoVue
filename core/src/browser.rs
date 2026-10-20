@@ -8,6 +8,180 @@ use std::{
 };
 use url::Url;
 
+fn youtube(raw: &str) -> Option<Url> {
+    let url = Url::parse(raw).ok()?;
+    (raw.len() <= 8192
+        && !raw.chars().any(char::is_control)
+        && url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port_or_known_default() == Some(443)
+        && matches!(
+            url.host_str(),
+            Some("youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com")
+        ))
+    .then_some(url)
+}
+fn input(raw: &str) -> Result<String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err("Enter a website or a search.".into());
+    }
+    if value.len() > 8192 || value.chars().any(char::is_control) {
+        return Err("Invalid browser address.".into());
+    }
+    let http = value
+        .get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+        || value
+            .get(..8)
+            .is_some_and(|p| p.eq_ignore_ascii_case("https://"));
+    let host_port = value.split_once(':').is_some_and(|(host, rest)| {
+        !host.is_empty()
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+            && rest
+                .split('/')
+                .next()
+                .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+    });
+    if !http
+        && !host_port
+        && value.split_once(':').is_some_and(|(scheme, _)| {
+            scheme
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic)
+                && scheme
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(&b))
+        })
+    {
+        return Err("Only HTTP and HTTPS websites can be opened.".into());
+    }
+    let host = value.split(['/', '?', '#']).next().unwrap_or("");
+    if !http && !host_port && !host.contains('.') && !host.starts_with('[') && host != "localhost"
+        || value.chars().any(char::is_whitespace)
+    {
+        let encoded: String = url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
+        return Ok(format!(
+            "https://www.google.com/search?q={}",
+            encoded.replace('+', "%20")
+        ));
+    }
+    let mut url = Url::parse(&if http {
+        value.into()
+    } else {
+        format!("https://{value}")
+    })
+    .map_err(|_| "Enter a valid website address without embedded credentials.")?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("Enter a valid website address without embedded credentials.".into());
+    }
+    if url.host_str() == Some("youtu.be")
+        && let Some(id) = url
+            .path()
+            .split('/')
+            .nth(1)
+            .filter(|id| crate::video_id(id))
+    {
+        let mut watch =
+            Url::parse("https://www.youtube.com/watch").map_err(|_| "Invalid watch URL.")?;
+        watch.query_pairs_mut().append_pair("v", id);
+        if let Some((_, time)) = url.query_pairs().find(|(key, _)| key == "t") {
+            watch.query_pairs_mut().append_pair("t", &time);
+        }
+        url = watch;
+    }
+    Ok(url.into())
+}
+pub(crate) fn boundary(command: &Value) -> Result<Value> {
+    match string(command, "op")? {
+        "browser_input" => Ok(json!(input(string(command, "input")?)?)),
+        "browser_identity" => {
+            let url = youtube(string(command, "url")?);
+            Ok(json!({"youtube":url.is_some(),"videoId":url.as_ref().and_then(video)}))
+        }
+        "browser_layout" => {
+            let value = &command["layout"];
+            let number = |key: &str| value[key].as_f64().filter(|n| n.is_finite());
+            let (
+                Some(left),
+                Some(top),
+                Some(width),
+                Some(height),
+                Some(vw),
+                Some(vh),
+                Some(visible),
+            ) = (
+                number("left"),
+                number("top"),
+                number("width"),
+                number("height"),
+                number("viewportWidth"),
+                number("viewportHeight"),
+                value["visible"].as_bool(),
+            )
+            else {
+                return Ok(Value::Null);
+            };
+            if vw <= 0.0
+                || vw > 10000.0
+                || vh <= 0.0
+                || vh > 10000.0
+                || width < 0.0
+                || width > vw * 4.0
+                || height < 0.0
+                || height > vh * 4.0
+                || left.abs() > vw * 4.0
+                || top.abs() > vh * 4.0
+            {
+                return Ok(Value::Null);
+            }
+            Ok(
+                json!({"left":left,"top":top,"width":width,"height":height,"viewportWidth":vw,"viewportHeight":vh,"visible":visible}),
+            )
+        }
+        "browser_position" => {
+            let message = &command["message"];
+            let id = string(command, "videoId")?;
+            let request = string(command, "requestId")?;
+            if !crate::video_id(id)
+                || !crate::trusted_origin(string(command, "origin")?, id)
+                || message["videoId"] != id
+                || message["requestId"] != request
+            {
+                return Ok(Value::Null);
+            }
+            let Some(seconds) = message.get("seconds") else {
+                return Ok(Value::Null);
+            };
+            if !seconds.is_null() && !seconds.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0) {
+                return Ok(Value::Null);
+            }
+            if command["playback"] == true
+                && (!message["playing"].is_boolean()
+                    || !message["seeking"].is_boolean()
+                    || !message["rate"]
+                        .as_f64()
+                        .is_some_and(|n| n.is_finite() && n > 0.0 && n <= 16.0))
+            {
+                return Ok(Value::Null);
+            }
+            Ok(
+                json!({"position":seconds,"playing":message["playing"]==true,"seeking":message["seeking"]==true,
+                "rate":message["rate"].as_f64().filter(|n|n.is_finite() && *n>0.0 && *n<=16.0).unwrap_or(1.0)}),
+            )
+        }
+        _ => Err("Unknown browser boundary operation.".into()),
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Tab {

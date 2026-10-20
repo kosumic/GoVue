@@ -947,16 +947,33 @@ fn practice_survives_chat(root: &Path, chat: &Value, game: &Value, ranges: &Rang
         game["source"]
     );
     let command = json!({"op":"ai_practice_audio","gameId":id,"cueId":"cue-0","prefetch":true});
-    for _ in 0..24 {
+    ok(
+        root,
+        json!({"op":"ai_caption_audio_cancel","requestId":"cancel-before-start"}),
+    );
+    assert_eq!(
+        call(
+            root,
+            json!({"op":"ai_caption_audio","requestId":"cancel-before-start","command":command})
+        )["ok"],
+        false
+    );
+    for index in 0..24 {
         assert_eq!(
-            ok(root, command.clone()),
+            ok(
+                root,
+                json!({"op":"ai_caption_audio","requestId":format!("prepare:{index}"),"command":command})
+            ),
             json!({"needsMedia":false}),
             "cache-only preparation cannot allocate a playback route"
         );
     }
     let mut command = command;
     command["prefetch"] = json!(false);
-    let clip = ok(root, command);
+    let clip = ok(
+        root,
+        json!({"op":"ai_caption_audio","requestId":"practice-play","command":command}),
+    );
     assert!(ureq::get(clip["uri"].as_str().unwrap()).call().is_ok());
     ok(
         root,

@@ -72,6 +72,11 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     .iter_mut()
                     .rev()
                     .filter(|e| e["state"] == "queued")
+                    .filter(|e| {
+                        !command["excludeIds"]
+                            .as_array()
+                            .is_some_and(|ids| ids.contains(&e["id"]))
+                    })
                     .take(2usize.saturating_sub(active))
                 {
                     super::publication::invalidate(entry)?;
@@ -305,6 +310,9 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 _ => return Err("Unknown download operation.".into()),
             }
         }
+    }
+    if op == "downloads_claim" && claimed.is_empty() {
+        return Ok(json!({"entries":entries,"claimed":[],"plan":null}));
     }
     let safe = history(&json!({"entries":entries}))?;
     if safe.to_string().len() > crate::MAX_BYTES {

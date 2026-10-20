@@ -21,6 +21,7 @@ export type SavedChat = Pick<Conversation, 'id' | 'videoId' | 'title' | 'pinned'
 type Started = { taskId: string; conversation: Conversation };
 
 export function useChats(visible: boolean, contextId: string) {
+  const [sessionId] = useState(() => `chat:${Date.now()}:${Math.random().toString(36).slice(2)}`);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [history, setHistory] = useState<SavedChat[]>([]);
   const [busy, setBusy] = useState(false);
@@ -38,31 +39,13 @@ export function useChats(visible: boolean, contextId: string) {
   const epoch = useRef(0);
   const task = useRef<string | null>(null);
   const sending = useRef(false);
-  const cancellation = useRef<Promise<unknown> | null>(null);
   const historyEpoch = useRef(0);
   const previousContext = useRef(contextId);
   const mounted = useRef(true);
   const gameWrites = useRef(Promise.resolve());
-  const queueWrites = useRef(Promise.resolve());
-  const queueGeneration = useRef(0);
-  const gameFeedback = useRef<{ chatId: string; gameId: string }[]>([]);
   const [feedbackVersion, setFeedbackVersion] = useState(0);
 
-  function update(chat: Conversation | null) {
-    const previous = current.current;
-    if (chat && previous?.id === chat.id) {
-      chat = { ...chat, messages: chat.messages.map(message => {
-        if (!message.games) return message;
-        const old = previous.messages.find(m => m.id === message.id);
-        const games = message.games.map(game => {
-          const saved = old?.games?.find(g => g.id === game.id);
-          return saved && saved.revision > game.revision ? saved : game;
-        });
-        return games.some((game, index) => game !== message.games![index]) ? { ...message, games } : message;
-      }) };
-    }
-    current.current = chat; setConversation(chat);
-  }
+  function update(chat: Conversation | null) { current.current = chat; setConversation(chat); }
   async function refresh() {
     const version = ++historyEpoch.current;
     const result = await aiRequest<{ chats: SavedChat[] }>({ op: 'ai_chats' });
@@ -80,35 +63,28 @@ export function useChats(visible: boolean, contextId: string) {
     }) });
   }
   function cancel(clearFeedback: boolean) {
-    if (clearFeedback) gameFeedback.current = [];
-    ++epoch.current;
-    ++queueGeneration.current;
-    const version = epoch.current;
-    const id = task.current; task.current = null;
-    starting.current = null;
+    const version = ++epoch.current;
+    task.current = null; starting.current = null;
     sending.current = false; setBusy(false); setLoading(false);
-    const chat = current.current;
-    if (chat) update({ ...chat, activeTask: null, messages: chat.messages.map(m => m.status === 'streaming' ? { ...m, status: 'stopped' } : m) });
-    if (id) {
-      const pending = aiRequest<{ conversation?: Conversation } | null>({ op: 'ai_cancel', taskId: id }).then(result => {
-        const saved = result?.conversation;
-        if (saved && mounted.current && version === epoch.current && current.current?.id === saved.id) update({ ...saved, reasoningEffort: current.current.reasoningEffort });
-      }).then(() => aiRequest({ op: 'ai_forget', taskId: id })).then(refresh).catch(e => { if (mounted.current) setError(e.message); });
-      cancellation.current = pending;
-      void pending.finally(() => { if (cancellation.current === pending) cancellation.current = null; });
-    }
+    const chatId = current.current?.id;
+    void aiRequest<{ conversation?: Conversation } | null>({ op: 'ai_chat_session_cancel', sessionId, version, chatId, clearFeedback }).then(result => {
+      const saved = result?.conversation;
+      if (saved && mounted.current && version === epoch.current && current.current?.id === saved.id) update(saved);
+      return refresh();
+    }).catch(e => { if (mounted.current && version === epoch.current) setError(e.message); });
   }
   function stop() { cancel(true); }
   async function watch(started: Started, version: number) {
     let stream: ChatStream | null = null;
+    const active = () => mounted.current && version === epoch.current && task.current === started.taskId;
     try {
-      while (mounted.current && version === epoch.current) {
+      while (active()) {
         const event = await aiRequest<ChatUpdate>({ op: 'ai_chat_poll', taskId: started.taskId, ...(stream ? { afterRevision: stream.revision } : {}) });
-        if (!mounted.current || version !== epoch.current) return;
+        if (!active()) return;
         let next = applyChatUpdate(stream, event);
         if (!next) {
           const snapshot = await aiRequest<ChatUpdate>({ op: 'ai_chat_poll', taskId: started.taskId });
-          if (!mounted.current || version !== epoch.current) return;
+          if (!active()) return;
           next = applyChatUpdate(null, snapshot);
           if (!next) throw Error('Could not resync this response.');
         }
@@ -119,7 +95,7 @@ export function useChats(visible: boolean, contextId: string) {
         if (changed && state.status === 'running' && chat?.id === started.conversation.id && state.replyId && chat.messages.at(-1)?.id !== state.replyId) {
           const revision = reasoningRevision.current;
           const saved = await aiRequest<Conversation>({ op: 'ai_chat_get', chatId: chat.id });
-          if (!mounted.current || version !== epoch.current) return;
+          if (!active()) return;
           update({ ...saved, reasoningEffort: revision === reasoningRevision.current ? saved.reasoningEffort : current.current?.reasoningEffort });
           chat = current.current;
         }
@@ -130,50 +106,40 @@ export function useChats(visible: boolean, contextId: string) {
         if (state.status !== 'running') {
           const revision = reasoningRevision.current;
           const saved = await aiRequest<Conversation>({ op: 'ai_chat_get', chatId: started.conversation.id });
-          if (mounted.current && version === epoch.current) update({ ...saved, reasoningEffort: revision === reasoningRevision.current ? saved.reasoningEffort : current.current?.reasoningEffort });
+          if (active()) update({ ...saved, reasoningEffort: revision === reasoningRevision.current ? saved.reasoningEffort : current.current?.reasoningEffort });
           return;
         }
         await new Promise(resolve => setTimeout(resolve, 150));
       }
     } catch (e) {
-      if (mounted.current && version === epoch.current) setError(e instanceof Error ? e.message : 'Could not finish this response.');
+      if (active()) setError(e instanceof Error ? e.message : 'Could not finish this response.');
     } finally {
-      await aiRequest({ op: 'ai_forget', taskId: started.taskId }).catch(() => {});
-      if (mounted.current && version === epoch.current) { task.current = null; sending.current = false; setBusy(false); }
+      await aiRequest({ op: 'ai_chat_session_forget', sessionId, version, taskId: started.taskId }).catch(() => {});
+      if (active()) { task.current = null; sending.current = false; setBusy(false); }
       if (mounted.current) void refresh().catch(() => {});
     }
   }
   async function queue(prompt: string) {
-    const generation = queueGeneration.current;
-    const work = queueWrites.current.catch(() => {}).then(async () => {
+    const version = epoch.current;
+    try {
       if (starting.current) await starting.current;
-      if (!mounted.current || generation !== queueGeneration.current || !current.current) return false;
-      const version = epoch.current;
+      if (!mounted.current || version !== epoch.current || !current.current) return false;
       const chat = current.current;
       const previousTask = task.current;
-      const started = await aiRequest<Started>({ op: 'ai_chat_send', id: chat.providerId, chatId: chat.id, prompt });
-      if (!mounted.current || version !== epoch.current) {
-        if (started.taskId !== task.current) {
-          await aiRequest({ op: 'ai_cancel', taskId: started.taskId }).catch(() => {});
-          await aiRequest({ op: 'ai_forget', taskId: started.taskId }).catch(() => {});
-        }
-        return false;
-      }
-      // A late queue acknowledgment must not resurrect a response already finished by polling.
+      const started = await aiRequest<Started>({ op: 'ai_chat_session_send', sessionId, version, queue: true,
+        command: { chatId: chat.id, prompt } });
+      if (!mounted.current || version !== epoch.current) return false;
       if (started.taskId === previousTask) {
         if (task.current === previousTask && current.current?.id === chat.id && current.current.messages.at(-1)?.id === started.conversation.messages.at(-1)?.id) update({ ...current.current, pendingMessages: started.conversation.pendingMessages });
       } else {
-        const nextVersion = ++epoch.current;
         task.current = started.taskId; sending.current = true; setBusy(true); update(started.conversation);
-        void watch(started, nextVersion);
+        void watch(started, version);
       }
       return true;
-    }).catch(e => {
-      if (mounted.current && generation === queueGeneration.current) setError(e instanceof Error ? e.message : 'Could not queue this message.');
+    } catch (error) {
+      if (mounted.current && version === epoch.current) setError(error instanceof Error ? error.message : 'Could not queue this message.');
       return false;
-    });
-    queueWrites.current = work.then(() => {});
-    return work;
+    }
   }
   async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false, focusGameId?: string, editMessageId?: string, retryMessageId?: string, queuedMessageId?: string) {
     if (settingsPending.current || branching.current) return false;
@@ -182,17 +148,12 @@ export function useChats(visible: boolean, contextId: string) {
     sending.current = true; setBusy(true); setError('');
     let pending: Promise<Started> | null = null;
     try {
-      if (cancellation.current) await cancellation.current;
       if (!mounted.current || version !== epoch.current) return false;
-      pending = aiRequest<Started>({ op: 'ai_chat_send', id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}), ...(focusGameId ? { focusGameId } : {}), ...(editMessageId ? { editMessageId } : {}), ...(retryMessageId ? { retryMessageId } : {}), ...(queuedMessageId ? { queuedMessageId } : {}) });
+      pending = aiRequest<Started>({ op: 'ai_chat_session_send', sessionId, version, clearFeedback: !!editMessageId || !!retryMessageId, command: { id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}), ...(focusGameId ? { focusGameId } : {}), ...(editMessageId ? { editMessageId } : {}), ...(retryMessageId ? { retryMessageId } : {}), ...(queuedMessageId ? { queuedMessageId } : {}) } });
       starting.current = pending;
       const started = await pending;
       if (starting.current === pending) starting.current = null;
-      if (!mounted.current || version !== epoch.current) {
-        await aiRequest({ op: 'ai_cancel', taskId: started.taskId }).catch(() => {});
-        await aiRequest({ op: 'ai_forget', taskId: started.taskId }).catch(() => {});
-        return false;
-      }
+      if (!mounted.current || version !== epoch.current) return false;
       task.current = started.taskId; update(started.conversation);
       void watch(started, version);
       return true;
@@ -212,10 +173,7 @@ export function useChats(visible: boolean, contextId: string) {
       if (!mounted.current || current.current?.id !== owner) throw Error('This game is no longer open.');
       if (!current.current.messages.some(message => message.id === messageId && message.games?.some(game => game.id === gameId))) throw Error('This game is no longer available.');
       update({ ...current.current, messages: current.current.messages.map(m => m.id === messageId ? { ...m, games: m.games?.map(g => g.id === gameId ? result.game : g) } : m) });
-      if (result.notify) {
-        gameFeedback.current.push({ chatId: owner, gameId });
-        setFeedbackVersion(value => value + 1);
-      }
+      if (result.notify) setFeedbackVersion(value => value + 1);
       return result.game;
     });
     gameWrites.current = work.then(() => {}, () => {});
@@ -224,11 +182,12 @@ export function useChats(visible: boolean, contextId: string) {
   useEffect(() => {
     if (!visible || busy || settingsBusy || sending.current || !ready || !current.current) return;
     const chat = current.current;
-    const pending = gameFeedback.current.filter(item => item.chatId === chat.id);
-    gameFeedback.current = [];
-    if (!pending.length) return;
-    const latest = pending.at(-1)!;
-    void send(chat.providerId, 'Give me feedback on my latest interaction with the first game in the attached game activity.', chat.transcript, undefined, false, latest.gameId);
+    const version = epoch.current;
+    void aiRequest<Started | null>({ op: 'ai_chat_session_feedback', sessionId, version, chatId: chat.id }).then(started => {
+      if (!started || !mounted.current || version !== epoch.current || current.current?.id !== chat.id) return;
+      task.current = started.taskId; sending.current = true; setBusy(true); update(started.conversation);
+      void watch(started, version);
+    }).catch(error => { if (mounted.current && version === epoch.current) setError(error.message); });
   }, [visible, busy, settingsBusy, ready, feedbackVersion]);
   async function open(id: string) {
     stop(); const version = epoch.current;

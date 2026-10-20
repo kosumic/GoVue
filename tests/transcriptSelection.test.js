@@ -11,190 +11,146 @@ const first = 'abcdefghijk', second = '0123456789a';
 const transcript = (videoId, trackId = '.en') => ({ videoId, trackId, title: 'Example', language: trackId,
   tracks: ['.en', '.ja'].map(id => ({ id, language: id, label: id, automatic: false })),
   segments: [{ start: 1, duration: 2, text: trackId }] });
-const deferred = () => {
-  let resolve, reject;
-  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-  return { promise, resolve, reject };
-};
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-async function harness({ open = true, restore = (videoId, trackId) => !trackId || trackId === '.en' ? transcript(videoId) : null } = {}) {
-  const restores = [], extractions = [], selections = [], replies = [];
+// The fixture supplies authoritative native snapshots. Loading/cache policy is
+// exercised in core/tests/transcript_sessions.rs rather than recreated here.
+async function harness() {
+  const commands = [], selections = [], replies = [], listeners = new Set();
+  let snapshot = null;
   const compiled = await build({ entryPoints: ['src/player/usePlayerTranscript.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'transcript-edge', setup(builder) {
       builder.onResolve({ filter: /\/core\/transcripts$/ }, () => ({ path: 'test-transcripts', external: true }));
+      builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'test-native', external: true }));
     } }],
   });
   const module = { exports: {} };
-  Function('require', 'module', 'exports', compiled.outputFiles[0].text)(name => name === 'test-transcripts' ? {
-    restoreTranscript: async (videoId, trackId, audioKey) => { restores.push({ videoId, trackId, audioKey }); return await restore(videoId, trackId, audioKey); },
-    selectTranscriptTracks: async (...args) => { selections.push(args); return await replies.shift(); },
-    extractTranscript: (videoId, trackId, signal, fresh, audioKey) => {
-      const work = deferred(); extractions.push({ videoId, trackId, signal, fresh, audioKey, ...work }); return work.promise;
-    },
-  } : require(name), module, module.exports);
+  Function('require', 'module', 'exports', compiled.outputFiles[0].text)(name => {
+    if (name === 'test-transcripts') return {
+      selectTranscriptTracks: async (...args) => { selections.push(args); return await replies.shift(); },
+    };
+    if (name === 'test-native') return {
+      observeCoreUpdates: (_channel, listener) => { listeners.add(listener); return { remove: () => listeners.delete(listener) }; },
+      coreRequest: async command => {
+        commands.push(command);
+        if (command.op === 'transcript_session_load') {
+          snapshot = { version: command.version, documents: [], loading: true, error: null };
+          return snapshot;
+        }
+        if (command.op === 'transcript_session_snapshot') return snapshot;
+        return null;
+      },
+    };
+    return require(name);
+  }, module, module.exports);
   let reader, root;
   function Reader({ videoId = first, audioKey = '' }) { reader = module.exports.usePlayerTranscript(videoId, undefined, audioKey); return null; }
   await act(async () => { root = create(createElement(Reader)); });
-  if (open) await act(() => reader.toggle());
-  return { reader: () => reader, restores, extractions, selections, replies,
-    render: (videoId, audioKey = '') => act(() => root.update(createElement(Reader, { videoId, audioKey }))),
-    unmount: () => act(() => root.unmount()) };
+  return {
+    reader: () => reader, commands, selections, replies,
+    load: () => commands.findLast(c => c.op === 'transcript_session_load'),
+    publish: (documents, values = {}) => act(async () => {
+      snapshot = { ...snapshot, documents: documents.map(data => ({ data, cached: true })), loading: false, error: null, ...values };
+      for (const listener of listeners) listener();
+    }),
+    render: (videoId, audioKey = '') => act(async () => root.update(createElement(Reader, { videoId, audioKey }))),
+    unmount: () => act(async () => root.unmount()),
+  };
 }
 
-test('adding a second language keeps the first usable and removing it cancels pending extraction', async t => {
+test('adding and removing a comparison renders the native snapshot without replacing the primary', async t => {
   const env = await harness(); t.after(env.unmount);
-  const primary = env.reader().data;
-  env.replies.push(['.en', '.ja']);
-  await act(() => env.reader().selectTrack('.ja'));
-  assert.equal(env.reader().data, primary);
+  const primary = transcript(first); await env.publish([primary]);
+  env.replies.push(['.en', '.ja']); await act(() => env.reader().selectTrack('.ja'));
+  assert.deepEqual(env.load().trackIds, ['.en', '.ja']);
+  await env.publish([primary], { loading: true });
+  assert.deepEqual(env.reader().data, primary);
   assert.equal(env.reader().loading, false);
   assert.equal(env.reader().comparisonLoading, true);
-  assert.deepEqual(env.restores.at(-1), { videoId: first, trackId: '.ja', audioKey: '' });
-  assert.deepEqual(env.selections[0], [primary, ['.en'], '.ja']);
-  env.replies.push(['.en']);
-  await act(() => env.reader().selectTrack('.ja'));
-  assert.equal(env.extractions[0].signal.aborted, true);
-  await act(() => env.extractions[0].resolve(transcript(first, '.ja')));
-  assert.equal(env.reader().data, primary);
-  assert.equal(env.reader().comparison, null);
-  assert.deepEqual(env.reader().trackIds, ['.en']);
+  const oldVersion = env.load().version;
+  env.replies.push(['.en']); await act(() => env.reader().selectTrack('.ja'));
+  await env.publish([primary]);
+  await env.publish([primary, transcript(first, '.ja')], { version: oldVersion });
+  assert.equal(env.reader().comparison, null, 'a snapshot from the removed selection is stale');
 });
 
-test('a failed comparison preserves the primary transcript and removing it clears the error', async t => {
+test('a failed comparison preserves the primary and retry requests only the selected tracks', async t => {
   const env = await harness(); t.after(env.unmount);
-  const primary = env.reader().data;
-  env.replies.push(['.en', '.ja']);
-  await act(() => env.reader().selectTrack('.ja'));
-  await act(() => env.extractions[0].reject(Error('Comparison unavailable')));
-  assert.equal(env.reader().data, primary);
+  const primary = transcript(first); await env.publish([primary]);
+  env.replies.push(['.en', '.ja']); await act(() => env.reader().selectTrack('.ja'));
+  await env.publish([primary], { error: 'Comparison unavailable' });
+  assert.deepEqual(env.reader().data, primary);
   assert.equal(env.reader().error, null);
   assert.equal(env.reader().comparisonError, 'Comparison unavailable');
-  assert.equal(env.reader().comparisonLoading, false);
-  env.replies.push(['.en']);
-  await act(() => env.reader().selectTrack('.ja'));
-  assert.equal(env.reader().comparisonError, null);
-});
-
-test('retrying a limited comparison preserves the primary and only requests the missing track', async t => {
-  const env = await harness(); t.after(env.unmount);
-  const primary = env.reader().data;
-  env.replies.push(['.en', '.ja']);
-  await act(async () => { env.reader().selectTrack('.ja'); });
-  await act(async () => { env.extractions[0].reject(Error('YouTube is temporarily limiting translated captions.')); });
-  const restores = env.restores.length;
-  await act(async () => { env.reader().extract(); });
-  assert.equal(env.reader().data, primary);
-  assert.equal(env.reader().loading, false);
-  assert.equal(env.reader().comparisonLoading, true);
-  assert.equal(env.reader().comparisonError, null);
-  assert.equal(env.restores.length, restores + 1);
-  assert.equal(env.restores.at(-1).trackId, '.ja');
-  assert.equal(env.extractions.length, 2);
-  assert.equal(env.extractions[1].trackId, '.ja');
-  assert.equal(env.extractions[1].fresh, false);
-  await act(async () => { env.extractions[1].resolve(transcript(first, '.ja')); });
-  assert.equal(env.reader().data, primary);
+  await act(() => env.reader().extract());
+  assert.equal(env.load().fresh, false);
+  assert.deepEqual(env.load().trackIds, ['.en', '.ja']);
+  await env.publish([primary, transcript(first, '.ja')]);
   assert.equal(env.reader().comparison.trackId, '.ja');
-  assert.equal(env.reader().comparisonLoading, false);
+  assert.equal(env.reader().comparisonError, null);
 });
 
-test('refreshing a successful transcript still bypasses saved captions', async t => {
+test('refreshing a successful transcript explicitly bypasses cached captions', async t => {
   const env = await harness(); t.after(env.unmount);
-  await act(async () => { env.reader().extract(); });
-  assert.equal(env.extractions.length, 1);
-  assert.equal(env.extractions[0].trackId, '.en');
-  assert.equal(env.extractions[0].fresh, true);
-  await act(async () => { env.extractions[0].resolve(transcript(first)); });
+  await env.publish([transcript(first)]);
+  await act(() => env.reader().extract());
+  assert.equal(env.load().fresh, true);
+  assert.deepEqual(env.load().trackIds, ['.en']);
 });
 
-test('closing or navigating prevents late selection and extraction from reopening an old reader', async t => {
+test('closing the reader rejects late language selection while native preloading continues', async t => {
   const env = await harness(); t.after(env.unmount);
-  const pending = deferred();
-  env.replies.push(pending.promise);
+  const primary = transcript(first); await env.publish([primary]);
+  await act(() => env.reader().toggle());
+  const pending = deferred(); env.replies.push(pending.promise);
   await act(() => env.reader().selectTrack('.ja'));
+  const loads = env.commands.filter(c => c.op === 'transcript_session_load').length;
   await act(() => env.reader().close());
   await act(() => pending.resolve(['.en', '.ja']));
   assert.equal(env.reader().open, false);
-  assert.equal(env.reader().data.videoId, first);
-  assert.equal(env.extractions.length, 0);
-  await act(() => env.reader().toggle());
-  env.replies.push(['.en', '.ja']);
-  await act(() => env.reader().selectTrack('.ja'));
-  await env.render(second);
-  assert.equal(env.reader().open, false);
-  assert.equal(env.reader().data.videoId, second);
-  assert.equal(env.extractions[0].signal.aborted, true);
-  await act(() => env.extractions[0].resolve(transcript(first, '.ja')));
-  await act(() => env.reader().toggle());
-  assert.equal(env.reader().data.videoId, second);
-  assert.equal(env.reader().comparison, null);
-});
-
-test('opening a video preloads captions and reader visibility reuses the same pending and completed work', async t => {
-  const env = await harness({ open: false, restore: () => null }); t.after(env.unmount);
-  assert.equal(env.reader().open, false);
-  assert.equal(env.reader().loading, true);
-  assert.equal(env.extractions.length, 1);
-  const pending = env.extractions[0];
-  assert.equal(pending.videoId, first);
-  assert.equal(pending.trackId, 'default');
+  assert.equal(env.commands.filter(c => c.op === 'transcript_session_load').length, loads);
+  await env.publish([primary]);
+  assert.deepEqual(env.reader().data, primary);
   await act(() => env.reader().toggle());
   assert.equal(env.reader().open, true);
-  await act(() => env.reader().close());
-  assert.equal(pending.signal.aborted, false);
-  const data = transcript(first);
-  await act(async () => { pending.resolve(data); });
-  assert.equal(env.reader().open, false);
-  assert.equal(env.reader().data, data);
-  await act(() => env.reader().toggle());
-  assert.equal(env.reader().open, true);
-  assert.equal(env.reader().data, data);
-  assert.equal(env.reader().loading, false);
-  assert.equal(env.restores.length, 1);
-  assert.equal(env.extractions.length, 1);
 });
 
-test('navigation cancels a hidden preload and discards its late result while preloading the new video', async t => {
-  const env = await harness({ open: false, restore: () => null }); t.after(env.unmount);
-  const previous = env.extractions[0];
+test('navigation releases the old reader generation and ignores its late snapshot', async t => {
+  const env = await harness(); t.after(env.unmount);
+  const previous = env.load();
   await env.render(second);
-  assert.equal(previous.signal.aborted, true);
-  assert.equal(env.extractions.length, 2);
-  assert.equal(env.extractions[1].videoId, second);
-  await act(async () => { previous.resolve(transcript(first)); });
+  assert.ok(env.commands.some(c => c.op === 'transcript_session_release' && c.version === previous.version));
+  assert.equal(env.load().videoId, second);
+  await env.publish([transcript(first)], { version: previous.version });
   assert.equal(env.reader().data, null);
-  assert.equal(env.reader().open, false);
-  await act(async () => { env.extractions[1].resolve(transcript(second)); });
+  await env.publish([transcript(second)], { version: env.load().version });
   assert.equal(env.reader().data.videoId, second);
   assert.equal(env.reader().open, false);
   await env.render(null);
   assert.equal(env.reader().data, null);
   assert.equal(env.reader().loading, false);
-  assert.equal(env.extractions.length, 2);
 });
 
-test('changing audio reloads the default captions without retaining the previous audio transcript', async t => {
-  const env = await harness({ restore: (videoId, trackId, audioKey) => transcript(videoId, audioKey === 'ja.1' ? '.ja' : '.en') });
-  t.after(env.unmount);
-  assert.equal(env.reader().data.trackId, '.en');
+test('changing audio selects default captions for the new native audio session', async t => {
+  const env = await harness(); t.after(env.unmount);
+  await env.publish([transcript(first)]);
+  await act(() => env.reader().toggle());
   await env.render(first, 'ja.1');
   assert.equal(env.reader().open, true);
+  assert.equal(env.reader().data, null);
+  assert.equal(env.load().audioKey, 'ja.1');
+  assert.deepEqual(env.load().trackIds, ['default']);
+  await env.publish([transcript(first, '.ja')]);
   assert.equal(env.reader().data.trackId, '.ja');
-  assert.deepEqual(env.restores.at(-1), { videoId: first, trackId: undefined, audioKey: 'ja.1' });
-  assert.equal(env.extractions.length, 0);
 });
 
-test('a failed background preload stays closed and opening the reader retries it', async t => {
-  const env = await harness({ open: false, restore: () => null }); t.after(env.unmount);
-  await act(async () => { env.extractions[0].reject(Error('Temporary extraction failure')); });
+test('a failed hidden preload stays closed and opening it retries without forcing fresh data', async t => {
+  const env = await harness(); t.after(env.unmount);
+  await env.publish([], { error: 'Temporary extraction failure' });
   assert.equal(env.reader().open, false);
   assert.equal(env.reader().error, 'Temporary extraction failure');
   await act(() => env.reader().toggle());
   assert.equal(env.reader().open, true);
   assert.equal(env.reader().error, null);
-  assert.equal(env.extractions.length, 2);
-  assert.equal(env.extractions[1].fresh, false);
-  await act(async () => { env.extractions[1].resolve(transcript(first)); });
-  assert.equal(env.reader().data.videoId, first);
-  assert.equal(env.reader().loading, false);
+  assert.equal(env.load().fresh, false);
 });

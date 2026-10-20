@@ -134,6 +134,7 @@ struct Conversation {
 }
 
 fn presentation(chat: &Conversation) -> Result<Value> {
+    refresh_games(chat);
     let mut value = serde_json::to_value(chat).map_err(|_| "Could not open this chat.")?;
     for message in value["messages"]
         .as_array_mut()
@@ -145,6 +146,24 @@ fn presentation(chat: &Conversation) -> Result<Value> {
         message["usageDetails"] = usage::details(&message["usage"]);
     }
     Ok(value)
+}
+fn refresh_games(chat: &Conversation) {
+    let job = chat.active_task.as_ref().and_then(|task| {
+        jobs()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(task)
+            .cloned()
+    });
+    if let Some(job) = job {
+        let mut state = job
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(message) = chat.messages.iter().find(|m| state["replyId"] == m.id) {
+            state["games"] = json!(message.games);
+        }
+    }
 }
 fn path(root: &Path, id: &str) -> Result<PathBuf> {
     if !valid_id(id) {
@@ -923,6 +942,15 @@ fn game_action(c: &Value, root: &Path) -> Result<Value> {
         .map_err(|_| "Could not restore game progress.")?;
     chat.updated_at = now();
     save(root, &chat)?;
+    refresh_games(&chat);
+    if result["notify"] == true {
+        chat_sessions::feedback(
+            root,
+            &chat.id,
+            string(&result["game"], "id")?,
+            result["game"]["revision"].as_u64().unwrap_or(0),
+        );
+    }
     Ok(result)
 }
 

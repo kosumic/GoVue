@@ -12,6 +12,7 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
 
 async function harness(state = 'active') {
   const preferences = deferred(), extractions = [], appListeners = new Set();
+  const commands = [], approvals = [], plans = [];
   const defaults = { backgroundPlayback: true, adBlock: true, autoPip: true, sponsorBlock: false,
     categories: [], playbackSpeed: 1, useOriginalTitle: false, rememberSpeed: false, rememberResize: false };
   const app = { currentState: state, addEventListener: (_event, callback) => {
@@ -45,7 +46,16 @@ async function harness(state = 'active') {
       if (!setup) { setup = true; configure(player); } return player;
     } };
     if (name === 'test-media') return media;
-    if (name === 'test-core') return { coreRequest: async command => command.op === 'media_message_origin' ? true : { seek: null } };
+    if (name === 'test-core') return {
+      coreRequest: async command => command.op === 'media_message_origin' ? true : { seek: null },
+      stateRequest(command) {
+        commands.push(command);
+        if (command.op === 'player_session_create') return 1;
+        if (command.op === 'player_session_auto') return approvals.shift() ?? false;
+        if (command.op === 'player_session_begin') return plans.shift() ?? null;
+        return false;
+      },
+    };
     if (name === 'test-cast') return { useCastSession: () => cast };
     if (name === 'test-position') return { useTranscriptPosition: () => ({ position: 0, handlePosition() {}, reset() {} }) };
     if (name === 'test-bridge') return { mediaNativeScript: () => '', mediaSettingsScript: () => '', mediaSponsorsScript: () => '' };
@@ -57,7 +67,8 @@ async function harness(state = 'active') {
   function Host({ id = first }) { api = module.exports.useMediaBrowser(webView, id, 'fixture'); return null; }
   await act(async () => { root = create(createElement(Host)); });
   return {
-    extractions, api: () => api,
+    extractions, commands, api: () => api,
+    approve: (videoId = first) => { approvals.push(true); plans.push({ token: plans.length + 1, videoId, settings: {}, height: 0, fps: 0 }); },
     preferences: overrides => act(async () => { preferences.resolve({ ...defaults, ...overrides }); }),
     render: id => act(async () => root.update(createElement(Host, { id }))),
     ready: () => act(async () => { await api.handleMessage('', 'https://m.youtube.com', { type: 'mediaReady', videoId: first }); }),
@@ -66,38 +77,42 @@ async function harness(state = 'active') {
   };
 }
 
-test('a selected URL starts extraction after preferences without waiting for mediaReady', async t => {
+test('startup waits for preferences and obeys the native startup decision', async t => {
   const env = await harness(); t.after(env.unmount);
-  assert.equal(env.extractions.length, 0, 'saved preferences must load first');
+  assert.equal(env.extractions.length, 0);
   await env.preferences();
+  assert.equal(env.extractions.length, 0, 'a denied native decision must stay denied');
+  const command = env.commands.findLast(c => c.op === 'player_session_auto');
+  assert.equal(command.ready, true);
+  assert.equal(command.owner, first);
+  assert.equal(command.foreground, true);
+  env.approve(); await env.ready();
   assert.deepEqual(env.extractions.map(job => job.videoId), [first]);
-  await env.ready(); await env.ready();
-  assert.equal(env.extractions.length, 1, 'page readiness must join existing work');
+  await env.ready();
+  assert.equal(env.extractions.length, 1);
+});
+
+test('navigation cancels extraction and late results cannot replace the new selection', async t => {
+  const env = await harness(); t.after(env.unmount);
+  await env.preferences(); env.approve(); await env.ready();
   const old = env.extractions[0];
   await env.render(second);
   assert.equal(old.signal.aborted, true);
-  assert.deepEqual(env.extractions.map(job => job.videoId), [first, second]);
-  await act(async () => { old.resolve({ videoId: first }); });
-  assert.equal(env.api().catalog, null, 'a late result must not replace the new selection');
+  assert.equal(env.commands.findLast(c => c.op === 'player_session_select').videoId, second);
+  await act(async () => old.resolve({ videoId: first }));
+  assert.equal(env.api().catalog, null);
 });
 
-test('disabled native playback stays disabled until the user enables a native feature', async t => {
-  const env = await harness(); t.after(env.unmount);
-  await env.preferences({ backgroundPlayback: false, adBlock: false, autoPip: false });
+test('foreground and manual web playback are reported to the Rust session', async t => {
+  const env = await harness('background'); t.after(env.unmount);
+  await env.preferences({ adBlock: false, backgroundPlayback: false, autoPip: false });
+  const command = env.commands.findLast(c => c.op === 'player_session_auto');
+  assert.equal(command.foreground, false);
+  assert.equal(command.settings.adBlock, false);
+  await env.appState('active');
+  assert.equal(env.commands.findLast(c => c.op === 'player_session_auto').foreground, true);
+  await act(() => env.api().closePlayer());
+  assert.equal(env.commands.findLast(c => c.op === 'player_session_close').manual, true);
   await env.ready();
   assert.equal(env.extractions.length, 0);
-  await act(() => env.api().updateSettings({ adBlock: true }));
-  assert.equal(env.extractions.length, 1);
-});
-
-test('foreground startup works before page readiness and respects choosing the web player', async t => {
-  const env = await harness('background'); t.after(env.unmount);
-  await env.preferences();
-  assert.equal(env.extractions.length, 0);
-  await env.appState('active');
-  assert.equal(env.extractions.length, 1);
-  await act(() => env.api().closePlayer());
-  assert.equal(env.extractions[0].signal.aborted, true);
-  await env.ready(); await env.appState('active');
-  assert.equal(env.extractions.length, 1, 'manual web playback must stay selected');
 });

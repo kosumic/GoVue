@@ -92,7 +92,6 @@ export function DownloadLibrary({
     let active = true;
     void coreRequest<DownloadView>({
       op: 'downloads_view',
-      entries: downloads.entries,
       batchId: typeof destination === 'object' ? destination.batchId : '',
       filter:
         destination === 'history'

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { VideoPlayer } from 'expo-video';
 import type WebView from 'react-native-webview';
-import { isYouTubeUrl, youtubeVideoId } from '../browser/address';
+import { browserRequest } from '../../modules/govue-core';
 import { cancelPositionScript, pauseScript, playbackPositionScript } from '../youtube/pageScripts';
 import { advanceTranscriptPlayback } from '../core/transcripts';
 import type { Transcript } from '../youtube/transcript';
@@ -73,15 +73,12 @@ export function useTranscriptPosition(webView: React.RefObject<WebView | null>, 
 
   function handlePosition(message: { requestId?: unknown; videoId?: unknown; seconds?: unknown; playing?: unknown; seeking?: unknown; rate?: unknown }, origin: string) {
     const request = pending.current;
-    if (!request || nativeVideoId || !enabled || request.videoId !== videoId || message.videoId !== videoId || message.requestId !== request.id || !isYouTubeUrl(origin)) return;
-    // Android may supply just the HTTPS origin; document URLs must match too.
-    const url = new URL(origin);
-    const originOnly = url.pathname === '/' && !url.search && !url.hash;
-    if (url.username || url.password || (url.port && url.port !== '443') || (!originOnly && youtubeVideoId(origin) !== videoId)) return;
-    if (message.seconds !== null && (typeof message.seconds !== 'number' || !Number.isFinite(message.seconds) || message.seconds < 0)) return;
-    if (pauseAfterLine && (typeof message.playing !== 'boolean' || typeof message.seeking !== 'boolean' || typeof message.rate !== 'number' || !Number.isFinite(message.rate) || message.rate <= 0 || message.rate > 16)) return;
-    request.update({ position: message.seconds, playing: message.playing === true, seeking: message.seeking === true,
-      rate: typeof message.rate === 'number' ? message.rate : 1, at: Date.now() });
+    if (!request || nativeVideoId || !enabled || request.videoId !== videoId) return;
+    try {
+      const sample = browserRequest<Omit<Sample, 'at'> | null>({ op: 'browser_position',
+        message, origin, videoId, requestId: request.id, playback: pauseAfterLine });
+      if (sample) request.update({ ...sample, at: Date.now() });
+    } catch { /* Untrusted messages cannot interrupt playback. */ }
   }
   const position = enabled && sample?.request === pending.current && sample.request.videoId === videoId ? sample.seconds : null;
   return { position, handlePosition, reset: () => pending.current?.reset() };

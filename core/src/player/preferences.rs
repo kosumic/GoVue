@@ -15,27 +15,7 @@ const CATEGORIES: [(&str, &str); 9] = [
 ];
 
 pub(crate) fn defaults() -> Value {
-    let mut value = json!({"adBlock":true,"sponsorBlock":true,"backgroundPlayback":true,"autoPip":true,
-        "pauseAfterLine":false,"playbackSpeed":1.0,"qualityHeight":0,"qualityFps":0,
-        "rememberPosition":true,"rememberQuality":true,"rememberSpeed":false,"rememberResize":false,
-        "useOriginalTitle":false,"showDislikes":true,"showLikes":true,"hideShorts":false,"miniPlayer":true,
-        "sponsorCountdown":true,"hapticStrength":30,"resizeMode":"fit","audioKey":"","subtitleKey":"",
-        "subtitleStyle":{"scale":1.0,"vertical":1.0,"horizontal":0.0,"background":"semi","bold":false,"color":"#FFFFFF"}});
-    value["categories"] = json!(CATEGORIES.iter().map(|(id, _)| *id).collect::<Vec<_>>());
-    for mode in ["Windowed", "Fullscreen"] {
-        for gesture in [
-            "Tap",
-            "DoubleTap",
-            "LongPress",
-            "Brightness",
-            "Volume",
-            "Seek",
-            "Fullscreen",
-        ] {
-            value[format!("gesture{gesture}{mode}")] = json!(true);
-        }
-    }
-    value
+    serde_json::from_str(include_str!("defaults.json")).unwrap_or_else(|_| json!({}))
 }
 
 fn checked(key: &str, value: &Value) -> Result<Value> {

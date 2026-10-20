@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { AppState, Platform, StyleSheet, View } from 'react-native';
 import WebView from 'react-native-webview';
 import { useWebViewRenderer } from '../browser/useWebViewRenderer';
 import { registerTokenRuntime, type TokenTask } from '../core/extraction';
 import { TOKEN_RUNTIME } from '../youtube/generated/tokenRuntime';
+import { coreRequest, observeCoreUpdates } from '../../modules/govue-core';
 
 type Job = { requestId: string; task: TokenTask; sent: boolean;
   resolve: (value: string) => void; reject: (error: Error) => void;
@@ -47,9 +48,9 @@ export function TokenRuntime() {
     if (!current.current.mounted) current.current.recreate();
   }, [generation]);
   useEffect(() => {
-    const unregister = registerTokenRuntime({
-      evaluate(requestId, task) {
-        return new Promise((resolve, reject) => {
+    const runtime = {
+      evaluate(requestId: string, task: TokenTask): Promise<string> {
+        return new Promise<string>((resolve, reject) => {
           const identity = key(requestId, task.taskId);
           const job: Job = { requestId, task, sent: false, resolve, reject,
             timer: setTimeout(() => { jobs.current.delete(identity); reject(Error('YouTube verification timed out.')); restart(); }, 20000) };
@@ -57,7 +58,7 @@ export function TokenRuntime() {
           dispatch(job);
         });
       },
-      release(requestId) {
+      release(requestId: string) {
         for (const [identity, job] of jobs.current) {
           if (job.requestId !== requestId) continue;
           jobs.current.delete(identity); clearTimeout(job.timer);
@@ -67,8 +68,36 @@ export function TokenRuntime() {
           `window.releaseExtractionToken(${JSON.stringify(requestId)});true;`,
         );
       },
-    });
-    return () => { unregister(); fail(); };
+    };
+    const unregister = registerTokenRuntime(runtime);
+    let active = true, polling = false, again = false;
+    const executing = new Set<string>();
+    const owned = new Set<string>();
+    const poll = async () => {
+      if (!active) return;
+      if (polling) { again = true; return; }
+      polling = true;
+      try {
+        const state = await coreRequest<{ requests: string[]; tasks: { requestId: string; task: TokenTask }[] }>({ op: 'extract_runtime_tasks' });
+        if (!active) return;
+        for (const id of owned) if (!state.requests.includes(id)) { runtime.release(id); owned.delete(id); }
+        for (const { requestId, task } of state.tasks) {
+          const identity = key(requestId, task.taskId);
+          if (executing.has(identity)) continue;
+          executing.add(identity); owned.add(requestId);
+          void runtime.evaluate(requestId, task).then(value => active && coreRequest({
+            op: 'extract_token', requestId, taskId: task.taskId, value,
+          })).catch(() => {
+            runtime.release(requestId);
+            if (active) void coreRequest({ op: 'extract_release', requestId }).catch(() => {});
+          }).finally(() => { executing.delete(identity); void poll(); });
+        }
+      } catch {} finally { polling = false; if (again) { again = false; void poll(); } }
+    };
+    const subscription = observeCoreUpdates('extraction-token', () => void poll());
+    const foreground = AppState.addEventListener('change', state => { if (state === 'active') void poll(); });
+    void poll();
+    return () => { active = false; subscription?.remove(); foreground.remove(); for (const id of owned) runtime.release(id); unregister(); fail(); };
   }, []);
   return <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.hidden}>
     {renderer.mounted && <WebView key={`${renderer.generation}:${generation}`} ref={renderer.attach} source={source}

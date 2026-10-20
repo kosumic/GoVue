@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { extractTranscript, restoreTranscript, selectTranscriptTracks } from '../core/transcripts';
+import { selectTranscriptTracks } from '../core/transcripts';
+import { coreRequest, observeCoreUpdates } from '../../modules/govue-core';
 import type { Transcript } from '../youtube/transcript';
 
 type Request = { videoId: string; audioKey: string; trackIds: string[]; fresh: boolean };
@@ -7,6 +8,8 @@ type Document = { data: Transcript; cached: boolean };
 type Result = { request: Request; documents: Document[]; loading: boolean; error: string | null };
 
 export function usePlayerTranscript(videoId: string | null, initial?: Transcript, audioKey = '') {
+  const [sessionId] = useState(() => `reader:${Date.now()}:${Math.random().toString(36).slice(2)}`);
+  const revision = useRef(0);
   const [request, setRequest] = useState<Request | null>(() => videoId ? {
     videoId, audioKey, trackIds: [initial?.videoId === videoId ? initial.trackId : 'default'], fresh: false,
   } : null);
@@ -31,6 +34,9 @@ export function usePlayerTranscript(videoId: string | null, initial?: Transcript
     ++selectionVersion.current;
     setVisibleVideoId(null);
   }, []);
+  useEffect(() => () => {
+    void coreRequest({ op: 'transcript_session_dispose', sessionId, version: revision.current }).catch(() => {});
+  }, [sessionId]);
   useEffect(() => {
     // Loading belongs to the video session; showing the reader only changes presentation.
     if (!matches) {
@@ -40,30 +46,28 @@ export function usePlayerTranscript(videoId: string | null, initial?: Transcript
       return;
     }
     if (!request) return;
-    const controller = new AbortController();
-    const retained = request.fresh ? [] : documents.current.filter(d => d.data.videoId === videoId && request.trackIds.includes(d.data.trackId));
-    documents.current = retained;
-    setResult({ request, documents: retained, loading: true, error: null });
-    void (async () => {
-      // Primary first: adding a comparison never hides a usable transcript.
-      const loaded: Document[] = [];
-      for (const trackId of request.trackIds) {
-        const existing = retained.find(d => d.data.trackId === trackId);
-        const seed = !request.fresh && initial?.videoId === videoId && initial.trackId === trackId ? initial : null;
-        const saved = existing?.data ?? seed ?? (request.fresh ? null : await restoreTranscript(request.videoId, trackId === 'default' ? undefined : trackId, audioKey).catch(() => null));
-        if (controller.signal.aborted) return;
-        const cached = existing?.cached ?? !!saved;
-        const data = saved ?? await extractTranscript(request.videoId, trackId, controller.signal, request.fresh, audioKey);
-        if (controller.signal.aborted) return;
-        loaded.push({ data, cached });
-        documents.current = [...loaded];
-        setResult({ request, documents: [...loaded], loading: loaded.length < request.trackIds.length, error: null });
-      }
-    })().catch(error => {
-      if (!controller.signal.aborted) setResult({ request, documents: documents.current, loading: false,
+    const version = ++revision.current;
+    let active = true, snapshotRevision = 0;
+    type Snapshot = { version: number; documents: Document[]; loading: boolean; error: string | null };
+    const apply = (value: Snapshot | null) => {
+      if (!active || !value || value.version !== version) return;
+      documents.current = value.documents;
+      setResult({ request, documents: value.documents, loading: value.loading, error: value.error });
+    };
+    const refresh = async () => {
+      const current = ++snapshotRevision;
+      const value = await coreRequest<Snapshot>({ op: 'transcript_session_snapshot', sessionId });
+      if (current === snapshotRevision) apply(value);
+    };
+    const subscription = observeCoreUpdates(`transcript:${sessionId}`, () => { void refresh().catch(() => {}); });
+    void coreRequest<Snapshot>({ op: 'transcript_session_load', sessionId, version, ...request, initial }).then(refresh).catch(error => {
+      if (active) setResult({ request, documents: documents.current, loading: false,
         error: error instanceof Error ? error.message : 'The transcript could not load.' });
     });
-    return () => controller.abort();
+    return () => {
+      active = false; subscription?.remove();
+      void coreRequest({ op: 'transcript_session_release', sessionId, version }).catch(() => {});
+    };
   }, [request, videoId, initial, audioKey, matches, close, updateRequest]);
   return {
     open, data, comparison,

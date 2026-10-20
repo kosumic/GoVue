@@ -16,12 +16,13 @@ async function harness(t, os = 'android') {
     return createElement('WebView',{...props,handle:handle.current});
   });
   const edges={
-    'react-native':{Platform:{OS:os},View:'View',StyleSheet:{create:value=>value}},
+    'react-native':{Platform:{OS:os},AppState:{addEventListener:()=>({remove(){}})},View:'View',StyleSheet:{create:value=>value}},
+    'core-edge':{coreRequest:async()=>({requests:[],tasks:[]}),observeCoreUpdates:()=>({remove(){}})},
     'react-native-webview':WebView,
     'extraction-edge':{registerTokenRuntime:value=>{engine=value;return()=>{engine=null;};}},
   };
   const result=await build({entryPoints:['src/media/TokenRuntime.tsx'],bundle:true,write:false,platform:'node',format:'cjs',jsx:'automatic',packages:'external',
-    plugins:[{name:'native-token-edge',setup(builder){builder.onResolve({filter:/core\/extraction$/},()=>({path:'extraction-edge',external:true}));}}]});
+    plugins:[{name:'native-token-edge',setup(builder){builder.onResolve({filter:/modules\/govue-core$/},()=>({path:'core-edge',external:true}));builder.onResolve({filter:/core\/extraction$/},()=>({path:'extraction-edge',external:true}));}}]});
   const module={exports:{}};
   Function('require','module','exports',result.outputFiles[0].text)(name=>name in edges?edges[name]:require(name),module,module.exports);
   let root;

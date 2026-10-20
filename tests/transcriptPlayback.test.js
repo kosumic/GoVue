@@ -11,17 +11,18 @@ const videoId = 'abcdefghijk';
 const transcript = { videoId, trackId: 'en' };
 
 async function harness() {
-  const calls = [];
+  const calls = [], boundaries = [];
   const result = await build({
     entryPoints: ['src/media/useTranscriptPosition.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'core-edge', setup(builder) {
+      builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'boundary-core', external: true }));
       builder.onResolve({ filter: /\/core\/transcripts$/ }, () => ({ path: 'test-core', external: true }));
     } }],
   });
   const module = { exports: {} };
   Function('require', 'module', 'exports', result.outputFiles[0].text)(name => name === 'test-core' ? {
     advanceTranscriptPlayback: (...args) => new Promise(resolve => calls.push({ args, resolve })),
-  } : require(name), module, module.exports);
+  } : name === 'boundary-core' ? { browserRequest: () => boundaries.shift() ?? null } : require(name), module, module.exports);
   const listeners = new Map();
   const player = { currentTime: 0.9, playing: true, playbackRate: 1, timeUpdateEventInterval: 0.25, pauses: 0,
     pause() { this.pauses++; this.playing = false; },
@@ -36,7 +37,7 @@ async function harness() {
   }
   let root;
   await act(() => { root = create(createElement(Reader)); });
-  return { calls, player, listeners, injections, playback: () => playback,
+  return { calls, boundaries, player, listeners, injections, playback: () => playback,
     render: props => act(() => root.update(createElement(Reader, props))), unmount: () => act(() => root.unmount()) };
 }
 
@@ -71,7 +72,7 @@ test('a transcript tap invalidates pending pause decisions before seeking', asyn
   await act(() => env.calls[1].resolve({ pause: false, cursor: {} }));
 });
 
-test('web pause samples validate origin, request, and playback state before reaching Rust', async t => {
+test('web pause samples use Rust validation before applying pause decisions', async t => {
   const env = await harness();
   t.after(env.unmount);
   await act(() => env.calls[0].resolve({ pause: false, cursor: {} }));
@@ -85,6 +86,7 @@ test('web pause samples validate origin, request, and playback state before reac
     [{ ...sample, rate: Infinity }, 'https://m.youtube.com'],
   ]) await act(() => env.playback().handlePosition(message, origin));
   assert.equal(env.calls.length, 1);
+  env.boundaries.push({ position: sample.seconds, playing: true, seeking: false, rate: 1 });
   await act(() => env.playback().handlePosition(sample, 'https://m.youtube.com'));
   await act(() => env.calls[1].resolve({ pause: true, cursor: {} }));
   assert.match(env.injections.at(-1), /\.pause\(/);

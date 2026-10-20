@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 mod publication;
+pub(crate) mod runner;
 mod store;
 pub(crate) mod transfer;
 
@@ -336,6 +337,12 @@ fn plan(catalog: &Value, config: &Config) -> Result<Value> {
     reason = "Keep each operation and its shared state validation and persistence in one dispatcher."
 )]
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
+    if command["op"]
+        .as_str()
+        .is_some_and(|op| op.starts_with("downloads_runner_"))
+    {
+        return runner::dispatch(command, root);
+    }
     match string(command, "op")? {
         "downloads_export_name" => {
             let entries = media::read(root, "downloads.json", json!([]));
@@ -493,7 +500,14 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             Ok(json!(result))
         }
         "downloads_view" => {
-            let entries = command["entries"]
+            let stored;
+            let source = if command["entries"].is_null() {
+                stored = history(&json!({"entries":media::read(root,"downloads.json",json!([]))}))?;
+                &stored
+            } else {
+                &command["entries"]
+            };
+            let entries = source
                 .as_array()
                 .filter(|v| v.len() <= 2000)
                 .ok_or("Invalid downloads list.")?;

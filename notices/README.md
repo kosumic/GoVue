@@ -1,6 +1,6 @@
 # Third-party components
 
-The injected player decoder bundles [YouTube.js](https://github.com/LuanRT/YouTube.js) and [BgUtils](https://github.com/LuanRT/BgUtils). Their MIT notices are included here and in the generated JavaScript shipped with the app.
+The isolated token renderer bundles [BgUtils](https://github.com/LuanRT/BgUtils). Its MIT notice is included here and in the generated JavaScript shipped with the app. The legacy YouTube.js decoder has been removed; its notice is retained for historical attribution.
 
 GoVue is a React Native/Rust port of [HydeYYHH/Litube](https://github.com/HydeYYHH/Litube), based on commit `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f` (2026-10-16). The browser integration scripts under `src/youtube/litube/` are copied or adapted from LiTube, with the page bridge adapted to React Native. Player presentation and state are being ported to shared React Native and Rust. The shared vectors in `src/player/icons.tsx`, including the About mark, are adapted from the same revision’s Android drawables. LiTube's GNU GPL version 3 license is included in `LiTube-GPL-3.0.txt` and the repository `LICENSE`. Original MIT notices for dependencies remain applicable to those components.
 

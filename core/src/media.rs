@@ -269,6 +269,12 @@ fn chapter_list(raw: &Value) -> Vec<Value> {
     reason = "Keep media command routing together; point highlights require exactly equal segment endpoints."
 )]
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
+    if command["op"]
+        .as_str()
+        .is_some_and(|op| op.starts_with("downloads_runner_"))
+    {
+        return crate::downloads::dispatch(command, root);
+    }
     match string(command, "op")? {
         "downloads_config"
         | "downloads_options"

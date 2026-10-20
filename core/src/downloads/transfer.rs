@@ -32,6 +32,9 @@ static HTTP: OnceLock<Box<dyn crate::DownloadHttp>> = OnceLock::new();
 pub(crate) fn install_http(backend: Box<dyn crate::DownloadHttp>) {
     let _ = HTTP.set(backend);
 }
+pub(super) fn wifi_connected() -> bool {
+    HTTP.get().is_some_and(|backend| backend.wifi_connected())
+}
 pub(crate) fn fetch(request: crate::DownloadRequest) -> io::Result<crate::MediaRangeReply> {
     HTTP.get()
         .ok_or_else(|| io::Error::other("Download networking is unavailable."))
@@ -110,7 +113,13 @@ pub(super) fn reset(root: &str) {
     if let Ok(files) = fs::read_dir(directory) {
         for file in files.flatten() {
             let path = file.path();
-            if path.extension().is_some_and(|v| v == "tmp") && path.is_file() {
+            let name = file.file_name();
+            let name = name.to_string_lossy();
+            if (path.extension().is_some_and(|v| v == "tmp")
+                || name.ends_with(".tmp.mp4")
+                || name.ends_with(".tmp.m4a"))
+                && path.is_file()
+            {
                 let _ = fs::remove_file(path);
             }
         }
@@ -166,7 +175,15 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         let files = (0..parts.len())
             .map(|i| {
                 directory
-                    .join(format!("{id}-{nonce}-{i}.tmp"))
+                    // Native demuxers use the extension when opening local files.
+                    .join(format!(
+                        "{id}-{nonce}-{i}.tmp.{}",
+                        if parts[i]["kind"] == "audio" {
+                            "m4a"
+                        } else {
+                            "mp4"
+                        }
+                    ))
                     .to_string_lossy()
                     .into_owned()
             })

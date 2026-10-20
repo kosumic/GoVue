@@ -20,11 +20,16 @@ const saved = (revision = 0, streaming = false) => ({
 
 async function harness(t) {
   const calls = [];
+  let feedbackReady = false;
   let controller;
   const result = await build({ entryPoints: ['src/ai/useChats.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'game-core', setup(builder) { builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'test-core', external: true })); } }],
   });
   const core = { aiRequest(command) {
+    if (command.op === 'ai_chat_session_cancel') return Promise.resolve(null);
+    if (command.op === 'ai_chat_session_forget') return Promise.resolve({});
+    if (command.op === 'ai_chat_session_feedback' && !feedbackReady) return Promise.resolve(null);
+    if (command.op === 'ai_chat_session_send') command = { ...command.command, op: 'ai_chat_send' };
     if (command.op === 'ai_chats') return Promise.resolve({ chats: [] });
     const entry = { command, answered: false };
     calls.push(entry);
@@ -38,7 +43,7 @@ async function harness(t) {
   await act(async () => { root = create(createElement(Chat)); });
   t.after(() => act(async () => root.unmount()));
   const pending = op => calls.find(entry => entry.command.op === op && !entry.answered);
-  const reply = (op, value) => act(async () => { const entry = pending(op); assert.ok(entry, op); entry.resolve(value); });
+  const reply = (op, value) => act(async () => { const entry = pending(op); assert.ok(entry, op); if (op === 'ai_game_action' && value.notify) feedbackReady = true; entry.resolve(value); });
   let opening;
   await act(() => { opening = controller.open('chat'); });
   await reply('ai_chat_get', saved());
@@ -46,7 +51,7 @@ async function harness(t) {
   return { calls, chat: () => controller, pending, reply };
 }
 
-test('game actions serialize revisions, survive stale chat snapshots, and queue feedback behind inference', async t => {
+test('game actions serialize revisions and ask Rust for feedback after inference', async t => {
   const env = await harness(t);
   let sending;
   await act(() => { sending = env.chat().send('fixture', 'Explain', null); });
@@ -66,17 +71,17 @@ test('game actions serialize revisions, survive stale chat snapshots, and queue 
   await second;
   assert.equal(env.calls.filter(c => c.command.op === 'ai_chat_send').length, 1, 'a submit must not interrupt the current response');
   await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'completed', text: 'Explained.' } });
-  const older = saved(0, true);
+  const older = saved(2, true);
   older.activeTask = null;
   older.messages.at(-1).status = 'completed';
   await env.reply('ai_chat_get', older);
   assert.equal(env.chat().conversation.messages[1].games[0].revision, 2, 'late inference snapshots cannot erase game progress');
-  const feedback = env.pending('ai_chat_send');
+  const feedback = env.pending('ai_chat_session_feedback');
   assert.ok(feedback, 'submission starts a new agent turn after inference finishes');
-  assert.equal(feedback.command.focusGameId, 'game');
-  assert.equal(feedback.command.prompt.includes('An untrusted title'), false, 'generated text stays in the data context');
+  assert.equal(feedback.command.chatId, 'chat');
+  assert.equal(feedback.command.prompt, undefined, 'Rust owns the feedback prompt');
   assert.equal(env.calls.some(c => c.command.op === 'ai_cancel'), false);
-  await env.reply('ai_chat_send', { taskId: 'feedback', conversation: saved(2, true) });
+  await env.reply('ai_chat_session_feedback', { taskId: 'feedback', conversation: saved(2, true) });
 });
 
 test('a late game action cannot reopen a conversation after the user leaves it', async t => {

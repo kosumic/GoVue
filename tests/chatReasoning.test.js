@@ -15,6 +15,7 @@ const conversation = (reasoningEffort = 'low', content = '', status = 'streaming
 
 async function harness() {
   const calls = [];
+  let cancellation = null;
   let controller;
   const result = await build({ entryPoints: ['src/ai/useChats.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'chat-core', setup(builder) {
@@ -22,6 +23,10 @@ async function harness() {
     } }],
   });
   const core = { aiRequest(command) {
+    if (command.op === 'ai_chat_session_cancel') return Promise.resolve(cancellation);
+    if (command.op === 'ai_chat_session_feedback') return Promise.resolve(null);
+    if (command.op === 'ai_chat_session_forget') return Promise.resolve({});
+    if (command.op === 'ai_chat_session_send') command = { ...command.command, op: 'ai_chat_send' };
     if (command.op === 'ai_chats') return Promise.resolve({ chats: [] });
     const entry = { command, answered: false };
     calls.push(entry);
@@ -33,7 +38,7 @@ async function harness() {
   function Chat() { controller = module.exports.useChats(true, ''); return null; }
   let root;
   await act(async () => { root = create(createElement(Chat)); });
-  return { calls, chat: () => controller, pending: op => calls.find(entry => entry.command.op === op && !entry.answered),
+  return { calls, cancelWith: value => { cancellation = value; }, chat: () => controller, pending: op => calls.find(entry => entry.command.op === op && !entry.answered),
     reply: (op, value) => act(async () => { const entry = calls.find(entry => entry.command.op === op && !entry.answered); assert.ok(entry, op); entry.resolve(value); }),
     unmount: () => act(async () => root.unmount()) };
 }
@@ -174,6 +179,7 @@ test('reasoning changes during request startup apply to the next turn and preser
   await env.reply('ai_chat_send', { taskId: 'next-task', conversation: conversation('high') });
   assert.equal(await sending, true);
   await act(() => { saving = env.chat().setReasoning('medium'); });
+  env.cancelWith({ conversation: conversation('high', '', 'stopped', 'high') });
   await act(() => env.chat().stop());
   await env.reply('ai_chat_reasoning', conversation('medium'));
   assert.equal(await saving, true);

@@ -33,7 +33,7 @@ test('accepted navigation selects native playback before page callbacks and igno
     'expo-status-bar': { StatusBar: 'StatusBar' }, 'react-native-webview': { default: 'WebView' },
     'expo-screen-orientation': { unlockAsync: async () => {}, lockAsync: async () => {}, OrientationLock: {} },
     'expo-navigation-bar': { NavigationBar: { setStyle() {}, setHidden() {} } },
-    './modules/govue-core': { coreRequest: async command => {
+    './modules/govue-core': { browserRequest: command => ({ youtube: true, videoId: new URL(command.url).searchParams.get('v') }), coreRequest: async command => {
       writes.push(command);
       if (command.op === 'browser_open') state = { ...state, revision: state.revision + 1,
         tabs: [{ id: 1, url: command.url, kind: 'watch' }], target: { id: 1, url: command.url, load: true } };
@@ -57,6 +57,7 @@ test('accepted navigation selects native playback before page callbacks and igno
   };
   const result = await build({ entryPoints: ['App.tsx'], bundle: true, write: false, platform: 'node',
     format: 'cjs', jsx: 'automatic', packages: 'external', plugins: [{ name: 'platform-edges', setup(builder) {
+      builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: './modules/govue-core', external: true }));
       builder.onResolve({ filter: /^\.\/(src|modules)\// }, args =>
         /\/(address|playerLayout)$/.test(args.path) ? undefined : { path: args.path, external: true });
     } }] });

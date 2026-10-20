@@ -20,7 +20,9 @@ use std::{
 use url::Url;
 mod accounts;
 mod activity;
+mod audio_requests;
 mod catalog;
+mod chat_sessions;
 mod connections;
 mod conversations;
 mod games;
@@ -2058,6 +2060,18 @@ fn disconnect(root: &Path, p: &Provider, remove: bool, job: &Arc<Job>) -> Result
     Ok(json!({"revoked":revoked}))
 }
 fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
+    if c["op"]
+        .as_str()
+        .is_some_and(|op| op.starts_with("ai_chat_session_"))
+    {
+        return chat_sessions::dispatch(&c, &root);
+    }
+    if matches!(
+        c["op"].as_str(),
+        Some("ai_caption_audio" | "ai_caption_audio_cancel")
+    ) {
+        return audio_requests::dispatch(&c, &root);
+    }
     if string(&c, "op")?.starts_with("ai_practice_") {
         return conversations::dispatch(c, root);
     }

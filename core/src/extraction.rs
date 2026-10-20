@@ -144,6 +144,7 @@ impl Job {
         task["taskId"] = json!(state.sequence);
         state.task = Some(task);
         state.reply = None;
+        crate::changed("extraction-token");
         loop {
             self.check()?;
             if let Some(reply) = state.reply.take() {
@@ -989,8 +990,37 @@ fn launch_video(command: &Value, root: &str) -> Result<Option<String>> {
     }))
 }
 
+fn runtime_tasks(root: &str) -> Result<Value> {
+    let jobs = JOBS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "Extractor busy.")?;
+    let mut requests = Vec::new();
+    let mut tasks = Vec::new();
+    for ((store, request), job) in jobs.iter() {
+        if store != root || !request.starts_with("worker:") || job.check().is_err() {
+            continue;
+        }
+        requests.push(request.clone());
+        if let Some(task) = job
+            .runtime
+            .lock()
+            .map_err(|_| "Token runtime unavailable.")?
+            .task
+            .as_ref()
+        {
+            tasks.push(json!({"requestId":request,"task":task}));
+        }
+    }
+    drop(jobs);
+    Ok(json!({"requests":requests,"tasks":tasks}))
+}
+
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let op = string(command, "op")?;
+    if op == "extract_runtime_tasks" {
+        return runtime_tasks(root);
+    }
     let request = string(command, "requestId")?;
     if request.is_empty()
         || request.len() > 150
@@ -1187,10 +1217,48 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 job.cancel();
             }
             drop(jobs);
+            crate::changed("extraction-token");
             Ok(Value::Null)
         }
         _ => Err("Unsupported extraction operation.".into()),
     }
+}
+
+/// Shared workflows own extraction and cancellation; JS only executes token tasks.
+pub(crate) fn resolve(
+    root: &str,
+    kind: &str,
+    id: &str,
+    track: &str,
+    audio: &str,
+    fresh: bool,
+    check: &impl Fn() -> Result<()>,
+) -> Result<Value> {
+    let mut nonce = [0u8; 12];
+    getrandom::getrandom(&mut nonce).map_err(|_| "Could not create extraction identity.")?;
+    let request = format!("worker:{}", crate::hex(&nonce));
+    check()?;
+    crate::request(
+        &json!({"op":"extract_start","requestId":request,"kind":kind,
+        "videoId":id,"trackId":track,"audioKey":audio,"fresh":fresh}),
+        root,
+    )?;
+    let result = (|| {
+        loop {
+            check()?;
+            let result = crate::request(&json!({"op":"extract_poll","requestId":request}), root)?;
+            if result["done"] == true {
+                return if let Some(error) = result["error"].as_str() {
+                    Err(error.into())
+                } else {
+                    Ok(result["value"].clone())
+                };
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    })();
+    let _ = crate::request(&json!({"op":"extract_release","requestId":request}), root);
+    result
 }
 
 #[cfg(test)]
