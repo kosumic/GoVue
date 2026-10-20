@@ -4,9 +4,10 @@ Rust owns YouTube configuration parsing, player requests, caption-track selectio
 caption URLs, token protocol requests, validation, normalization and caches.
 `extract_start`, `extract_poll`, `extract_token` and `extract_release` expose a
 bounded asynchronous job so network waits never hold the shared core lock.
-Playback, captions and download resolution use this boundary. They do not load a
-hidden YouTube page, capture player requests, click transcript controls or fall
-back to page extraction.
+Playback, captions and download resolution use this boundary. Playback and
+downloads remain independent of the browsing renderer. Protected original
+captions can use the existing active YouTube page as a byte transport; no hidden
+YouTube page is created.
 
 Android and iOS provide bounded HTTPS byte adapters with redirects, automatic
 cookie storage and disk caching disabled. Rust keeps the extraction's guest
@@ -43,6 +44,35 @@ seconds (three videos). Only normalized transcripts enter the existing native
 transcript cache. Cancelling or changing videos discards pending UI results and
 releases the Rust job; in-flight HTTPS calls finish within their bounded timeout.
 A browsing-renderer failure does not cancel independent extraction.
+
+For an original caption track, Rust first asks a registered active
+page for that exact track. The page lets YouTube reload captions with its own
+verification and can open its transcript panel. This bounded, temporary adapter
+captures only matching caption requests or the current video's transcript
+response. It restores its request hooks and the prior caption selection when
+finished or cancelled. Rust validates the native message origin, video, track,
+adapter and task identity. Origin validation accepts Android WebMessageListener’s
+origin-only URL as well as a full document URL; the pending task and registered
+adapter still bind the response to the current video. Rust parses the caption
+bytes or transcript-panel segments and follows the existing normalization/cache path. Transcript-panel responses
+must identify the requested language; another language is never saved as the
+selected track. Raw responses and signed addresses remain transient.
+
+The page and token tasks use separate notification channels, so caption data
+never enters the network-disabled BotGuard renderer. If the active page is
+missing, fails, or does not answer within 12 seconds, standalone extraction
+continues. If the page becomes available while standalone verification is
+running, an original-caption failure can try the page once more. A document
+readiness event re-delivers pending tasks idempotently, and one caption-module
+reload handles delayed player initialization.
+Original uploaded and generated captions use this adapter. Machine translations
+retain the standalone path.
+
+Reader highlights consume a separate UI clock sampled from native media time
+every 50 ms. Only words entering or leaving their source interval update; the
+caption list follows line changes and ignores unrelated owner renders. Sampling
+does not increase the player-control event rate or shift stored word timestamps.
+Seeking, line pauses and exports continue to use the source timing.
 
 Tapping a video card starts media extraction before the watch page renders.
 Rust validates the source tab, document generation, origin and selected watch
@@ -105,4 +135,5 @@ original transcript for Retry. Guest cookies and age remain in memory only.
 
 This initial standalone extractor uses a guest VISIONOS client. Sign-in-required
 videos and videos unavailable to that client fail explicitly. Formats requiring
-signature/throttle evaluation are not selected. There is no page fallback.
+signature/throttle evaluation are not selected. The active-page caption adapter
+does not bypass the native player metadata requirement.

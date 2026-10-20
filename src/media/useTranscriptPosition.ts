@@ -6,15 +6,20 @@ import { cancelPositionScript, pauseScript, playbackPositionScript } from '../yo
 import { advanceTranscriptPlayback } from '../core/transcripts';
 import type { Transcript } from '../youtube/transcript';
 
+const NATIVE_CLOCK_INTERVAL_MS = 50;
+
 type Sample = { position: number | null; playing: boolean; seeking: boolean; rate: number; at: number };
 type Request = { id: string; videoId: string; update: (sample: Sample) => void; reset: () => void };
 
 export function useTranscriptPosition(webView: React.RefObject<WebView | null>, player: VideoPlayer,
-  videoId: string | null, enabled: boolean, nativeVideoId: string | null, transcript: Transcript | null = null, pauseAfterLine = false) {
+  videoId: string | null, enabled: boolean, nativeVideoId: string | null, transcript: Transcript | null = null, pauseAfterLine = false, onPosition?: (position: number | null) => void) {
   const pending = useRef<Request | null>(null);
   const sequence = useRef(0);
   const [sample, setSample] = useState<{ request: Request; seconds: number | null } | null>(null);
+  const publish = useRef(onPosition);
+  publish.current = onPosition;
   useEffect(() => {
+    publish.current?.(null);
     if (!enabled || !videoId || (nativeVideoId && nativeVideoId !== videoId)) return;
     let cursor: unknown = null;
     let lastAt = 0;
@@ -26,11 +31,14 @@ export function useTranscriptPosition(webView: React.RefObject<WebView | null>, 
       webView.current?.injectJavaScript(cancelPositionScript(request.id));
       request.id = nextId();
       cursor = null; lastAt = 0; queued = null; ++revision;
+      publish.current?.(null);
     } };
     pending.current = request;
     async function update(sample: Sample) {
       if (pending.current !== request) return;
-      setSample(previous => previous?.request === request && previous.seconds === sample.position
+      if (publish.current) {
+        publish.current(sample.position);
+      } else setSample(previous => previous?.request === request && previous.seconds === sample.position
         ? previous : { request, seconds: sample.position });
       if (!pauseAfterLine || transcript?.videoId !== videoId) return;
       queued = sample;
@@ -58,17 +66,20 @@ export function useTranscriptPosition(webView: React.RefObject<WebView | null>, 
     }
     if (nativeVideoId) {
       const interval = player.timeUpdateEventInterval;
-      player.timeUpdateEventInterval = 0.1;
+      const publishing = !!publish.current;
+      if (!publishing) player.timeUpdateEventInterval = 0.1;
       const sample = () => update({ position: player.currentTime, playing: player.playing, seeking: false, rate: player.playbackRate, at: Date.now() });
       void sample();
-      const listener = player.addListener('timeUpdate', sample);
+      // The reader clock must not force the entire player-control tree to update.
+      const timer = publishing ? setInterval(sample, NATIVE_CLOCK_INTERVAL_MS) : null;
+      const listener = publishing ? null : player.addListener('timeUpdate', sample);
       const playing = player.addListener('playingChange', sample);
-      return () => { pending.current = null; listener.remove(); playing.remove(); player.timeUpdateEventInterval = interval; };
+      return () => { pending.current = null; publish.current?.(null); if (timer) clearInterval(timer); listener?.remove(); playing.remove(); player.timeUpdateEventInterval = interval; };
     }
     const poll = () => webView.current?.injectJavaScript(playbackPositionScript(request.id, videoId, pauseAfterLine));
     poll();
     const timer = setInterval(poll, 100);
-    return () => { pending.current = null; clearInterval(timer); webView.current?.injectJavaScript(cancelPositionScript(request.id)); };
+    return () => { pending.current = null; publish.current?.(null); clearInterval(timer); webView.current?.injectJavaScript(cancelPositionScript(request.id)); };
   }, [webView, player, videoId, enabled, nativeVideoId, transcript, pauseAfterLine]);
 
   function handlePosition(message: { requestId?: unknown; videoId?: unknown; seconds?: unknown; playing?: unknown; seeking?: unknown; rate?: unknown }, origin: string) {

@@ -54,6 +54,7 @@ import { DownloadLibrary } from './src/components/DownloadLibrary';
 import { TranscriptPanel } from './src/components/TranscriptPanel';
 import { AiSheet } from './src/components/AiSheet';
 import { useTranscriptPosition } from './src/media/useTranscriptPosition';
+import { createTranscriptClock } from './src/media/transcriptClock';
 import {
   MediaResolver,
   type MediaResolverHandle,
@@ -717,9 +718,10 @@ function Browser() {
     ? { top: 0, right: 0, bottom: -transcriptBottomInset, width: transcriptWidth }
     : { top: session.fullscreen ? portraitVideoHeight : Math.max(0, embeddedFrame.top + embeddedFrame.height), left: 0, right: 0, bottom: -transcriptBottomInset };
   const remoteTranscript = media.cast.state.active && media.cast.state.acknowledged && !media.cast.state.link;
+  const [transcriptClock] = useState(createTranscriptClock);
   const transcriptPosition = useTranscriptPosition(mediaView, media.player, media.playback?.videoId ?? null,
     transcriptVisible && !remoteTranscript, media.playback?.videoId ?? null,
-    session.transcript.data, media.settings.pauseAfterLine);
+    session.transcript.data, media.settings.pauseAfterLine, transcriptClock.update);
   return (
     <ThemeContext.Provider value={palette}>
       <HapticStrength.Provider value={media.settings.hapticStrength}>
@@ -870,7 +872,8 @@ function Browser() {
                     loading={session.transcript.loading}
                     cached={session.transcript.cached}
                     error={session.transcript.error}
-                    position={remoteTranscript ? media.cast.state.position ?? null : transcriptPosition.position}
+                    position={remoteTranscript ? media.cast.state.position ?? null : null}
+                    clock={remoteTranscript ? undefined : transcriptClock}
                     pauseAfterLine={media.settings.pauseAfterLine}
                     onPauseAfterLine={remoteTranscript ? undefined : pauseAfterLine => media.updateSettings({ pauseAfterLine })}
                     onClose={session.transcript.close}

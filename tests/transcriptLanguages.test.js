@@ -17,6 +17,7 @@ const data = { videoId: 'abcdefghijk', trackId: '.en', title: 'Example', languag
 test('caption menus stay separate, keep selected chips removable, and enforce the comparison limit', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const selections = [];
+  let themeReads = 0, latestCallbackCalled = false;
   const compiled = await build({ entryPoints: ['src/components/TranscriptPanel.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', packages: 'external',
     plugins: [{ name: 'transcript-presentation', setup(builder) {
       builder.onResolve({ filter: /\/(theme|core\/transcripts|core\/vocabulary|IconButton|TranscriptWords|WordTranslationSheet)$/ }, args => ({ path: args.path, external: true }));
@@ -36,7 +37,7 @@ test('caption menus stay separate, keep selected chips removable, and enforce th
     if (name === 'react-native') return native;
     if (name === 'lucide-react-native') return new Proxy({}, { get: () => 'Icon' });
     if (name === '@react-native-clipboard/clipboard') return {};
-    if (name.endsWith('/theme')) return { useThemeColors: () => colors, useThemeStyles: factory => factory(colors) };
+    if (name.endsWith('/theme')) return { useThemeColors: () => { themeReads++; return colors; }, useThemeStyles: factory => factory(colors) };
     if (name.endsWith('/core/transcripts')) return { readTranscripts: async () => ({ rows: [], total: 1,
       trackChoices: { sourceTracks: [source], captionTracks: [supplied], translations: [automatic, translated] } }) };
     if (name.endsWith('/core/vocabulary')) return {};
@@ -58,10 +59,14 @@ test('caption menus stay separate, keep selected chips removable, and enforce th
   const render = changes => act(() => { props = { ...props, ...changes }; root.update(element()); });
 
   assert.deepEqual(labels(root.root), ['1 · English']);
+  const previousReads = themeReads;
+  await render({ trackIds: ['.en'], onSelectTrack: id => { latestCallbackCalled = true; selections.push(id); } });
+  assert.equal(themeReads, previousReads, 'unrelated owner updates do not rebuild the reader');
   await act(() => button('Caption translations').props.onPress());
   assert.deepEqual(labels(root.root.findByType('Modal')), ['Spanish']);
   await act(() => checkboxes(root.root.findByType('Modal'))[0].props.onPress());
   assert.deepEqual(selections, ['.es']);
+  assert.equal(latestCallbackCalled, true, 'stable delegates invoke the latest owner callback');
   assert.equal(root.root.findAllByType('Modal').length, 0);
 
   await render({ trackIds: ['.en', '.es'] });

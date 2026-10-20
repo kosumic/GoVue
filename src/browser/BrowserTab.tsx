@@ -8,6 +8,7 @@ import {
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
 import { useWebViewRenderer } from './useWebViewRenderer';
+import { useTranscriptPage } from './useTranscriptPage';
 import { browserUrlPolicy, isWebUrl, openExternalUrl } from './urlPolicy';
 import {
   BROWSER_BRIDGE,
@@ -103,6 +104,7 @@ export const BrowserTab = forwardRef<
     const inject = (script: string) => {
       if (valid()) renderer.view.current?.injectJavaScript(script);
     };
+    const pageCaptions = useTranscriptPage(active && renderer.mounted && !stopped, tab.url, inject);
     const navigate = (url: string) => {
       if (!isWebUrl(url)) return;
       currentUrl.current = url;
@@ -201,7 +203,7 @@ export const BrowserTab = forwardRef<
               return policy === 'internal';
             }}
             onMessage={(event) => {
-              if (valid()) onMessage(tab.id, event);
+              if (valid() && !pageCaptions.receive(event)) onMessage(tab.id, event);
             }}
             onNavigationStateChange={(event) => {
               if (valid() && isWebUrl(event.url)) {
@@ -233,6 +235,7 @@ export const BrowserTab = forwardRef<
               if (event.nativeEvent.progress >= 1) setLoading(false);
               if (event.nativeEvent.progress >= 0.5) {
                 renderer.view.current?.injectJavaScript(documentScripts());
+                pageCaptions.ready();
                 onReady?.(tab.id, event.nativeEvent.url);
               }
             }}
@@ -243,6 +246,7 @@ export const BrowserTab = forwardRef<
                   documentScripts() +
                     `\nwindow.dispatchEvent(new CustomEvent('tabVisibilityChanged',{detail:{active:${active}}}));${active ? '' : "document.querySelectorAll('video,audio').forEach(v=>v.pause());"}true;`,
                 );
+                pageCaptions.ready();
                 onReady?.(tab.id, event.nativeEvent.url);
               }
             }}

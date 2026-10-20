@@ -19,6 +19,8 @@ use std::{
 };
 use url::Url;
 
+mod page;
+
 const ORIGIN: &str = "https://www.youtube.com";
 const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 const REQUEST_KEY: &str = "O43z0dpjhgX20SCx4KAo";
@@ -136,6 +138,8 @@ impl Job {
     }
     fn evaluate(&self, mut task: Value) -> Result<String> {
         self.check()?;
+        let from_page = task["stage"] == page::STAGE;
+        let deadline = Instant::now() + page::TIMEOUT;
         let mut state = self
             .runtime
             .lock()
@@ -144,9 +148,17 @@ impl Job {
         task["taskId"] = json!(state.sequence);
         state.task = Some(task);
         state.reply = None;
-        crate::changed("extraction-token");
+        crate::changed(if from_page {
+            page::CHANNEL
+        } else {
+            "extraction-token"
+        });
         loop {
             self.check()?;
+            if from_page && Instant::now() >= deadline {
+                state.task = None;
+                return Err("YouTube caption page timed out.".into());
+            }
             if let Some(reply) = state.reply.take() {
                 return reply;
             }
@@ -822,38 +834,66 @@ fn transcript(
         .iter()
         .position(|t| t.id == source_id)
         .ok_or("This caption source is unavailable.")?;
-    let raw = string(&list["captionTracks"][index], "baseUrl")?;
     let translated = selected.translated_from.is_some();
-    let address_for = |proof| -> Result<String> {
-        let mut address = caption_address(raw, id, proof)?;
-        if translated {
-            address.push('&');
-            address.push_str(
-                &url::form_urlencoded::Serializer::new(String::new())
-                    .append_pair("tlang", &selected.language)
-                    .finish(),
-            );
-        }
-        Ok(address)
-    };
-    let address = address_for(None)?;
-    let requires_token = Url::parse(&address)
-        .map_err(|_| "Invalid caption address.")?
-        .query_pairs()
-        .any(|(key, value)| key == "exp" && matches!(value.as_ref(), "xpe" | "xpv"));
-    let mut source = if requires_token {
-        String::new()
+    // Protected caption tracks can return HTTP 200 with no bytes even after a
+    // standalone token challenge. Let the active player supply its own proof.
+    let from_page = if !translated {
+        page::captions(job, root, id, selected)
     } else {
-        caption_source(job, &address, false, translated)?
+        Ok(None)
     };
-    if source.trim().is_empty() {
-        let proof = token(job, &player)?;
-        source = caption_source(job, &address_for(Some(&proof))?, true, translated)?;
-    }
-    if source.trim().is_empty() {
-        return Err("YouTube returned no caption text after verification.".into());
-    }
-    let (segments, caption_metadata) = crate::parse_captions(&source)?;
+    let retry_page = !translated;
+    let from_page = from_page.ok().flatten();
+    job.check()?;
+    let (segments, caption_metadata) = if let Some(captions) = from_page {
+        captions
+    } else {
+        let result = (|| -> Result<_> {
+            let raw = string(&list["captionTracks"][index], "baseUrl")?;
+            let address_for = |proof| -> Result<String> {
+                let mut address = caption_address(raw, id, proof)?;
+                if translated {
+                    address.push('&');
+                    address.push_str(
+                        &url::form_urlencoded::Serializer::new(String::new())
+                            .append_pair("tlang", &selected.language)
+                            .finish(),
+                    );
+                }
+                Ok(address)
+            };
+            let address = address_for(None)?;
+            let requires_token = Url::parse(&address)
+                .map_err(|_| "Invalid caption address.")?
+                .query_pairs()
+                .any(|(key, value)| key == "exp" && matches!(value.as_ref(), "xpe" | "xpv"));
+            let mut source = if requires_token {
+                String::new()
+            } else {
+                caption_source(job, &address, false, translated)?
+            };
+            if source.trim().is_empty() {
+                let proof = token(job, &player)?;
+                source = caption_source(job, &address_for(Some(&proof))?, true, translated)?;
+            }
+            if source.trim().is_empty() {
+                return Err("YouTube returned no caption text after verification.".into());
+            }
+            crate::parse_captions(&source)
+        })();
+        match result {
+            Err(error) if retry_page => {
+                // A page that was missing or still loading can become ready while
+                // standalone verification runs. Retry its transport once.
+                job.check()?;
+                page::captions(job, root, id, selected)
+                    .ok()
+                    .flatten()
+                    .ok_or(error)?
+            }
+            result => result?,
+        }
+    };
     let mut data = Transcript {
         video_id: id.into(),
         title: text(&player.data["videoDetails"]["title"]),
@@ -990,7 +1030,7 @@ fn launch_video(command: &Value, root: &str) -> Result<Option<String>> {
     }))
 }
 
-fn runtime_tasks(root: &str) -> Result<Value> {
+fn runtime_tasks(root: &str, from_page: bool) -> Result<Value> {
     let jobs = JOBS
         .get_or_init(Default::default)
         .lock()
@@ -998,7 +1038,7 @@ fn runtime_tasks(root: &str) -> Result<Value> {
     let mut requests = Vec::new();
     let mut tasks = Vec::new();
     for ((store, request), job) in jobs.iter() {
-        if store != root || !request.starts_with("worker:") || job.check().is_err() {
+        if store != root || !from_page && !request.starts_with("worker:") || job.check().is_err() {
             continue;
         }
         requests.push(request.clone());
@@ -1008,6 +1048,7 @@ fn runtime_tasks(root: &str) -> Result<Value> {
             .map_err(|_| "Token runtime unavailable.")?
             .task
             .as_ref()
+            .filter(|task| (task["stage"] == page::STAGE) == from_page)
         {
             tasks.push(json!({"requestId":request,"task":task}));
         }
@@ -1016,11 +1057,7 @@ fn runtime_tasks(root: &str) -> Result<Value> {
     Ok(json!({"requests":requests,"tasks":tasks}))
 }
 
-pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
-    let op = string(command, "op")?;
-    if op == "extract_runtime_tasks" {
-        return runtime_tasks(root);
-    }
+fn request_id(command: &Value) -> Result<&str> {
     let request = string(command, "requestId")?;
     if request.is_empty()
         || request.len() > 150
@@ -1030,11 +1067,24 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     {
         return Err("Invalid extraction request identity.".into());
     }
+    let op = string(command, "op")?;
     if request == PREPARATION_REQUEST
         && !matches!(op, "extract_prepare" | "extract_launch" | "extract_release")
     {
         return Err("Reserved extraction request identity.".into());
     }
+    Ok(request)
+}
+
+pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
+    let op = string(command, "op")?;
+    if op == "extract_page_register" {
+        return page::register(command, root);
+    }
+    if matches!(op, "extract_runtime_tasks" | "extract_page_tasks") {
+        return runtime_tasks(root, op == "extract_page_tasks");
+    }
+    let request = request_id(command)?;
     let selected = if matches!(op, "extract_prepare" | "extract_launch") {
         let _span = crate::trace::Section::begin(c"GoVue extraction: prepare media");
         if request != PREPARATION_REQUEST {
@@ -1185,7 +1235,14 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .runtime
                 .lock()
                 .map_err(|_| "Token runtime unavailable.")?;
-            Ok(json!({"done":false,"task":runtime.task}))
+            Ok(
+                json!({"done":false,"task":runtime.task.as_ref().filter(|task| task["stage"] != page::STAGE)}),
+            )
+        }
+        "extract_page" => {
+            let job = jobs.get(&key).ok_or("This extraction has expired.")?;
+            job.check()?;
+            page::reply(command, root, job)
         }
         "extract_token" => {
             let job = jobs.get(&key).ok_or("This extraction has expired.")?;

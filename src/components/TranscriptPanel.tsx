@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, type ComponentProps, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { Copy, Download, Info, LocateFixed, RotateCw, Search, Share2, Sparkles, Square, X } from 'lucide-react-native';
@@ -7,11 +7,12 @@ import { currentSegmentIndex, timestamp, type Transcript } from '../youtube/tran
 import { exportTranscript, readTranscripts, type TranscriptReader, type TranscriptRow } from '../core/transcripts';
 import { IconButton } from './IconButton';
 import { TranscriptWords } from './TranscriptWords';
+import { idleTranscriptClock, type TranscriptClock } from '../media/transcriptClock';
 import { TranscriptTranslations } from './TranscriptTranslations';
 import { WordTranslationSheet } from './WordTranslationSheet';
 import { captionDetails, saveWord, type WordSelection } from '../core/vocabulary';
 
-export function TranscriptPanel({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, onBeforeWordAudio, audio, onSummarize, onDownload, downloadDisabled, bottomInset = 0 }: {
+function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, clock, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, onBeforeWordAudio, audio, onSummarize, onDownload, downloadDisabled, bottomInset = 0 }: {
   data: Transcript | null;
   comparison?: Transcript | null;
   trackIds?: string[];
@@ -22,6 +23,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   error: string | null;
   cached: boolean;
   position: number | null;
+  clock?: TranscriptClock;
   pauseAfterLine: boolean;
   onPauseAfterLine?: (enabled: boolean) => void;
   onClose: () => void;
@@ -88,7 +90,9 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   const captions = choices?.captionTracks ?? [];
   const translations = choices?.translations ?? [];
   useEffect(() => { trackList.current?.scrollTo({ x: 0, animated: true }); }, [selectionKey]);
-  const activeIndices = sources.map(source => currentSegmentIndex(source?.segments ?? [], position));
+  const activeKey = useSyncExternalStore(clock?.subscribe ?? idleTranscriptClock,
+    () => sources.map(source => currentSegmentIndex(source?.segments ?? [], clock ? clock.getSnapshot() : position)).join(":"));
+  const activeIndices = activeKey.split(":").map(Number);
   const rowIndices = useMemo(() => {
     const indices: number[][] = [[], []];
     rows.forEach((row, index) => row.lines.forEach(line => { indices[line.track][line.index] = index; }));
@@ -221,7 +225,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>}
         {reader && listWindow?.reader === reader ? <FlatList key={listWindow.version} ref={list} data={rows} initialScrollIndex={listWindow.index}
-          extraData={{ position, wordSelection }} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={[styles.list, { paddingBottom: 24 + bottomInset }]}
+          extraData={{ position, activeKey, wordSelection }} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={[styles.list, { paddingBottom: 24 + bottomInset }]}
           onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
           onContentSizeChange={() => { if (scrollTarget.current?.recovering) scrollToCurrent(); }}
           onScrollToIndexFailed={({ index }) => {
@@ -255,7 +259,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
                   onPress={canPlay ? event => { event.stopPropagation(); playLine(source, line.index); } : undefined}>{timestamp(segment.start)}</Text>
                 <View style={styles.lineText}>
                   {!!comparison && <Text style={styles.lineLanguage}>{source.language}</Text>}
-                  <TranscriptWords source={source} segmentIndex={line.index} position={active ? position : null} selected={active}
+                  <TranscriptWords source={source} segmentIndex={line.index} position={active ? position : null} clock={active ? clock : undefined} selected={active}
                     selectedTokenIndex={wordSelection?.source === source && wordSelection.segmentIndex === line.index ? wordSelection.tokenIndex : undefined} selectedWordStyle={styles.selectedWord}
                     style={[styles.segmentText, line.track === 1 && styles.comparisonText, active && styles.activeText]} activeWordStyle={styles.activeWord}
                     separatorStyle={styles.speakerSeparator}
@@ -321,3 +325,35 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   time: { minWidth: 46, paddingTop: 3, fontSize: 12, color: colors.accent, fontVariant: ['tabular-nums'] },
   segmentText: { fontSize: 15, lineHeight: 24, color: colors.ink },
 });
+
+const MemoTranscriptPanel = memo(TranscriptPanelContent);
+
+// Browser layout and player status updates must not rebuild every caption span.
+// Stable delegates still invoke the latest callbacks supplied by the owner.
+export function TranscriptPanel(props: ComponentProps<typeof TranscriptPanelContent>) {
+  const latest = useRef(props);
+  latest.current = props;
+  const [handlers] = useState(() => ({
+    onClose: () => latest.current.onClose(),
+    onExtract: (track?: string) => latest.current.onExtract?.(track),
+    onSelectTrack: (track: string) => latest.current.onSelectTrack?.(track),
+    onSeek: (seconds: number) => latest.current.onSeek?.(seconds),
+    onPlayLine: (index: number, source: Transcript) => latest.current.onPlayLine?.(index, source),
+    onBeforeWordAudio: () => latest.current.onBeforeWordAudio?.(),
+    onPauseAfterLine: (enabled: boolean) => latest.current.onPauseAfterLine?.(enabled),
+    onSummarize: () => latest.current.onSummarize?.(),
+    onDownload: () => latest.current.onDownload?.(),
+  }));
+  const trackKey = props.trackIds?.join('\0');
+  const trackIds = useMemo(() => trackKey?.split('\0'), [trackKey]);
+  return <MemoTranscriptPanel {...props} trackIds={trackIds}
+    onClose={handlers.onClose}
+    onExtract={props.onExtract ? handlers.onExtract : undefined}
+    onSelectTrack={props.onSelectTrack ? handlers.onSelectTrack : undefined}
+    onSeek={props.onSeek ? handlers.onSeek : undefined}
+    onPlayLine={props.onPlayLine ? handlers.onPlayLine : undefined}
+    onBeforeWordAudio={props.onBeforeWordAudio ? handlers.onBeforeWordAudio : undefined}
+    onPauseAfterLine={props.onPauseAfterLine ? handlers.onPauseAfterLine : undefined}
+    onSummarize={props.onSummarize ? handlers.onSummarize : undefined}
+    onDownload={props.onDownload ? handlers.onDownload : undefined} />;
+}

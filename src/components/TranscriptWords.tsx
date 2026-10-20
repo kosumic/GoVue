@@ -1,12 +1,14 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useState, useSyncExternalStore } from 'react';
 import { Alert, Text, type StyleProp, type TextStyle } from 'react-native';
 import { captionWords, type WordToken } from '../core/vocabulary';
 import type { Transcript } from '../youtube/transcript';
+import { idleTranscriptClock, type TranscriptClock } from '../media/transcriptClock';
 
-export function TranscriptWords({ source, segmentIndex, position, style, activeWordStyle, separatorStyle, selected, selectedTokenIndex, selectedWordStyle, onSeek, onSeekWord, onSave, onTranslate }: {
+export function TranscriptWords({ source, segmentIndex, position, clock, style, activeWordStyle, separatorStyle, selected, selectedTokenIndex, selectedWordStyle, onSeek, onSeekWord, onSave, onTranslate }: {
   source: Transcript;
   segmentIndex: number;
   position: number | null;
+  clock?: TranscriptClock;
   style: StyleProp<TextStyle>;
   activeWordStyle: StyleProp<TextStyle>;
   separatorStyle?: StyleProp<TextStyle>;
@@ -60,20 +62,40 @@ export function TranscriptWords({ source, segmentIndex, position, style, activeW
     } : undefined}>
     {tokens ? tokens.map((token, index) => token.word ? <Fragment key={index}>
       {token.speakerChange && <Text accessible={false} style={[{ fontSize: 12, fontWeight: '400' }, separatorStyle]}>{`${index && !tokens[index - 1].text.endsWith('\n') ? '\n' : ''}───\n`}</Text>}
-      <Text accessible={false}
-      style={[
-        token.bold !== undefined && { fontWeight: token.bold ? '700' : '400' },
-        token.italic !== undefined && { fontStyle: token.italic ? 'italic' : 'normal' },
-        token.underline !== undefined && { textDecorationLine: token.underline ? 'underline' : 'none' },
-        selected && position !== null && token.start !== undefined && position >= token.start && (token.end === undefined || position < token.end) && activeWordStyle,
-        index === selectedTokenIndex && selectedWordStyle,
-      ]}
-      onPress={onSeek ? event => {
-        event.stopPropagation();
-        if (onSeekWord && token.start !== undefined) onSeekWord(token.start);
-        else onSeek();
-      } : undefined}
-      onLongPress={event => { event.stopPropagation(); onTranslate(index, token.text, { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY }); }}>{token.text}{token.reading && <Text style={{ fontSize: 11, fontWeight: '400' }}>（{token.reading}）</Text>}</Text>
+      <TranscriptWord token={token} index={index} position={position} clock={clock} selected={selected}
+        activeWordStyle={activeWordStyle} selectedWordStyle={index === selectedTokenIndex ? selectedWordStyle : undefined}
+        onSeek={onSeek} onSeekWord={onSeekWord} onTranslate={onTranslate} />
     </Fragment> : token.text) : text}
   </Text>;
+}
+
+// Only words entering or leaving the active interval render on a clock tick.
+function TranscriptWord({ token, index, position, clock, selected, activeWordStyle, selectedWordStyle, onSeek, onSeekWord, onTranslate }: {
+  token: WordToken;
+  index: number;
+  position: number | null;
+  clock?: TranscriptClock;
+  selected: boolean;
+  activeWordStyle: StyleProp<TextStyle>;
+  selectedWordStyle?: StyleProp<TextStyle>;
+  onSeek?: () => void;
+  onSeekWord?: (seconds: number) => void;
+  onTranslate: (index: number, word: string, anchor?: { x: number; y: number }) => void;
+}) {
+  const active = useSyncExternalStore(selected && token.start !== undefined && clock ? clock.subscribe : idleTranscriptClock, () => {
+    const seconds = clock ? clock.getSnapshot() : position;
+    return selected && seconds !== null && token.start !== undefined && seconds >= token.start && (token.end === undefined || seconds < token.end);
+  });
+  return <Text accessible={false} style={[
+    token.bold !== undefined && { fontWeight: token.bold ? '700' : '400' },
+    token.italic !== undefined && { fontStyle: token.italic ? 'italic' : 'normal' },
+    token.underline !== undefined && { textDecorationLine: token.underline ? 'underline' : 'none' },
+    active && activeWordStyle,
+    selectedWordStyle,
+  ]} onPress={onSeek ? event => {
+    event.stopPropagation();
+    if (onSeekWord && token.start !== undefined) onSeekWord(token.start);
+    else onSeek();
+  } : undefined}
+    onLongPress={event => { event.stopPropagation(); onTranslate(index, token.text, { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY }); }}>{token.text}{token.reading && <Text style={{ fontSize: 11, fontWeight: '400' }}>（{token.reading}）</Text>}</Text>;
 }

@@ -10,8 +10,10 @@ const require = createRequire(import.meta.url);
 const videoId = 'abcdefghijk';
 const transcript = { videoId, trackId: 'en' };
 
-async function harness() {
-  const calls = [], boundaries = [];
+async function harness(props) {
+  const calls = [], boundaries = [], positions = [];
+  let renders = 0;
+  const publishPosition = position => positions.push(position);
   const result = await build({
     entryPoints: ['src/media/useTranscriptPosition.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'core-edge', setup(builder) {
@@ -31,13 +33,14 @@ async function harness() {
   const injections = [];
   const webView = { current: { injectJavaScript: code => injections.push(code) } };
   let playback;
-  function Reader({ enabled = true, native = true }) {
-    playback = module.exports.useTranscriptPosition(webView, player, videoId, enabled, native ? videoId : null, transcript, true);
+  function Reader({ enabled = true, native = true, publish = false }) {
+    renders++;
+    playback = module.exports.useTranscriptPosition(webView, player, videoId, enabled, native ? videoId : null, transcript, true, publish ? publishPosition : undefined);
     return null;
   }
   let root;
-  await act(() => { root = create(createElement(Reader)); });
-  return { calls, boundaries, player, listeners, injections, playback: () => playback,
+  await act(() => { root = create(createElement(Reader, props)); });
+  return { calls, boundaries, player, listeners, injections, positions, renders: () => renders, playback: () => playback,
     render: props => act(() => root.update(createElement(Reader, props))), unmount: () => act(() => root.unmount()) };
 }
 
@@ -92,4 +95,26 @@ test('web pause samples use Rust validation before applying pause decisions', as
   assert.match(env.injections.at(-1), /\.pause\(/);
   await env.render({ enabled: false, native: false });
   assert.match(env.injections.at(-1), /\.cancelPosition\(/);
+});
+
+test('the reader publishes fresh native time without rerendering its owner or increasing player-control events', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const env = await harness({ publish: true }); t.after(env.unmount);
+  assert.equal(env.player.timeUpdateEventInterval, 0.25);
+  assert.equal(env.positions.at(-1), 0.9);
+  await act(() => env.calls[0].resolve({ pause: false, cursor: {} }));
+  const renders = env.renders();
+  env.player.currentTime = 1.3;
+  await act(() => t.mock.timers.tick(50));
+  assert.equal(env.positions.at(-1), 1.3);
+  assert.equal(env.calls[1].args[2].position, 1.3, 'line pauses receive actual media time');
+  assert.equal(env.renders(), renders, 'the app owning the player does not render on a clock tick');
+  await act(() => env.playback().reset());
+  assert.equal(env.positions.at(-1), null);
+  await env.render({ enabled: false, publish: true });
+  const samples = env.positions.length;
+  await act(() => t.mock.timers.tick(500));
+  assert.equal(env.positions.length, samples);
+  await act(() => env.calls[1].resolve({ pause: true, cursor: {} }));
+  assert.equal(env.player.pauses, 0);
 });

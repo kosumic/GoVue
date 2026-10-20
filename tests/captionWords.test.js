@@ -15,8 +15,8 @@ const timed = [
 ];
 
 async function harness() {
-  const pending = [], seeks = [], saves = [], translations = [], alerts = [];
-  const bundle = await build({ entryPoints: ['src/components/TranscriptWords.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', packages: 'external',
+  const pending = [], seeks = [], saves = [], translations = [], alerts = [], paints = [];
+  const bundle = await build({ stdin: { contents: "export { TranscriptWords } from './src/components/TranscriptWords'; export { createTranscriptClock } from './src/media/transcriptClock';", resolveDir: process.cwd(), sourcefile: 'caption-clock-test.ts' }, bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', packages: 'external',
     plugins: [{ name: 'caption-core', setup(builder) {
       builder.onResolve({ filter: /\/core\/vocabulary$/ }, () => ({ path: 'caption-core', external: true }));
     } }],
@@ -24,7 +24,7 @@ async function harness() {
   const module = { exports: {} };
   Function('require', 'module', 'exports', bundle.outputFiles[0].text)(name => {
     if (name === 'caption-core') return { captionWords: (...args) => new Promise(resolve => pending.push({ args, resolve })) };
-    if (name === 'react-native') return { Text: 'Text', Alert: { alert: (...args) => alerts.push(args) } };
+    if (name === 'react-native') return { Text: props => { paints.push(props.children); return createElement('Text', props); }, Alert: { alert: (...args) => alerts.push(args) } };
     return require(name);
   }, module, module.exports);
   const highlight = { backgroundColor: 'white', color: 'black' };
@@ -33,7 +33,7 @@ async function harness() {
   let root;
   const element = () => createElement(module.exports.TranscriptWords, props);
   await act(() => { root = create(element()); });
-  return { root, pending, seeks, saves, translations, alerts, highlight,
+  return { root, pending, seeks, saves, translations, alerts, highlight, paints, clock: module.exports.createTranscriptClock(),
     render: changes => act(() => { props = { ...props, ...changes }; root.update(element()); }),
     reply: (index, tokens = timed, text = props.source.segments[props.segmentIndex].text) => act(async () => { pending[index].resolve({ text, tokens }); }),
     unmount: () => act(() => root.unmount()) };
@@ -114,4 +114,24 @@ test('speaker dividers announce possible changes and preserve word seeking and s
   await env.reply(1, timed.map(token => ({ ...token, speakerChange: false })));
   assert.equal(dividers().length, 0);
   assert.equal(env.root.root.findAllByType('Text')[0].props.accessibilityLabel, 'Hello, world');
+});
+
+test('clock ticks render only words whose highlight changes and stop when the line is inactive', async t => {
+  const env = await harness(); t.after(env.unmount);
+  await env.reply(0);
+  env.clock.update(1.5);
+  await env.render({ clock: env.clock, position: null });
+  env.paints.length = 0;
+  for (const seconds of [1.51, 1.56, 1.65]) await act(() => env.clock.update(seconds));
+  assert.deepEqual(env.paints, [], 'the same word does not rebuild the line on each playback tick');
+  await act(() => env.clock.update(1.7));
+  assert.deepEqual(env.paints.map(children => children[0]).sort(), ['Hello', 'world']);
+  assert.ok(!word(env, 'Hello').props.style.includes(env.highlight));
+  assert.ok(word(env, 'world').props.style.includes(env.highlight));
+  await act(() => env.clock.update(null));
+  assert.ok(!word(env, 'world').props.style.includes(env.highlight), 'seeking clears the old highlight');
+  await env.render({ selected: false });
+  env.paints.length = 0;
+  await act(() => env.clock.update(2));
+  assert.deepEqual(env.paints, [], 'inactive lines do not subscribe to playback ticks');
 });
