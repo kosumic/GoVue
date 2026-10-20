@@ -16,14 +16,14 @@ export function useGameAudio(scope: GameScope, beforePlay?: () => Promise<void> 
 }
 
 export function useTranscriptAudio(scope: TranscriptScope, beforePlay?: () => Promise<void> | void) {
-  return useCaptionAudio(scope, beforePlay);
+  return useCaptionAudio(scope, beforePlay, [], true);
 }
 
 export function useWordAudio(scope: WordScope, beforePlay?: () => Promise<void> | void) {
   return useCaptionAudio(scope, beforePlay);
 }
 
-function useCaptionAudio(scope: CaptionScope, beforePlay?: () => Promise<void> | void, cueIds: string[] = []) {
+function useCaptionAudio(scope: CaptionScope, beforePlay?: () => Promise<void> | void, cueIds: string[] = [], trackProgress = false) {
   const player = useVideoPlayer(null, player => {
     player.audioMixingMode = 'doNotMix';
     player.timeUpdateEventInterval = 0.05;
@@ -32,6 +32,7 @@ function useCaptionAudio(scope: CaptionScope, beforePlay?: () => Promise<void> |
     player.seekTolerance = { toleranceBefore: 0, toleranceAfter: 0 };
   });
   const [phase, setPhase] = useState<'idle' | 'loading' | 'playing'>('idle');
+  const [progress, setProgress] = useState<{ identity: string; cueId: string; elapsed: number } | null>(null);
   const [error, setError] = useState('');
   const generation = useRef(0);
   const mounted = useRef(true);
@@ -57,7 +58,7 @@ function useCaptionAudio(scope: CaptionScope, beforePlay?: () => Promise<void> |
     active.current = null;
     if (stopFocusedAudio === focus.current) stopFocusedAudio = null;
     try { player.pause(); } catch {}
-    if (mounted.current) { setPhase('idle'); setError(''); }
+    if (mounted.current) { setPhase('idle'); setProgress(null); setError(''); }
   }
   async function play(cueId: string, onStarted?: () => void) {
     stopFocusedAudio?.();
@@ -87,6 +88,7 @@ function useCaptionAudio(scope: CaptionScope, beforePlay?: () => Promise<void> |
       await replace({ uri: clip.uri, contentType: 'hls' });
       check();
       player.currentTime = clip.start;
+      const start = clip.start;
       const end = clip.end;
       await new Promise<void>((resolve, reject) => {
         let done = false;
@@ -97,15 +99,22 @@ function useCaptionAudio(scope: CaptionScope, beforePlay?: () => Promise<void> |
           tick.remove(); ended.remove(); status.remove();
           try { player.pause(); } catch {}
           active.current = null;
+          if (mounted.current) setProgress(null);
           if (error) reject(error); else resolve();
         };
-        const tick = player.addListener('timeUpdate', ({ currentTime }) => { if (currentTime >= end) finish(); });
+        const tick = player.addListener('timeUpdate', ({ currentTime }) => {
+          if (done || cancelled()) return;
+          if (currentTime >= end) finish();
+          else if (trackProgress && Number.isFinite(currentTime) && currentTime >= start)
+            setProgress({ identity, cueId, elapsed: currentTime - start });
+        });
         const ended = player.addListener('playToEnd', () => finish());
         const status = player.addListener('statusChange', ({ status }) => { if (status === 'error') finish(Error('Caption audio could not be played.')); });
         const timeout = setTimeout(() => finish(Error('Audio playback timed out. Try replaying the clip.')), 60000);
         active.current = { cancel: () => finish(cancellation) };
         player.play();
         setPhase('playing');
+        if (trackProgress) setProgress({ identity, cueId, elapsed: 0 });
         onStarted?.();
       });
     } catch (error) {
@@ -152,5 +161,6 @@ function useCaptionAudio(scope: CaptionScope, beforePlay?: () => Promise<void> |
     });
     return () => { mounted.current = false; ++cacheGeneration; preparation.cancel(); stop(); subscription.remove(); };
   }, [player, identity, preparation, cueIdentity, cacheRetry]);
-  return { play, stop, phase, error, cachePhase, cacheError, retryCache: () => setCacheRetry(value => value + 1) };
+  return { play, stop, phase, error, progress: progress?.identity === identity ? progress : null,
+    cachePhase, cacheError, retryCache: () => setCacheRetry(value => value + 1) };
 }

@@ -78,7 +78,8 @@ changes keep the video's conversation.
 Use **Open video** in chat to return to its existing video tab or open it again.
 Tap the transcript context card to read or search the captions used by the AI.
 Tap a line to hear its original audio and stop at the end of that caption. Audio
-loads on demand and is cached locally for replay and reuse by chat games.
+loads on demand and is cached locally for replay and reuse by chat games. The
+current word is highlighted during playback when the captions include word timings.
 
 Reasoning changes made during a response apply to the next message. Each response
 has a regenerate button beside its copy action. Regenerating an earlier response

@@ -235,7 +235,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
                   onPress={canPlay ? event => { event.stopPropagation(); playLine(source, line.index); } : undefined}>{timestamp(segment.start)}</Text>
                 <View style={styles.lineText}>
                   {!!comparison && <Text style={styles.lineLanguage}>{source.language}</Text>}
-                  <TranscriptWords source={source} segmentIndex={line.index} position={active && onSeek ? position : null} selected={active}
+                  <TranscriptWords source={source} segmentIndex={line.index} position={active ? position : null} selected={active}
                     style={[styles.segmentText, line.track === 1 && styles.comparisonText, active && styles.activeText]} activeWordStyle={styles.activeWord}
                     separatorStyle={styles.speakerSeparator}
                     onSeek={canPlay ? () => playLine(source, line.index) : undefined}

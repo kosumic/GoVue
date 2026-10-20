@@ -16,22 +16,7 @@ import { AiHistoryDrawer } from './AiHistoryDrawer';
 import { GamePractice } from './GamePractice';
 import { extractTranscript, restoreTranscript } from '../core/transcripts';
 import { TranscriptPanel } from './TranscriptPanel';
-import { useTranscriptAudio } from '../ai/useGameAudio';
-import { usePlayerTranscript } from '../player/usePlayerTranscript';
-
-function ChatTranscript({ data, chatId, onClose, onBeforeAudio }: { data: Transcript; chatId: string; onClose: () => void; onBeforeAudio?: () => Promise<void> | void }) {
-  const reader = usePlayerTranscript(data.videoId, data);
-  const [line, setLine] = useState<{ source: Transcript; index: number } | null>(null);
-  const audio = useTranscriptAudio({ chatId, videoId: data.videoId, trackId: line?.source.trackId ?? data.trackId }, onBeforeAudio);
-  useEffect(() => {
-    if (line) void audio.play(`cue-${line.index}`).catch(() => {});
-  }, [line]);
-  return <TranscriptPanel data={reader.data ?? data} comparison={reader.comparison} trackIds={reader.trackIds}
-    comparisonLoading={reader.comparisonLoading} comparisonError={reader.comparisonError} onSelectTrack={reader.selectTrack}
-    loading={reader.loading} error={reader.error} cached={false} pauseAfterLine={false} onClose={onClose}
-    position={audio.phase !== 'idle' && line !== null ? line.source.segments[line.index]?.start ?? null : null} audio={audio}
-    onBeforeWordAudio={onBeforeAudio} onPlayLine={(index, source = data) => setLine({ source, index })} />;
-}
+import { ChatTranscriptReader } from './ChatTranscript';
 
 function Button({ title, onPress, disabled = false }: { title: string; onPress: () => void; disabled?: boolean }) {
   const styles = useThemeStyles(makeStyles);
@@ -218,7 +203,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
         <AiUsageSheet visible={visible && usageVisible} chatId={chats.conversation?.id} onClose={() => setUsageVisible(false)} />
         {visible && transcriptVisible && <View style={styles.transcriptReader} accessibilityViewIsModal>
           {contextTranscript && chats.conversation?.transcript?.videoId === contextTranscript.videoId && chats.conversation.transcript.trackId === contextTranscript.trackId
-            ? <ChatTranscript key={`${chats.conversation.id}:${contextTranscript.videoId}:${contextTranscript.trackId}`} data={contextTranscript} chatId={chats.conversation.id} onBeforeAudio={onBeforeGameAudio} onClose={() => setTranscriptVisible(false)} />
+            ? <ChatTranscriptReader key={`${chats.conversation.id}:${contextTranscript.videoId}:${contextTranscript.trackId}`} data={contextTranscript} chatId={chats.conversation.id} onBeforeAudio={onBeforeGameAudio} onClose={() => setTranscriptVisible(false)} />
             : <TranscriptPanel data={null} loading={contextLoading} error={contextError || null} cached={false} position={null} pauseAfterLine={false} onClose={() => setTranscriptVisible(false)} />}
         </View>}
       </KeyboardAvoidingView>
