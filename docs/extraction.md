@@ -45,11 +45,20 @@ transcript cache. Cancelling or changing videos discards pending UI results and
 releases the Rust job; in-flight HTTPS calls finish within their bounded timeout.
 A browsing-renderer failure does not cancel independent extraction.
 
-For an original caption track, Rust first asks a registered active
-page for that exact track. The page lets YouTube reload captions with its own
-verification and can open its transcript panel. This bounded, temporary adapter
-captures only matching caption requests or the current video's transcript
-response. It restores its request hooks and the prior caption selection when
+For a caption track, Rust first asks a registered active
+page for that exact track. A completed page caption request can be replayed
+immediately. The page's video-bound subtitle proof can also request the selected
+track's own signed URL, including ASR tracks hidden from the player's selectable
+tracklist when uploaded captions exist. Signed query bytes are preserved; only
+unsigned format, client and proof fields change. These addresses and proofs
+stay in the active document. See yt-dlp's
+[subtitle token guidance](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
+When no proof is available yet, the page lets YouTube reload captions with its
+own verification and can open its transcript panel. This bounded, temporary
+adapter returns only the requested caption track or the current video's
+transcript response. Concurrent player and reader consumers share request hooks
+and matching in-flight caption fetches; cancelling one preserves the others.
+It restores its request hooks and the prior caption selection when
 finished or cancelled. Rust validates the native message origin, video, track,
 adapter and task identity. Origin validation accepts Android WebMessageListener’s
 origin-only URL as well as a full document URL; the pending task and registered
@@ -65,8 +74,25 @@ continues. If the page becomes available while standalone verification is
 running, an original-caption failure can try the page once more. A document
 readiness event re-delivers pending tasks idempotently, and one caption-module
 reload handles delayed player initialization.
-Original uploaded and generated captions use this adapter. Machine translations
-retain the standalone path.
+Original uploaded and generated captions and machine translations use this
+adapter. Translation tasks identify the source track separately and add only
+the requested target language to its signed address. Original caption bytes or
+another translation cannot satisfy that task; transcript-panel responses are
+used only for original tracks. Standalone extraction remains the fallback when
+the page cannot retrieve the selected track.
+
+Caption and machine translation lists put the user's most frequently selected
+languages first. Rust stores only language codes and selection counts in the
+native sandbox, shared across videos and track types. Removing a language or
+refreshing captions does not increase its count; ties retain YouTube's order.
+
+The reader measures native text rows for each caption block. Rust validates
+those rows against the displayed caption, including speaker dividers and ruby,
+and maps their boundaries to word timestamps. Rows sharing a phrase timestamp
+are distributed through that phrase; untimed rows use the caption interval.
+Each pane follows its current visual row directly, leaving upcoming words in
+view rather than waiting for the next caption block or an animated scroll.
+Dragging suspends following and cancels pending alignment until following resumes.
 
 Reader highlights consume a separate UI clock sampled from native media time
 every 50 ms. Only words entering or leaving their source interval update; the
@@ -119,7 +145,8 @@ removes that temporary limit so Auto can increase quality normally. Manual
 quality selection remains pinned to the requested format. The initial playback
 buffer threshold is 250 ms; normal forward buffering remains enabled.
 
-Machine-translated captions are requested immediately. If a verified request
+Machine-translated captions first use the active page's session and video-bound
+proof. If standalone fallback is needed and a verified request
 returns 429 while the in-memory guest session is younger than 75 seconds, Rust
 waits for the remaining session age and retries that request once, following the
 [yt-dlp session-age workaround](https://github.com/yt-dlp/yt-dlp/pull/15709).

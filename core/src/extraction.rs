@@ -839,13 +839,7 @@ fn transcript(
     let translated = selected.translated_from.is_some();
     // Protected caption tracks can return HTTP 200 with no bytes even after a
     // standalone token challenge. Let the active player supply its own proof.
-    let from_page = if !translated {
-        page::captions(job, root, id, selected)
-    } else {
-        Ok(None)
-    };
-    let retry_page = !translated;
-    let from_page = from_page.ok().flatten();
+    let from_page = page::captions(job, root, id, selected).ok().flatten();
     job.check()?;
     let (segments, caption_metadata) = if let Some(captions) = from_page {
         captions
@@ -884,7 +878,7 @@ fn transcript(
             crate::parse_captions(&source)
         })();
         match result {
-            Err(error) if retry_page => {
+            Err(error) => {
                 // A page that was missing or still loading can become ready while
                 // standalone verification runs. Retry its transport once.
                 job.check()?;
@@ -893,7 +887,7 @@ fn transcript(
                     .flatten()
                     .ok_or(error)?
             }
-            result => result?,
+            Ok(result) => result,
         }
     };
     let mut data = Transcript {

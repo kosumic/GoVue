@@ -218,7 +218,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
               style={styles.pane} extraData={{ position, activeKey, wordSelection }} onStopFollowing={stopFollowing}
               contentContainerStyle={[styles.list, { paddingBottom: 24 + (track === 0 ? 0 : bottomInset) }]}
               empty={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
-              renderRow={(item, activeRow) => <View style={[styles.captionGroup, activeRow && styles.activeSegment]}>
+              renderRow={(item, activeRow, followLine) => <View style={[styles.captionGroup, activeRow && styles.activeSegment]}>
                 {item.lines.filter(line => track === undefined || line.track === track).map(line => {
                   const source = sources[line.track];
                   const segment = source?.segments[line.index];
@@ -241,6 +241,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
                       })} /> : <TranscriptWords source={source} segmentIndex={line.index} position={active ? position : null} clock={active ? clock : undefined} selected={active}
                         selectedTokenIndex={wordSelection?.source === source && wordSelection.segmentIndex === line.index ? wordSelection.tokenIndex : undefined} selectedWordStyle={styles.selectedWord}
                         selectedEndTokenIndex={wordSelection?.endTokenIndex} onHeight={height => { captionHeights.current.set(`${line.track}:${line.index}`, height); }}
+                        onFollow={following ? followLine : undefined}
                         style={[styles.segmentText, active && styles.activeText]} activeWordStyle={styles.activeWord}
                         separatorStyle={styles.speakerSeparator}
                         onSeek={canPlay ? () => playLine(source, line.index) : undefined}
@@ -264,7 +265,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
 }
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
-  activeWord: { backgroundColor: colors.accent, color: colors.background, fontWeight: '700' },
+  activeWord: { backgroundColor: colors.accent, color: colors.background },
   selectedWord: { backgroundColor: colors.action, color: colors.background, textDecorationLine: 'underline' },
   speakerSeparator: { color: colors.muted },
   playbackControls: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, minHeight: 48 },

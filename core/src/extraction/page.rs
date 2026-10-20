@@ -54,12 +54,13 @@ pub(super) fn captions(
         return Ok(None);
     };
     let raw = job.evaluate(json!({"stage":STAGE,"adapterId":adapter,"videoId":video,
-        "trackId":track.id,"language":track.language,"automatic":track.automatic,"label":track.label}))?;
+        "trackId":track.id,"sourceTrackId":track.translated_from.as_deref().unwrap_or(&track.id),
+        "language":track.language,"automatic":track.automatic,"label":track.label}))?;
     let reply = json_response(&raw)?;
     let source = string(&reply, "source")?;
     let parsed = match reply["format"].as_str() {
         Some("timedtext") => crate::parse_captions(source)?,
-        Some("panel") => panel(source, &track.label)?,
+        Some("panel") if track.translated_from.is_none() => panel(source, &track.label)?,
         _ => return Err("Unsupported page caption format.".into()),
     };
     if parsed.0.is_empty() {
@@ -274,10 +275,14 @@ mod tests {
     }
 
     #[test]
-    fn original_caption_work_stays_out_of_the_isolated_token_runtime() {
-        for automatic in [true, false] {
+    fn caption_work_stays_out_of_the_isolated_token_runtime() {
+        for (id, language, automatic, translated_from) in [
+            ("a.en", "en", true, None),
+            (".en", "en", false, None),
+            ("translate:fr:a.en", "fr", true, Some("a.en")),
+        ] {
             let label = if automatic { LABEL } else { "English" };
-            let root = format!("caption-page-workflow-{}-{automatic}", std::process::id());
+            let root = format!("caption-page-workflow-{}-{id}", std::process::id());
             let request = "worker:page-protocol";
             register(&json!({"adapterId":"page:workflow","videoId":VIDEO}), &root).unwrap();
             let worker = Arc::new(job(None));
@@ -285,10 +290,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert((root.clone(), request.into()), worker.clone());
-            let track: Track = serde_json::from_value(
-            json!({"id":if automatic {"a.en"} else {".en"},"language":"en","label":label,"automatic":automatic}),
-        )
-        .unwrap();
+            let track: Track = serde_json::from_value(json!({"id":id,"language":language,
+                "label":label,"automatic":automatic,"translatedFrom":translated_from}))
+            .unwrap();
             let (store, background) = (root.clone(), worker);
             let thread = thread::spawn(move || captions(&background, &store, VIDEO, &track));
             let deadline = Instant::now() + Duration::from_secs(2);
@@ -300,6 +304,9 @@ mod tests {
                 assert!(Instant::now() < deadline);
                 thread::sleep(Duration::from_millis(2));
             };
+            assert_eq!(task["trackId"], id);
+            assert_eq!(task["sourceTrackId"], translated_from.unwrap_or(id));
+            assert_eq!(task["language"], language);
             assert!(
                 runtime_tasks(&root, false).unwrap()["tasks"]
                     .as_array()
@@ -310,8 +317,20 @@ mod tests {
                 dispatch(&json!({"op":"extract_poll","requestId":request}), &root).unwrap()["task"]
                     .is_null()
             );
+            let (format, source) = if translated_from.is_some() {
+                (
+                    "timedtext",
+                    json!({"events":[
+                        {"tStartMs":1500,"dDurationMs":2000,"segs":[{"utf8":"Hello there"}]},
+                        {"tStartMs":4000,"dDurationMs":1000,"segs":[{"utf8":"Next line"}]}
+                    ]})
+                    .to_string(),
+                )
+            } else {
+                ("panel", panel_data(label))
+            };
             let payload = json!({"type":"captionPage","requestId":request,"taskId":task["taskId"],"videoId":VIDEO,
-            "trackId":task["trackId"],"ok":true,"format":"panel","source":panel_data(label)});
+            "trackId":task["trackId"],"ok":true,"format":format,"source":source});
             dispatch(&json!({"op":"extract_page","requestId":request,"origin":format!("https://m.youtube.com/watch?v={VIDEO}"),"raw":payload.to_string()}),&root).unwrap();
             let (segments, _) = thread.join().unwrap().unwrap().unwrap();
             assert_eq!(segments.len(), 2);

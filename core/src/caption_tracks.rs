@@ -221,8 +221,8 @@ pub(crate) fn default_track<'a>(tracks: &'a [Track], metadata: &Metadata) -> Opt
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Choices<'a> {
     source_tracks: Vec<&'a Track>,
-    caption_tracks: Vec<&'a Track>,
-    translations: Vec<&'a Track>,
+    pub(crate) caption_tracks: Vec<&'a Track>,
+    pub(crate) translations: Vec<&'a Track>,
 }
 
 pub(crate) fn choices(data: &Transcript) -> Choices<'_> {

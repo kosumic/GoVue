@@ -16,6 +16,8 @@ export type SavedWord = {
 export const tokenizeCaption = (text: string) => coreRequest<WordToken[]>({ op: 'vocabulary_tokenize', text });
 export const captionWords = (data: Transcript, segmentIndex: number) =>
   coreRequest<{ text: string; tokens: WordToken[] }>({ op: 'vocabulary_caption', videoId: data.videoId, trackId: data.trackId, segmentIndex });
+export const captionLineStarts = (data: Transcript, segmentIndex: number, lines: string[]) =>
+  coreRequest<number[]>({ op: 'vocabulary_caption_layout', videoId: data.videoId, trackId: data.trackId, segmentIndex, lines });
 export const captionDetails = (data: Transcript) =>
   coreRequest<string>({ op: 'vocabulary_details', videoId: data.videoId, trackId: data.trackId });
 export const listWords = (query = '') => coreRequest<SavedWord[]>({ op: 'vocabulary_list', query });

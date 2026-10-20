@@ -1,10 +1,14 @@
-import { Fragment, useEffect, useState, useSyncExternalStore } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, Text, type StyleProp, type TextStyle } from 'react-native';
-import { captionWords, type WordToken } from '../core/vocabulary';
+import { captionLineStarts, captionWords, type WordToken } from '../core/vocabulary';
 import type { Transcript } from '../youtube/transcript';
 import { idleTranscriptClock, type TranscriptClock } from '../media/transcriptClock';
+import type { TranscriptFocus } from './TranscriptList';
 
-export function TranscriptWords({ source, segmentIndex, position, clock, style, activeWordStyle, separatorStyle, selected, selectedTokenIndex, selectedEndTokenIndex, selectedWordStyle, onHeight, onSeek, onSeekWord, onSave, onTranslate }: {
+type VisualLine = { text: string; y: number; height: number };
+type Layout = { source: Transcript; segmentIndex: number; lines: VisualLine[] };
+
+export function TranscriptWords({ source, segmentIndex, position, clock, style, activeWordStyle, separatorStyle, selected, selectedTokenIndex, selectedEndTokenIndex, selectedWordStyle, onHeight, onFollow, onSeek, onSeekWord, onSave, onTranslate }: {
   source: Transcript;
   segmentIndex: number;
   position: number | null;
@@ -17,6 +21,7 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
   selectedEndTokenIndex?: number;
   selectedWordStyle?: StyleProp<TextStyle>;
   onHeight?: (height: number) => void;
+  onFollow?: (focus: TranscriptFocus) => void;
   onSeek?: () => void;
   onSeekWord?: (seconds: number) => void;
   onSave: (tokenIndex: number, word: string) => void;
@@ -26,6 +31,18 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
   const [parsed, setParsed] = useState<{ source: Transcript; segmentIndex: number; tokens: WordToken[] } | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const node = useRef<Text>(null);
+  const [layout, setLayout] = useState<Layout | null>(null);
+  const [plan, setPlan] = useState<{ layout: Layout; starts: number[] } | null>(null);
+  const following = !!onFollow;
+  useEffect(() => {
+    if (!following || !layout || layout.source !== source || layout.segmentIndex !== segmentIndex) return;
+    let active = true;
+    void captionLineStarts(source, segmentIndex, layout.lines.map(line => line.text)).then(starts => {
+      if (active && starts.length === layout.lines.length) setPlan({ layout, starts });
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [following, layout, source, segmentIndex]);
   useEffect(() => {
     let active = true;
     setError('');
@@ -41,7 +58,14 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
   const timed = !!onSeekWord && !!tokens?.some(token => token.start !== undefined);
   const spokenText = tokens?.map(token => (token.speakerChange ? ' Possible speaker change. ' : '') + token.text + (token.reading ? ` (${token.reading})` : '')).join('') ?? text;
   const inSelection = (index: number) => selectedTokenIndex !== undefined && index >= selectedTokenIndex && index <= (selectedEndTokenIndex ?? selectedTokenIndex);
-  return <Text style={style} onLayout={onHeight ? event => onHeight(event.nativeEvent.layout.height) : undefined} accessible accessibilityLabel={spokenText} accessibilityRole={onSeek ? 'button' : undefined} accessibilityState={{ selected }}
+  return <><Text ref={node} style={style} onLayout={onHeight ? event => onHeight(event.nativeEvent.layout.height) : undefined}
+    onTextLayout={event => {
+      const lines = event.nativeEvent.lines;
+      if (!lines.length || lines.some(line => !Number.isFinite(line.y) || !Number.isFinite(line.height) || line.height <= 0)) return;
+      setLayout(current => current?.source === source && current.segmentIndex === segmentIndex && current.lines.length === lines.length &&
+        current.lines.every((line, index) => line.text === lines[index].text && line.y === lines[index].y && line.height === lines[index].height)
+        ? current : { source, segmentIndex, lines });
+    }} accessible accessibilityLabel={spokenText} accessibilityRole={onSeek ? 'button' : undefined} accessibilityState={{ selected }}
     accessibilityHint={onSeek ? `Tap ${timed ? 'a word' : 'the line'} to play. Hold a word to translate it, or use the translate and save word actions.` : 'Hold a word to translate it, or use the translate and save word actions.'}
     accessibilityActions={tokens?.flatMap((token, index) => token.word ? [
       ...(onSeekWord && token.start !== undefined ? [{ name: `play-word-${index}`, label: `Play from ${token.text}` }] : []),
@@ -69,7 +93,30 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
         activeWordStyle={activeWordStyle} selectedWordStyle={inSelection(index) ? selectedWordStyle : undefined}
         onSeek={onSeek} onSeekWord={onSeekWord} onTranslate={onTranslate} />
     </Fragment> : inSelection(index) ? <Text key={index} accessible={false} style={selectedWordStyle}>{token.text}</Text> : token.text) : text}
-  </Text>;
+  </Text>{selected && onFollow && plan?.layout === layout && layout?.source === source && layout.segmentIndex === segmentIndex &&
+    <TranscriptLineFollow node={node} lines={layout.lines} starts={plan.starts} position={position} clock={clock} onFollow={onFollow} />}</>;
+}
+
+function TranscriptLineFollow({ node, lines, starts, position, clock, onFollow }: {
+  node: React.RefObject<Text | null>; lines: VisualLine[]; starts: number[];
+  position: number | null; clock?: TranscriptClock; onFollow: (focus: TranscriptFocus) => void;
+}) {
+  const line = useSyncExternalStore(clock?.subscribe ?? idleTranscriptClock, () => {
+    const seconds = clock ? clock.getSnapshot() : position;
+    if (seconds === null) return -1;
+    let low = 0, high = starts.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (starts[mid] <= seconds) low = mid + 1; else high = mid;
+    }
+    return low - 1;
+  });
+  const follow = useRef(onFollow);
+  follow.current = onFollow;
+  useLayoutEffect(() => {
+    if (node.current && lines[line]) follow.current({ node: node.current, y: lines[line].y, height: lines[line].height });
+  }, [line, lines, node]);
+  return null;
 }
 
 // Only words entering or leaving the active interval render on a clock tick.

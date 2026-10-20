@@ -1,6 +1,38 @@
 use crate::{Result, Transcript, folded, load, string, timestamp};
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
+
+const LANGUAGE_USAGE: &str = "caption-language-usage.json";
+
+fn language_usage(root: &str) -> BTreeMap<String, u64> {
+    crate::media::read(root, LANGUAGE_USAGE, json!({}))
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(language, count)| {
+            let count = count.as_u64().filter(|count| *count > 0)?;
+            crate::caption_tracks::language(language)
+                .then(|| (language.to_ascii_lowercase(), count))
+        })
+        .take(512)
+        .collect()
+}
+
+fn remember_language(root: &str, language: &str) {
+    if !crate::caption_tracks::language(language) {
+        return;
+    }
+    let mut usage = language_usage(root);
+    let language = language.to_ascii_lowercase();
+    if usage.len() >= 512 && !usage.contains_key(&language) {
+        return;
+    }
+    let count = usage.entry(language).or_default();
+    *count = count.saturating_add(1);
+    // Ranking preferences must not prevent a valid caption selection.
+    let _ = crate::media::write(root, LANGUAGE_USAGE, &json!(usage));
+}
 
 #[derive(Serialize)]
 struct Line {
@@ -93,15 +125,18 @@ pub(super) fn dispatch(
             selected.push(id);
         }
         let toggle = string(command, "toggleId")?;
-        if !primary.tracks.iter().any(|t| t.id == toggle) {
-            return Err("This caption language is unavailable.".into());
-        }
+        let track = primary
+            .tracks
+            .iter()
+            .find(|t| t.id == toggle)
+            .ok_or("This caption language is unavailable.")?;
         if selected.contains(&toggle) {
             if selected.len() > 1 {
                 selected.retain(|id| *id != toggle);
             }
         } else if selected.len() < 2 {
             selected.push(toggle);
+            remember_language(root, &track.language);
         } else {
             return Err("Select up to two languages. Remove a language first.".into());
         }
@@ -153,7 +188,17 @@ pub(super) fn dispatch(
             })
         });
     }
-    Ok(
-        json!({ "rows": rows, "total": total, "trackChoices": crate::caption_tracks::choices(primary) }),
-    )
+    let usage = language_usage(root);
+    let mut choices = crate::caption_tracks::choices(primary);
+    for tracks in [&mut choices.caption_tracks, &mut choices.translations] {
+        tracks.sort_by_cached_key(|track| {
+            std::cmp::Reverse(
+                usage
+                    .get(&track.language.to_ascii_lowercase())
+                    .copied()
+                    .unwrap_or(0),
+            )
+        });
+    }
+    Ok(json!({ "rows": rows, "total": total, "trackChoices": choices }))
 }

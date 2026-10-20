@@ -14,6 +14,8 @@ use std::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+mod layout;
+
 const MAX_WORDS: usize = 2_000;
 const MAX_BYTES: u64 = 8_000_000;
 
@@ -358,6 +360,20 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 )
             },
         ),
+        "vocabulary_caption_layout" => with_transcript(
+            root,
+            string(command, "videoId")?,
+            string(command, "trackId")?,
+            |data| {
+                let lines: Vec<String> = serde_json::from_value(command["lines"].clone())
+                    .map_err(|_| "Invalid caption layout.")?;
+                Ok(json!(layout::starts(
+                    data,
+                    index(command, "segmentIndex")?,
+                    &lines
+                )?))
+            },
+        )?,
         "vocabulary_caption" => with_transcript(
             root,
             string(command, "videoId")?,
