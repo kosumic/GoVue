@@ -3,7 +3,7 @@ import { Alert, Text, type StyleProp, type TextStyle } from 'react-native';
 import { captionWords, type WordToken } from '../core/vocabulary';
 import type { Transcript } from '../youtube/transcript';
 
-export function TranscriptWords({ source, segmentIndex, position, style, activeWordStyle, separatorStyle, selected, onSeek, onSeekWord, onSave, onTranslate }: {
+export function TranscriptWords({ source, segmentIndex, position, style, activeWordStyle, separatorStyle, selected, selectedTokenIndex, selectedWordStyle, onSeek, onSeekWord, onSave, onTranslate }: {
   source: Transcript;
   segmentIndex: number;
   position: number | null;
@@ -11,6 +11,8 @@ export function TranscriptWords({ source, segmentIndex, position, style, activeW
   activeWordStyle: StyleProp<TextStyle>;
   separatorStyle?: StyleProp<TextStyle>;
   selected: boolean;
+  selectedTokenIndex?: number;
+  selectedWordStyle?: StyleProp<TextStyle>;
   onSeek?: () => void;
   onSeekWord?: (seconds: number) => void;
   onSave: (tokenIndex: number, word: string) => void;
@@ -64,6 +66,7 @@ export function TranscriptWords({ source, segmentIndex, position, style, activeW
         token.italic !== undefined && { fontStyle: token.italic ? 'italic' : 'normal' },
         token.underline !== undefined && { textDecorationLine: token.underline ? 'underline' : 'none' },
         selected && position !== null && token.start !== undefined && position >= token.start && (token.end === undefined || position < token.end) && activeWordStyle,
+        index === selectedTokenIndex && selectedWordStyle,
       ]}
       onPress={onSeek ? event => {
         event.stopPropagation();

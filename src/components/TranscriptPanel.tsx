@@ -210,7 +210,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           value={query} onChangeText={setQuery} style={styles.searchInput} />
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>}
-        <FlatList ref={list} data={rows} extraData={position} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={[styles.list, { paddingBottom: 24 + bottomInset }]}
+        <FlatList ref={list} data={rows} extraData={{ position, wordSelection }} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={[styles.list, { paddingBottom: 24 + bottomInset }]}
           onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
             const target = scrollTarget.current;
@@ -236,6 +236,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
                 <View style={styles.lineText}>
                   {!!comparison && <Text style={styles.lineLanguage}>{source.language}</Text>}
                   <TranscriptWords source={source} segmentIndex={line.index} position={active ? position : null} selected={active}
+                    selectedTokenIndex={wordSelection?.source === source && wordSelection.segmentIndex === line.index ? wordSelection.tokenIndex : undefined} selectedWordStyle={styles.selectedWord}
                     style={[styles.segmentText, line.track === 1 && styles.comparisonText, active && styles.activeText]} activeWordStyle={styles.activeWord}
                     separatorStyle={styles.speakerSeparator}
                     onSeek={canPlay ? () => playLine(source, line.index) : undefined}
@@ -254,6 +255,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   activeWord: { backgroundColor: colors.accent, color: colors.background, fontWeight: '700' },
+  selectedWord: { backgroundColor: colors.action, color: colors.background, textDecorationLine: 'underline' },
   speakerSeparator: { color: colors.muted },
   playbackControls: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, minHeight: 48 },
   pauseControl: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },

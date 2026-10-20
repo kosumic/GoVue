@@ -15,7 +15,7 @@ async function release(request: Request) {
   }
 }
 
-export function useWordAssistance<T extends WordExample | WordGrammar>(selection: WordSelection, kind: 'example' | 'grammar') {
+export function useWordAssistance<T extends WordExample | WordGrammar>(selection: WordSelection, kind: 'example' | 'grammar', providerKey?: string) {
   const [result, setResult] = useState<T | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -26,7 +26,7 @@ export function useWordAssistance<T extends WordExample | WordGrammar>(selection
       if (current.current) void release(current.current);
       current.current = null;
     };
-  }, [selection, kind]);
+  }, [selection, kind, providerKey]);
 
   async function generate() {
     if (current.current) void release(current.current);

@@ -5,11 +5,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { planWordTranslation, saveWord, wordAudioTiming, type WordSelection, type WordTranslationPlan } from '../core/vocabulary';
 import { stopCaptionAudio, useWordAudio } from '../ai/useGameAudio';
 import { useWordAssistance, type WordExample, type WordGrammar } from '../ai/useWordAssistance';
+import { useAi } from '../ai/useAi';
 import { useExampleSpeech } from '../ai/useExampleSpeech';
 import { translateWord } from '../native/translation';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { IconButton } from './IconButton';
 import { useCopyFeedback } from './useCopyFeedback';
+import { WordAiProviderPicker } from './WordAiProviderPicker';
 type Translation = { plan: WordTranslationPlan; text: string | null; error: string };
 
 export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio }: {
@@ -27,11 +29,12 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
   const width = Math.min(420, window.width - 32);
   const topEdge = insets.top + 16;
   const bottomEdge = window.height - insets.bottom - 16;
-  const maxHeight = Math.min(window.height * 0.7, bottomEdge - topEdge);
-  const height = Math.min(cardHeight, maxHeight);
   const point = anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y) ? anchor : undefined;
+  const anchorSpace = point ? Math.max(bottomEdge - point.y - 24, point.y - topEdge - 24) : bottomEdge - topEdge;
+  const maxHeight = Math.min(window.height * 0.7, bottomEdge - topEdge, Math.max(120, anchorSpace));
+  const height = Math.min(cardHeight, maxHeight);
   const left = Math.max(16, Math.min(window.width - width - 16, (point?.x ?? window.width / 2) - width / 2));
-  const preferredTop = point ? point.y + 16 + height <= bottomEdge ? point.y + 16 : point.y - height - 16
+  const preferredTop = point ? point.y + 24 + height <= bottomEdge ? point.y + 24 : point.y - height - 24
     : topEdge + (bottomEdge - topEdge - height) / 2;
   const top = Math.max(topEdge, Math.min(bottomEdge - height, preferredTop));
   const [results, setResults] = useState<Translation[] | null>(null);
@@ -40,8 +43,13 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
   const [saveStatus, setSaveStatus] = useState('');
   const [saving, setSaving] = useState(false);
   const [timed, setTimed] = useState(false);
-  const example = useWordAssistance<WordExample>(selection, 'example');
-  const grammar = useWordAssistance<WordGrammar>(selection, 'grammar');
+  const ai = useAi(true, 'word-assistance');
+  const provider = ai.providers.find(p => p.id === ai.activeId);
+  const group = ai.groups.find(g => g.id === ai.activeId);
+  const providerKey = `${ai.activeId ?? ''}\0${provider?.model ?? group?.name ?? ''}`;
+  const aiAvailable = ai.ready && !ai.busy && (!!group?.connected || !!provider?.enabled && provider.connected && !provider.needsReauth && provider.models.some(m => m.id === provider.model && !m.hidden));
+  const example = useWordAssistance<WordExample>(selection, 'example', providerKey);
+  const grammar = useWordAssistance<WordGrammar>(selection, 'grammar', providerKey);
   const audio = useWordAudio({ videoId: selection.source.videoId, trackId: selection.source.trackId, segmentIndex: selection.segmentIndex, tokenIndex: selection.tokenIndex, word: selection.word }, onBeforeAudio);
   const speech = useExampleSpeech(selection, async () => { stopCaptionAudio(); await onBeforeAudio?.(); });
   useEffect(() => { speech.stop(); }, [example.result]);
@@ -120,7 +128,9 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
             <BookmarkPlus size={19} color={colors.ink} /><Text style={styles.saveText}>{saving ? 'Saving…' : 'Save word'}</Text>
           </Pressable>
           {!!saveStatus && <Text accessibilityLiveRegion="polite" style={styles.help}>{saveStatus}</Text>}
-          <Pressable accessibilityRole="button" accessibilityLabel="Generate example" accessibilityState={{ disabled: example.busy }} disabled={example.busy} onPress={() => { void example.generate(); }} style={styles.save}>
+          <WordAiProviderPicker ai={ai} />
+          {!aiAvailable && <Text style={styles.help}>{ai.error || (!ai.ready ? 'Loading AI providers…' : 'Choose a connected provider and model to generate examples and grammar explanations.')}</Text>}
+          <Pressable accessibilityRole="button" accessibilityLabel="Generate example" accessibilityState={{ disabled: example.busy || !aiAvailable }} disabled={example.busy || !aiAvailable} onPress={() => { void example.generate(); }} style={[styles.save, !aiAvailable && styles.disabled]}>
             {example.busy ? <ActivityIndicator color={colors.accent} /> : <Sparkles size={19} color={colors.ink} />}<Text style={styles.saveText}>{example.busy ? 'Generating example…' : 'Generate example'}</Text>
           </Pressable>
           {!!example.error && <Text accessibilityRole="alert" style={styles.error}>{example.error}</Text>}
@@ -140,7 +150,7 @@ export function WordTranslationSheet({ selection, anchor, onClose, onBeforeAudio
             </View>)}
           </View>}
           {!!speech.error && <Text accessibilityRole="alert" style={styles.error}>{speech.error}</Text>}
-          <Pressable accessibilityRole="button" accessibilityLabel="Explain grammar" accessibilityState={{ disabled: grammar.busy }} disabled={grammar.busy} onPress={() => { void grammar.generate(); }} style={styles.save}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Explain grammar" accessibilityState={{ disabled: grammar.busy || !aiAvailable }} disabled={grammar.busy || !aiAvailable} onPress={() => { void grammar.generate(); }} style={[styles.save, !aiAvailable && styles.disabled]}>
             {grammar.busy ? <ActivityIndicator color={colors.accent} /> : <BookOpen size={19} color={colors.ink} />}<Text style={styles.saveText}>{grammar.busy ? 'Explaining grammar…' : 'Explain grammar'}</Text>
           </Pressable>
           {!!grammar.error && <Text accessibilityRole="alert" style={styles.error}>{grammar.error}</Text>}
@@ -176,4 +186,5 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   error: { flexShrink: 1, color: colors.error, fontSize: 14, lineHeight: 21 },
   save: { minHeight: 48, borderRadius: 10, backgroundColor: colors.accentSoft, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   saveText: { color: colors.ink, fontSize: 15, fontWeight: '600' },
+  disabled: { opacity: 0.45 },
 });

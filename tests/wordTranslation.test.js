@@ -21,6 +21,8 @@ async function harness() {
       builder.onResolve({ filter: /\/IconButton$/ }, () => ({ path: 'test-button', external: true }));
       builder.onResolve({ filter: /\/player\/Haptics$/ }, () => ({ path: 'test-haptics', external: true }));
       builder.onResolve({ filter: /\/ai\/use(GameAudio|WordAssistance|ExampleSpeech)$/ }, () => ({ path: 'test-word-tools', external: true }));
+      builder.onResolve({ filter: /\/ai\/useAi$/ }, () => ({ path: 'test-ai', external: true }));
+      builder.onResolve({ filter: /\/WordAiProviderPicker$/ }, () => ({ path: 'test-ai-picker', external: true }));
       builder.onResolve({ filter: /^test-native$/ }, () => ({ path: 'test-native', external: true }));
       builder.onResolve({ filter: /^expo-translate-text$/ }, () => ({ path: 'native', namespace: 'test-native' }));
       builder.onLoad({ filter: /.*/, namespace: 'test-native' }, () => ({ contents: 'export const onTranslateTask = params => require("test-native").translate(params);', loader: 'js' }));
@@ -30,6 +32,8 @@ async function harness() {
   Function('require', 'module', 'exports', bundle.outputFiles[0].text)(name => {
     if (name === 'test-core') return { planWordTranslation: (...args) => deferred(plans, args), saveWord: (...args) => deferred(saves, args), wordAudioTiming: async () => null };
     if (name === 'test-word-tools') return { useWordAudio: () => ({ phase: 'idle', error: '', play() {}, stop() {} }), useWordAssistance: () => ({ result: null, error: '', busy: false, generate() {} }), useExampleSpeech: () => ({ active: null, error: '', speak() {}, stop() {} }) };
+    if (name === 'test-ai') return { useAi: () => ({ ready: true, providers: [], groups: [], activeId: null }) };
+    if (name === 'test-ai-picker') return { WordAiProviderPicker: 'WordAiProviderPicker' };
     if (name === 'test-native') return { translate: (...args) => deferred(native, args) };
     if (name === 'test-theme') return { useThemeColors: () => ({}), useThemeStyles: factory => factory({}) };
     if (name === 'test-button') return { IconButton: 'IconButton' };
