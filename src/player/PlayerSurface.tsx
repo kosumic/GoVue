@@ -844,6 +844,9 @@ export function PlayerSurface({
       {!!session.caption && !session.mini && (
         <CaptionOverlay
           text={session.caption}
+          sourceText={session.captionFrame.sourceText}
+          segmentIndex={session.captionFrame.segmentIndex}
+          onLayout={session.setCaptionLayout}
           appearance={settings.subtitleStyle}
           width={size.width}
           height={size.height}

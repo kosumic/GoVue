@@ -45,6 +45,88 @@ impl Drop for Store {
 }
 
 #[test]
+fn player_pages_follow_word_timestamps_instead_of_clipping_a_long_cue() {
+    let store = Store::new();
+    let source = json!({"events":[{"tStartMs":1000,"dDurationMs":12000,"segs":[
+        {"utf8":"First ","tOffsetMs":0}, {"utf8":"second ","tOffsetMs":100},
+        {"utf8":"third ","tOffsetMs":200}, {"utf8":"fourth ","tOffsetMs":5000},
+        {"utf8":"fifth ","tOffsetMs":5100}, {"utf8":"sixth.","tOffsetMs":5200}
+    ]}]})
+    .to_string();
+    let data = store.ingest(VIDEO, &source);
+    let text = data["segments"][0]["text"].as_str().unwrap();
+    let layout = json!({"segmentIndex":0,"sourceText":text,"lines":["First ","second ","third ","fourth ","fifth ","sixth."]});
+    for (position, expected) in [
+        (0.9, ""),
+        (1.0, "First second"),
+        (1.199, "First second"),
+        (1.2, "third fourth"),
+        (6.099, "third fourth"),
+        (6.1, "fifth sixth."),
+        (12.999, "fifth sixth."),
+        (1.1, "First second"),
+        (13.0, ""),
+    ] {
+        let frame = store.value(json!({"op":"player_caption_frame","videoId":VIDEO,"trackId":".en","position":position,"layout":layout}));
+        assert_eq!(frame["text"], expected, "position {position}");
+        if !expected.is_empty() {
+            assert_eq!(frame["sourceText"], text);
+        }
+    }
+    // Widening the player can fit the entire cue into two visual rows.
+    let wide = json!({"segmentIndex":0,"sourceText":text,"lines":["First second third ","fourth fifth sixth."]});
+    let frame = store.value(json!({"op":"player_caption_frame","videoId":VIDEO,"trackId":".en","position":6.1,"layout":wide}));
+    assert_eq!(frame["text"], text);
+    assert_eq!(
+        store.command("restore"),
+        data,
+        "paging must preserve the full reader/export transcript"
+    );
+}
+
+#[test]
+fn player_pages_preserve_every_word_with_absent_or_shared_word_timings() {
+    let store = Store::new();
+    for timed in [false, true] {
+        let mut part = json!({"utf8":"你好，世界！\nCafé déjà vu.\nLast words stay visible."});
+        if timed {
+            part["tOffsetMs"] = json!(0);
+        }
+        let data = store.ingest(
+            VIDEO,
+            &json!({"events":[{"tStartMs":0,"dDurationMs":12000,"segs":[part]}]}).to_string(),
+        );
+        let text = data["segments"][0]["text"].as_str().unwrap();
+        let layout = json!({"segmentIndex":0,"sourceText":text,"lines":["你好,","世界!","Café déjà ","vu.","Last words ","stay visible."]});
+        let mut pages = Vec::new();
+        for sample in 0..120 {
+            let frame = store.value(json!({"op":"player_caption_frame","videoId":VIDEO,"trackId":".en","position":f64::from(sample)/10.0,"layout":layout}));
+            let page = frame["text"].as_str().unwrap().to_owned();
+            if pages.last() != Some(&page) {
+                pages.push(page);
+            }
+        }
+        assert_eq!(
+            pages,
+            ["你好,世界!", "Café déjà vu.", "Last words stay visible."],
+            "timed={timed}"
+        );
+        for bad in [
+            json!({"segmentIndex":1,"sourceText":text,"lines":layout["lines"]}),
+            json!({"segmentIndex":0,"sourceText":"previous video","lines":layout["lines"]}),
+            json!({"segmentIndex":0,"sourceText":text,"lines":["injected caption"]}),
+            json!({"segmentIndex":0,"sourceText":text,"lines":["你好，世界！"]}),
+        ] {
+            let frame = store.value(json!({"op":"player_caption_frame","videoId":VIDEO,"trackId":".en","position":10.0,"layout":bad}));
+            assert_eq!(
+                frame["text"], text,
+                "stale or incomplete layout must not replace the cue"
+            );
+        }
+    }
+}
+
+#[test]
 fn phrase_actions_use_the_whole_range_and_bound_audio_duration() {
     let store = Store::new();
     for duration in [2500, 40_000] {

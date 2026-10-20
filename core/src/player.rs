@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use std::sync::Mutex;
 
 static WRITES: Mutex<()> = Mutex::new(());
+mod caption;
 mod caption_color;
 mod cast;
 mod diagnostics;
@@ -201,26 +202,41 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 requested
             }));
         }
-        "player_caption" => {
+        "player_caption" | "player_caption_frame" => {
             let position = command["position"]
                 .as_f64()
                 .filter(|n| n.is_finite() && *n >= 0.0)
                 .ok_or("Invalid caption position.")?;
             return crate::with_transcript(root, current, string(command, "trackId")?, |data| {
                 let after = data.segments.partition_point(|s| s.start <= position);
-                let text = after
-                    .checked_sub(1)
-                    .and_then(|i| {
-                        let s = &data.segments[i];
-                        let end = if s.duration > 0.0 {
-                            s.start + s.duration
-                        } else {
-                            data.segments.get(i + 1).map_or(f64::INFINITY, |n| n.start)
-                        };
-                        (position < end).then_some(s.text.as_str())
-                    })
-                    .unwrap_or("");
-                json!(text)
+                let index = after.checked_sub(1).filter(|&i| {
+                    let s = &data.segments[i];
+                    let end = if s.duration > 0.0 {
+                        s.start + s.duration
+                    } else {
+                        data.segments.get(i + 1).map_or(f64::INFINITY, |n| n.start)
+                    };
+                    position < end
+                });
+                if op == "player_caption_frame" {
+                    return index.map_or_else(
+                        || json!({"text":"","sourceText":"","segmentIndex":-1}),
+                        |index| {
+                            let segment = &data.segments[index];
+                            let next = data
+                                .segments
+                                .get(index + 1)
+                                .map_or(f64::INFINITY, |s| s.start);
+                            let end = if segment.duration > 0.0 {
+                                next.min(segment.start + segment.duration)
+                            } else {
+                                next
+                            };
+                            caption::frame(segment, index, position, end, &command["layout"])
+                        },
+                    );
+                }
+                json!(index.map_or("", |index| data.segments[index].text.as_str()))
             });
         }
         "player_state" => {}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type WebView from 'react-native-webview';
 import { coreRequest } from '../../modules/govue-core';
 import { extractTranscript } from '../core/transcripts';
@@ -7,6 +7,7 @@ import type { useMediaBrowser } from '../media/useMediaBrowser';
 import { useSurfaceOrientation } from './useSurfaceOrientation';
 import { usePipControls } from './usePipControls';
 import { usePlayerTranscript } from './usePlayerTranscript';
+import { emptyCaptionFrame, type CaptionFrame, type CaptionLayout } from './captions';
 
 export type QueueItem = {
   videoId: string;
@@ -64,7 +65,16 @@ export function usePlayerSession(
     if (enabled && fullscreen) setFullscreen(false);
     updateMini(enabled);
   };
-  const [caption, setCaption] = useState('');
+  const [captionFrame, setCaptionFrame] = useState(emptyCaptionFrame);
+  const captionLayout = useRef<CaptionLayout | null>(null);
+  const refreshCaption = useRef<(() => void) | null>(null);
+  const setCaptionLayout = useCallback((layout: CaptionLayout) => {
+    const previous = captionLayout.current;
+    if (previous?.sourceText === layout.sourceText && previous.segmentIndex === layout.segmentIndex &&
+      previous.lines.length === layout.lines.length && previous.lines.every((line, index) => line === layout.lines[index])) return;
+    captionLayout.current = layout;
+    refreshCaption.current?.();
+  }, []);
   const [captions, setCaptions] = useState<Transcript | null>(null);
   const [captionBusy, setCaptionBusy] = useState(false);
   const [captionError, setCaptionError] = useState('');
@@ -163,7 +173,8 @@ export function usePlayerSession(
   function selectCaption(key: string, force = false) {
     pending.current?.abort();
     pending.current = null;
-    setCaption('');
+    setCaptionFrame(emptyCaptionFrame);
+    captionLayout.current = null;
     setCaptionError('');
     setCaptions(null);
     const next =
@@ -189,7 +200,8 @@ export function usePlayerSession(
   useEffect(() => {
     pending.current?.abort();
     pending.current = null;
-    setCaption('');
+    setCaptionFrame(emptyCaptionFrame);
+    captionLayout.current = null;
     setCaptions(null);
     setCaptionBusy(false);
     setCaptionError('');
@@ -212,24 +224,28 @@ export function usePlayerSession(
       if (busy) return;
       busy = true;
       try {
-        const text = await coreRequest<string>({
-          op: 'player_caption',
+        const frame = await coreRequest<CaptionFrame>({
+          op: 'player_caption_frame',
           videoId: captions.videoId,
           trackId: captions.trackId,
           position: mediaRef.current.getPosition(),
+          layout: captionLayout.current,
         });
-        if (active) setCaption(text);
+        if (active) setCaptionFrame(previous => previous.text === frame.text &&
+          previous.sourceText === frame.sourceText && previous.segmentIndex === frame.segmentIndex ? previous : frame);
       } catch {
       } finally {
         busy = false;
       }
     };
+    refreshCaption.current = () => { void sample(); };
     void sample();
     const listener = media.player.addListener('timeUpdate', () => {
       void sample();
     });
     return () => {
       active = false;
+      refreshCaption.current = null;
       listener.remove();
     };
   }, [captions, media.player]);
@@ -254,7 +270,9 @@ export function usePlayerSession(
     setMini,
     locked,
     setLocked,
-    caption,
+    caption: captionFrame.text,
+    captionFrame,
+    setCaptionLayout,
     captions,
     captionBusy,
     captionError,
