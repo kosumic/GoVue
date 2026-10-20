@@ -4,6 +4,7 @@ import { useVideoPlayer, type VideoSource, type VideoTrack } from 'expo-video';
 import type WebView from 'react-native-webview';
 import {
   extractMedia,
+  extractChapters,
   defaultMediaSettings,
   fetchSponsors,
   mediaSettings,
@@ -335,6 +336,33 @@ export function useMediaBrowser(
   useEffect(() => {
     if (videoId) autoStartNative(videoId);
   }, [videoId, settingsReady, settings.backgroundPlayback, settings.adBlock, settings.autoPip]);
+  const chapterVideoId = playback && !playback.offline && playback.videoId === videoId
+    ? playback.videoId : null;
+  useEffect(() => {
+    if (!chapterVideoId) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    void extractChapters(chapterVideoId, controller.signal)
+      .then((chapters) => {
+        const current = catalogRef.current;
+        if (
+          controller.signal.aborted ||
+          identity.current !== chapterVideoId ||
+          playbackRef.current?.videoId !== chapterVideoId ||
+          current?.videoId !== chapterVideoId
+        ) return;
+        if (!chapters.length && current.chapters?.length) return;
+        const next = { ...current, chapters };
+        catalogRef.current = next;
+        setCatalog(next);
+      })
+      .catch(() => {})
+      .finally(() => clearTimeout(timer));
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [chapterVideoId]);
   useEffect(() => {
     const controller = new AbortController();
     segments.current = [];
@@ -701,7 +729,7 @@ export function useMediaBrowser(
       if (originalTitle) data.title = originalTitle;
       if (!session('current', { token: attempt.token })) return;
       if (identity.current !== data.videoId) return;
-      if (catalogRef.current?.videoId === data.videoId)
+      if (catalogRef.current?.videoId === data.videoId && catalogRef.current.chapters?.length)
         data.chapters = catalogRef.current.chapters;
       catalogRef.current = data;
       setCatalog({ ...data });

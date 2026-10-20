@@ -81,6 +81,7 @@ struct Player {
     chapters: Vec<Value>,
     session: Session,
     web_loaded: bool,
+    chapters_loaded: bool,
 }
 #[derive(Clone)]
 struct Configuration {
@@ -650,6 +651,7 @@ fn player(job: &Job, root: &str, id: &str, fresh: bool, need_page: bool) -> Resu
         at: Instant::now(),
         data,
         web_loaded,
+        chapters_loaded: initial.is_object(),
         chapters: chapters(&initial),
         session: job
             .session
@@ -964,6 +966,37 @@ fn catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value> {
     Ok(result)
 }
 
+fn chapter_catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value> {
+    let _span = crate::trace::Section::begin(c"GoVue extraction: chapters");
+    // Playback intentionally fetches only a configuration prefix. Load the
+    // complete, video-correlated metadata in a separate cancellable job.
+    let cached = PLAYERS
+        .get()
+        .and_then(|players| players.lock().ok())
+        .and_then(|players| {
+            players
+                .iter()
+                .find(|player| {
+                    !fresh
+                        && player.root == root
+                        && player.id == id
+                        && player.at.elapsed() < CACHE_LIFETIME
+                        && player.chapters_loaded
+                })
+                .map(|player| player.chapters.clone())
+        });
+    // A prefix may contain the complete caption response but still omit
+    // ytInitialData. Caption readiness alone cannot satisfy chapter loading.
+    let raw = match cached {
+        Some(chapters) => chapters,
+        None => player(job, root, id, true, true)?.chapters,
+    };
+    let chapters = json!(media::chapter_list(&json!(raw)));
+    job.check()?;
+    media::cache_chapters(root, id, &chapters);
+    Ok(chapters)
+}
+
 /// Navigation keeps only work for the selected video; a newer click replaces it.
 pub(super) fn select_preparation(root: &str, video: Option<&str>) {
     let Some(mut jobs) = JOBS.get().and_then(|jobs| jobs.lock().ok()) else {
@@ -1138,7 +1171,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 return Err("Invalid extraction browser identity.".into());
             }
             if !video_id(id)
-                || !matches!(kind, "media" | "transcript")
+                || !matches!(kind, "media" | "transcript" | "chapters")
                 || track.len() > 512
                 || audio_key.len() > 512
             {
@@ -1203,10 +1236,10 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         }
                     }
                     let _running = Running;
-                    let result = if kind == "media" {
-                        catalog(&worker, &root, &id, fresh)
-                    } else {
-                        transcript(&worker, &root, &id, &track, &audio_key, fresh)
+                    let result = match kind.as_str() {
+                        "media" => catalog(&worker, &root, &id, fresh),
+                        "chapters" => chapter_catalog(&worker, &root, &id, fresh),
+                        _ => transcript(&worker, &root, &id, &track, &audio_key, fresh),
                     };
                     if let Ok(mut output) = worker.result.lock() {
                         *output = Some(result);

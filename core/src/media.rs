@@ -52,6 +52,17 @@ pub(crate) fn cache_catalog(root: &str, catalog: &Value) {
     }
 }
 
+pub(super) fn cache_chapters(root: &str, id: &str, chapters: &Value) {
+    if let Some(mut entries) = CATALOGS.get().and_then(|entries| entries.lock().ok())
+        && let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry.root == root && entry.video_id == id)
+    {
+        // Enrich metadata without extending the signed media URL lifetime.
+        entry.catalog["chapters"] = chapters.clone();
+    }
+}
+
 pub(crate) fn read(root: &str, name: &str, fallback: Value) -> Value {
     fs::read(Path::new(root).join("media").join(name))
         .ok()
@@ -244,7 +255,7 @@ pub(crate) fn catalog(command: &Value) -> Result<Value> {
     )
 }
 
-fn chapter_list(raw: &Value) -> Vec<Value> {
+pub(super) fn chapter_list(raw: &Value) -> Vec<Value> {
     let mut chapters=raw.as_array().map(|items|items.iter().take(300).filter_map(|chapter|{
         let parsed=||{let fields=chapter["timestamp"].as_str()?.split(':').map(str::parse::<u32>).collect::<std::result::Result<Vec<_>,_>>().ok()?;if !(2..=3).contains(&fields.len())||fields.iter().skip(1).any(|n|*n>=60){return None;}Some(fields.iter().fold(0.0,|total,n|total*60.0+f64::from(*n)))};
         let start=chapter["start"].as_f64().or_else(parsed).filter(|n|n.is_finite()&&*n>=0.0&&*n<604_800.0)?;

@@ -109,6 +109,9 @@ export const mediaSponsorCategory = (id: string, enabled: boolean) =>
 export async function extractMedia(videoId: string, signal?: AbortSignal, fresh = false) {
   return applyMediaCapabilities(await extract<MediaCatalog>('media', videoId, { signal, fresh }));
 }
+export function extractChapters(videoId: string, signal?: AbortSignal) {
+  return extract<MediaChapter[]>('chapters', videoId, { signal });
+}
 async function applyMediaCapabilities(catalog: MediaCatalog) {
   const keys = await supportedMediaFormats(
     catalog.streams.map((s) => ({

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-type Labels = { time: string; quality: string };
+type Labels = { time: string };
 
 /** Use the same native font metrics as the visible controls, including font scaling. */
 export function usePlayerChromeMeasure(
@@ -19,19 +19,11 @@ export function usePlayerChromeMeasure(
     widths: Partial<Record<keyof Labels, number>>;
   } | null>(null);
   const widths = measurement?.key === key ? measurement.widths : {};
-  const ready = widths.time !== undefined && widths.quality !== undefined;
+  const ready = widths.time !== undefined;
   const showSpeed =
     ready && widths.time! + 4 * 44 + (hasChapters ? 44 : 0) + 24 <= width;
   const showChapterTitle =
     ready && widths.time! + (showSpeed ? 4 : 3) * 44 + 96 + 24 <= width;
-  const compact =
-    !ready ||
-    widths.time! +
-      Math.max(44, widths.quality! + 12) +
-      (showSpeed ? 4 : 3) * 44 + // Transcript, AI, fullscreen, and speed if it fits.
-      (hasChapters ? (showChapterTitle ? 96 : 44) : 0) +
-      24 >
-      width;
   const probe = (
     <View
       pointerEvents="none"
@@ -65,7 +57,7 @@ export function usePlayerChromeMeasure(
       ))}
     </View>
   );
-  return { compact, showSpeed, showChapterTitle, probe };
+  return { showSpeed, showChapterTitle, probe };
 }
 
 export function playerSpeedLabel(speed: number) {

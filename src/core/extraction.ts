@@ -15,7 +15,7 @@ const cancelled = () => Object.assign(Error('Extraction cancelled.'), { name: 'A
 
 // Native calls are adapters. Rust owns the job, protocol, cache and time limit;
 // this loop delivers isolated-runtime requests and presents the final result.
-export async function extract<T>(kind: 'media' | 'transcript', videoId: string, options: {
+export async function extract<T>(kind: 'media' | 'transcript' | 'chapters', videoId: string, options: {
   signal?: AbortSignal; trackId?: string; audioKey?: string; fresh?: boolean;
 } = {}): Promise<T> {
   const requestId = `extract:${Date.now()}:${++sequence}`;

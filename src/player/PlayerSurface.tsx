@@ -249,7 +249,6 @@ export function PlayerSurface({
   const [anchor, setAnchor] = useState<MenuAnchor | undefined>();
   const subtitleAnchor = useRef<View | null>(null),
     speedAnchor = useRef<View | null>(null),
-    qualityAnchor = useRef<View | null>(null),
     moreAnchor = useRef<View | null>(null);
   const [visible, setVisible] = useState(true);
   const [hint, setHint] = useState('');
@@ -390,7 +389,7 @@ export function PlayerSurface({
     ? '88:88:88'
     : time(duration).replace(/\d/g, '8').padStart(5, '8');
   const bottomChrome = usePlayerChromeMeasure(
-    { time: `${timeSample} / ${durationLabel}`, quality },
+    { time: `${timeSample} / ${durationLabel}` },
     chrome.text,
     fontScale,
     size.width,
@@ -424,9 +423,7 @@ export function PlayerSurface({
         ? subtitleAnchor
         : value === 'speed'
           ? speedAnchor
-          : value === 'quality' && !bottomChrome.compact
-            ? qualityAnchor
-            : moreAnchor;
+          : moreAnchor;
     if (
       value &&
       ['subtitles', 'speed', 'quality'].includes(value) &&
@@ -1095,23 +1092,6 @@ export function PlayerSurface({
                   />
                 </View>
               )}
-              {!bottomChrome.compact && (
-                <Pressable
-                  ref={qualityAnchor}
-                  accessibilityRole="button"
-                  accessibilityLabel="Video quality"
-                  accessibilityState={{
-                    disabled: media.playback?.offline === true,
-                  }}
-                  disabled={media.playback?.offline === true}
-                  style={s.textButton}
-                  onPress={() => open('quality')}
-                >
-                  <Text style={[s.value, { fontSize: chrome.text }]}>
-                    {quality}
-                  </Text>
-                </Pressable>
-              )}
               <Control
                 icon={session.fullscreen ? Minimize : Maximize}
                 iconSize={chrome.icon}
@@ -1314,6 +1294,13 @@ export function PlayerSurface({
       >
         {menu === 'more' && (
           <>
+            <SheetRow
+              title="Quality"
+              detail={quality}
+              disabled={media.playback?.offline === true}
+              onPress={() => open('quality')}
+              icon={<Settings color="white" size={24} />}
+            />
             {!bottomChrome.showSpeed && (
               <SheetRow
                 title="Playback speed"
@@ -1327,14 +1314,6 @@ export function PlayerSurface({
               onPress={() => open('resize')}
               icon={<Expand color="white" size={24} />}
             />
-            {bottomChrome.compact && (
-              <SheetRow
-                title="Quality"
-                disabled={media.playback?.offline === true}
-                onPress={() => open('quality')}
-                icon={<Settings color="white" size={24} />}
-              />
-            )}
             <SheetRow
               title="Cast"
               disabled={media.playback?.offline === true}
@@ -1752,7 +1731,6 @@ const makeStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
       paddingHorizontal: 6,
     },
-    value: { color: 'white', fontSize: 13 },
     hint: {
       position: 'absolute',
       top: 4,
