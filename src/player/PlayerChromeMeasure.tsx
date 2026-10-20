@@ -9,6 +9,7 @@ export function usePlayerChromeMeasure(
   fontSize: number,
   fontScale: number,
   width: number,
+  hasChapters = false,
 ) {
   const key = JSON.stringify([labels, fontSize, fontScale]);
   const current = useRef(key);
@@ -19,12 +20,17 @@ export function usePlayerChromeMeasure(
   } | null>(null);
   const widths = measurement?.key === key ? measurement.widths : {};
   const ready = widths.time !== undefined && widths.quality !== undefined;
+  const showSpeed =
+    ready && widths.time! + 4 * 44 + (hasChapters ? 44 : 0) + 24 <= width;
+  const showChapterTitle =
+    ready && widths.time! + (showSpeed ? 4 : 3) * 44 + 96 + 24 <= width;
   const compact =
     !ready ||
     widths.time! +
-      Math.max(48, widths.quality! + 12) +
-      4 * 48 + // Transcript, AI, speed, and fullscreen controls.
-      16 >
+      Math.max(44, widths.quality! + 12) +
+      (showSpeed ? 4 : 3) * 44 + // Transcript, AI, fullscreen, and speed if it fits.
+      (hasChapters ? (showChapterTitle ? 96 : 44) : 0) +
+      24 >
       width;
   const probe = (
     <View
@@ -59,7 +65,7 @@ export function usePlayerChromeMeasure(
       ))}
     </View>
   );
-  return { compact, probe };
+  return { compact, showSpeed, showChapterTitle, probe };
 }
 
 export function playerSpeedLabel(speed: number) {

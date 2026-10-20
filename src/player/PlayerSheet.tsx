@@ -157,6 +157,8 @@ export function PlayerSheet({
   maxContentHeight,
   popupWidth,
   contentKey,
+  maxHeight,
+  backgroundColor,
 }: {
   visible: boolean;
   title: string;
@@ -173,6 +175,8 @@ export function PlayerSheet({
   maxContentHeight?: number;
   popupWidth?: number;
   contentKey?: string;
+  maxHeight?: number;
+  backgroundColor?: string;
 }) {
   const inset = useSafeAreaInsets();
   const playerColors = useThemeColors();
@@ -302,6 +306,10 @@ export function PlayerSheet({
               },
             ],
             popup,
+            maxHeight !== undefined && {
+              maxHeight: Math.min(maxHeight, screen.height * 0.8),
+            },
+            backgroundColor !== undefined && { backgroundColor },
           ]}
         >
           {dialog
@@ -348,7 +356,7 @@ export function PlayerSheet({
                         <Pressable
                           onPress={onClose}
                           accessibilityRole="button"
-                          accessibilityLabel="Close player options"
+                          accessibilityLabel={`Close ${title}`}
                           style={s.button}
                         >
                           <X size={22} color={playerColors.ink} />

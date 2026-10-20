@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -52,7 +52,13 @@ import {
   Segments,
 } from './icons';
 import type { LucideIcon } from 'lucide-react-native';
-import { FileText, Gauge, Sparkles } from 'lucide-react-native';
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Gauge,
+  Sparkles,
+} from 'lucide-react-native';
 import {
   coreRequest,
   getSystemVolume,
@@ -84,6 +90,7 @@ import { GestureOverlay, type GestureFeedback } from './GestureFeedback';
 import { SponsorPrompt } from './SponsorPrompt';
 import { SegmentsMenu } from './SegmentsMenu';
 import { MarqueeTitle } from './MarqueeTitle';
+import { usePlayerChapter } from './usePlayerChapter';
 
 type Props = {
   media: ReturnType<typeof useMediaBrowser>;
@@ -148,6 +155,7 @@ function Control({
   targetSize = 48,
   color = 'white',
   selected,
+  circle = false,
 }: {
   icon: LucideIcon;
   label: string;
@@ -158,6 +166,7 @@ function Control({
   targetSize?: number;
   color?: string;
   selected?: boolean;
+  circle?: boolean;
 }) {
   const vibrate = useHaptic();
   const s = useThemeStyles(makeStyles);
@@ -175,6 +184,8 @@ function Control({
       style={({ pressed }) => [
         s.control,
         { width: targetSize, height: targetSize },
+        circle && s.controlCircle,
+        pressed && s.controlPressed,
         (pressed || disabled) && s.dim,
       ]}
     >
@@ -196,7 +207,11 @@ export function PlayerSurface({
   onError,
 }: Props) {
   const { player, settings, catalog } = media;
-  const { fontScale, width: windowWidth } = useWindowDimensions();
+  const {
+    fontScale,
+    width: windowWidth,
+    height: windowHeight,
+  } = useWindowDimensions();
   const diagnostics = usePlaybackDiagnostics(player, media.playback);
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
@@ -241,6 +256,8 @@ export function PlayerSurface({
   const [gestureFeedback, setGestureFeedback] =
     useState<GestureFeedback | null>(null);
   const [size, setSize] = useState({ width: 1, height: 1 });
+  const surface = useRef<View | null>(null);
+  const [chapterSheetHeight, setChapterSheetHeight] = useState<number>();
   const [preview, setPreview] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [ended, setEnded] = useState(false);
@@ -304,6 +321,18 @@ export function PlayerSurface({
     0,
     Math.min(duration || Infinity, preview ?? progress.currentTime),
   );
+  const chapterStarts = useMemo(
+    () => catalog?.chapters?.map((chapter) => chapter.start),
+    [catalog?.chapters],
+  );
+  const chapterIndex = usePlayerChapter(
+    media.playback?.videoId || '',
+    catalog?.chapters,
+    position,
+    !session.mini && (visible || menu === 'segments'),
+  );
+  const chapter = chapterIndex === null ? null : catalog?.chapters?.[chapterIndex];
+  const hasChapters = !!catalog?.chapters?.length;
   const compact = size.width < 48 * 6 + 24 + 128 * fontScale;
   const miniGap = Math.max(
     0,
@@ -314,9 +343,9 @@ export function PlayerSurface({
     Math.min(1, (size.width - 320) / 520, (size.height - 180) / 300),
   );
   const chrome = {
-    icon: Math.round(24 + 8 * room),
-    text: Math.round(13 + 3 * room),
-    play: Math.round(56 + 24 * room),
+    icon: Math.round(24 + 4 * room),
+    text: Math.round(14 + 2 * room),
+    play: Math.round(64 + 16 * room),
     skip: Math.round(48 + 8 * room),
     gap: Math.max(12, Math.min(84, Math.round(size.width * 0.08))),
   };
@@ -365,6 +394,7 @@ export function PlayerSurface({
     chrome.text,
     fontScale,
     size.width,
+    hasChapters,
   );
   const show = () => {
     setVisible(true);
@@ -377,6 +407,18 @@ export function PlayerSurface({
     show();
   };
   const open = (value: Menu) => {
+    if (value === 'segments') {
+      setAnchor(undefined);
+      setChapterSheetHeight(undefined);
+      setMenu(value);
+      show();
+      if (!session.fullscreen && windowHeight > windowWidth) {
+        surface.current?.measureInWindow((_x, y, _width, height) => {
+          setChapterSheetHeight(Math.max(200, windowHeight - y - height));
+        });
+      }
+      return;
+    }
     const ref =
       value === 'subtitles'
         ? subtitleAnchor
@@ -387,7 +429,7 @@ export function PlayerSurface({
             : moreAnchor;
     if (
       value &&
-      ['subtitles', 'speed', 'quality', 'segments'].includes(value) &&
+      ['subtitles', 'speed', 'quality'].includes(value) &&
       ref.current
     ) {
       ref.current.measureInWindow((x, y, width, height) => {
@@ -741,7 +783,12 @@ export function PlayerSurface({
           }
         : StyleSheet.absoluteFill;
   return (
-    <View style={s.surface} onLayout={(e) => setSize(e.nativeEvent.layout)}>
+    <View
+      ref={surface}
+      collapsable={false}
+      style={s.surface}
+      onLayout={(e) => setSize(e.nativeEvent.layout)}
+    >
       <VideoView
         ref={videoRef}
         player={player}
@@ -820,36 +867,40 @@ export function PlayerSurface({
           />
           <LinearGradient
             pointerEvents="none"
-            colors={['transparent', '#0009']}
+            colors={['transparent', '#000b']}
             style={s.bottomScrim}
           />
           <View style={s.top}>
             <Control
-              icon={ArrowLeft}
+              icon={session.fullscreen ? ChevronDown : ArrowLeft}
               iconSize={chrome.icon}
               label="Navigate back"
               onPress={onBack}
             />
-            <View style={s.metadata} pointerEvents="none">
-              <MarqueeTitle
-                active={visible && !session.pip}
-                style={[
-                  s.title,
-                  { fontSize: chrome.text + 2, lineHeight: chrome.text + 8 },
-                ]}
-              >
-                {media.playback?.title || catalog?.title || 'Loading video…'}
-              </MarqueeTitle>
-              <Text
-                numberOfLines={1}
-                style={[
-                  s.author,
-                  { fontSize: chrome.text - 2, lineHeight: chrome.text + 4 },
-                ]}
-              >
-                {media.playback?.author || catalog?.author}
-              </Text>
-            </View>
+            {!compact ? (
+              <View style={s.metadata} pointerEvents="none">
+                <MarqueeTitle
+                  active={visible && !session.pip}
+                  style={[
+                    s.title,
+                    { fontSize: chrome.text + 2, lineHeight: chrome.text + 8 },
+                  ]}
+                >
+                  {media.playback?.title || catalog?.title || 'Loading video…'}
+                </MarqueeTitle>
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    s.author,
+                    { fontSize: chrome.text - 2, lineHeight: chrome.text + 4 },
+                  ]}
+                >
+                  {media.playback?.author || catalog?.author}
+                </Text>
+              </View>
+            ) : (
+              <View style={s.grow} />
+            )}
             {!compact && (
               <>
                 <Control
@@ -861,7 +912,7 @@ export function PlayerSurface({
                 <Control
                   icon={Segments}
                   iconSize={chrome.icon}
-                  label="Segments"
+                  label={hasChapters ? 'Chapters' : 'Segments'}
                   onPress={() => open('segments')}
                 />
                 <Control
@@ -873,6 +924,13 @@ export function PlayerSurface({
                 />
               </>
             )}
+            <Control
+              icon={Cast}
+              iconSize={chrome.icon}
+              label="Cast"
+              disabled={media.playback?.offline === true}
+              onPress={() => open('cast')}
+            />
             <View collapsable={false} ref={subtitleAnchor}>
               <Control
                 icon={
@@ -881,9 +939,7 @@ export function PlayerSurface({
                     : CaptionsOff
                 }
                 iconSize={chrome.icon}
-                color={
-                  session.captions && settings.subtitleKey ? '#ff0000' : 'white'
-                }
+                selected={!!session.captions && !!settings.subtitleKey}
                 label="Subtitles"
                 onPress={() => open('subtitles')}
                 onLongPress={() => open('style')}
@@ -904,6 +960,7 @@ export function PlayerSurface({
           >
             <Control
               icon={SkipBack}
+              circle
               iconSize={chrome.icon}
               targetSize={chrome.skip}
               label="Previous"
@@ -917,8 +974,9 @@ export function PlayerSurface({
                 togglePlayback();
                 show();
               }}
-              style={[
+              style={({ pressed }) => [
                 s.play,
+                pressed && s.controlPressed,
                 {
                   width: chrome.play,
                   height: chrome.play,
@@ -929,15 +987,16 @@ export function PlayerSurface({
               {busy ? (
                 <ActivityIndicator color="white" size="large" />
               ) : ended ? (
-                <RotateCcw size={chrome.play * 0.65} color="white" />
+                <RotateCcw size={chrome.play * 0.6} color="white" />
               ) : playing ? (
-                <Pause fill="white" size={chrome.play * 0.65} color="white" />
+                <Pause fill="white" size={chrome.play * 0.6} color="white" />
               ) : (
-                <Play fill="white" size={chrome.play * 0.65} color="white" />
+                <Play fill="white" size={chrome.play * 0.6} color="white" />
               )}
             </Pressable>
             <Control
               icon={SkipForward}
+              circle
               iconSize={chrome.icon}
               targetSize={chrome.skip}
               label="Next"
@@ -946,10 +1005,129 @@ export function PlayerSurface({
             />
           </View>
           <View style={s.bottom}>
+            <View style={s.bottomRow}>
+              {catalog?.live ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Seek to live"
+                  disabled={progress.currentOffsetFromLive == null}
+                  onPress={() => work(() => media.seekLive())}
+                  style={s.textButton}
+                >
+                  <Text style={[s.time, { fontSize: chrome.text }]}>
+                    {time(position)} /{' '}
+                    <Text
+                      style={{
+                        color: '#ff0000',
+                        fontWeight: '500',
+                      }}
+                    >
+                      LIVE
+                    </Text>
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text
+                  numberOfLines={1}
+                  accessibilityLabel={`${time(position)} of ${time(duration)}`}
+                  style={[s.time, { fontSize: chrome.text }]}
+                >
+                  {time(position)}
+                  <Text style={s.duration}>{` / ${time(duration)}`}</Text>
+                </Text>
+              )}
+              {hasChapters ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Chapters${chapter?.title ? `, ${chapter.title}` : ''}`}
+                  accessibilityState={{ expanded: menu === 'segments' }}
+                  onPress={() => {
+                    vibrate();
+                    open('segments');
+                  }}
+                  style={({ pressed }) => [
+                    s.chapterButton,
+                    pressed && s.controlPressed,
+                  ]}
+                >
+                  {bottomChrome.showChapterTitle ? (
+                    <>
+                      <Text
+                        numberOfLines={1}
+                        style={[s.chapterTitle, { fontSize: chrome.text }]}
+                      >
+                        {chapter?.title || 'Chapters'}
+                      </Text>
+                      <ChevronRight size={16} color="white" />
+                    </>
+                  ) : <Segments size={22} color="white" />}
+                </Pressable>
+              ) : <View style={s.grow} />}
+              <Control
+                icon={FileText}
+                iconSize={chrome.icon}
+                targetSize={44}
+                label={session.transcript.open ? 'Hide transcript' : 'Show transcript'}
+                selected={session.transcript.open}
+                color={session.transcript.open ? '#ff0000' : 'white'}
+                disabled={!media.playback}
+                onPress={() => {
+                  session.transcript.toggle();
+                  show();
+                }}
+              />
+              <Control
+                icon={Sparkles}
+                iconSize={chrome.icon}
+                targetSize={44}
+                label="Open AI chat"
+                disabled={!media.playback}
+                onPress={onAi}
+              />
+              {bottomChrome.showSpeed && (
+                <View collapsable={false} ref={speedAnchor}>
+                  <Control
+                    icon={Gauge}
+                    iconSize={chrome.icon}
+                    targetSize={44}
+                    label={`Playback speed, ${speedLabel}`}
+                    onPress={() => open('speed')}
+                  />
+                </View>
+              )}
+              {!bottomChrome.compact && (
+                <Pressable
+                  ref={qualityAnchor}
+                  accessibilityRole="button"
+                  accessibilityLabel="Video quality"
+                  accessibilityState={{
+                    disabled: media.playback?.offline === true,
+                  }}
+                  disabled={media.playback?.offline === true}
+                  style={s.textButton}
+                  onPress={() => open('quality')}
+                >
+                  <Text style={[s.value, { fontSize: chrome.text }]}>
+                    {quality}
+                  </Text>
+                </Pressable>
+              )}
+              <Control
+                icon={session.fullscreen ? Minimize : Maximize}
+                iconSize={chrome.icon}
+                targetSize={44}
+                label={session.fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                onPress={() => {
+                  if (session.fullscreen && media.playback?.offline) onBack();
+                  else session.setFullscreen(!session.fullscreen);
+                }}
+              />
+            </View>
             <Range
               label="Seek video"
               timeBar
-              trackColor="#ffffff99"
+              trackColor="#ffffff4d"
+              chapterStarts={chapterStarts}
               disabled={duration <= 0}
               onPreview={(target) => {
                 setPreview(target);
@@ -979,87 +1157,6 @@ export function PlayerSurface({
                 color: segmentColors[v.category] || '#0f0',
               }))}
             />
-            <View style={s.bottomRow}>
-              {catalog?.live ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Seek to live"
-                  disabled={progress.currentOffsetFromLive == null}
-                  onPress={() => work(() => media.seekLive())}
-                  style={s.textButton}
-                >
-                  <Text style={[s.time, { fontSize: chrome.text }]}>
-                    {time(position)} /{' '}
-                    <Text
-                      style={{
-                        color: '#ff0000',
-                        fontWeight: '500',
-                      }}
-                    >
-                      LIVE
-                    </Text>
-                  </Text>
-                </Pressable>
-              ) : (
-                <Text
-                  style={[s.time, { fontSize: chrome.text }]}
-                >{`${time(position)} / ${time(duration)}`}</Text>
-              )}
-              <View style={s.grow} />
-              <Control
-                icon={FileText}
-                iconSize={chrome.icon}
-                label={session.transcript.open ? 'Hide transcript' : 'Show transcript'}
-                selected={session.transcript.open}
-                color={session.transcript.open ? '#ff0000' : 'white'}
-                disabled={!media.playback}
-                onPress={() => {
-                  session.transcript.toggle();
-                  show();
-                }}
-              />
-              <Control
-                icon={Sparkles}
-                iconSize={chrome.icon}
-                label="Open AI chat"
-                disabled={!media.playback}
-                onPress={onAi}
-              />
-              <View collapsable={false} ref={speedAnchor}>
-                <Control
-                  icon={Gauge}
-                  iconSize={chrome.icon}
-                  label={`Playback speed, ${speedLabel}`}
-                  onPress={() => open('speed')}
-                />
-              </View>
-              {!bottomChrome.compact && (
-                <Pressable
-                  ref={qualityAnchor}
-                  accessibilityRole="button"
-                  accessibilityLabel="Video quality"
-                  accessibilityState={{
-                    disabled: media.playback?.offline === true,
-                  }}
-                  disabled={media.playback?.offline === true}
-                  style={s.textButton}
-                  onPress={() => open('quality')}
-                >
-                  <Text style={[s.value, { fontSize: chrome.text }]}>
-                    {quality}
-                  </Text>
-                </Pressable>
-              )}
-              <Control
-                icon={session.fullscreen ? Minimize : Maximize}
-                iconSize={chrome.icon}
-                label={session.fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                onPress={() => {
-                  if (session.fullscreen && media.playback?.offline) onBack();
-                  else session.setFullscreen(!session.fullscreen);
-                }}
-              />
-            </View>
           </View>
         </Animated.View>
       )}
@@ -1217,6 +1314,14 @@ export function PlayerSurface({
       >
         {menu === 'more' && (
           <>
+            {!bottomChrome.showSpeed && (
+              <SheetRow
+                title="Playback speed"
+                detail={speedLabel}
+                onPress={() => open('speed')}
+                icon={<Gauge size={24} />}
+              />
+            )}
             <SheetRow
               title="Resize"
               onPress={() => open('resize')}
@@ -1269,7 +1374,7 @@ export function PlayerSurface({
             )}
             {compact && (
               <SheetRow
-                title="Segments"
+                title={hasChapters ? 'Chapters' : 'Segments'}
                 onPress={() => open('segments')}
                 icon={<Segments color="white" size={24} />}
               />
@@ -1472,8 +1577,8 @@ export function PlayerSurface({
           videoId={media.playback?.videoId || ''}
           chapters={catalog?.chapters}
           segments={media.sponsorSegments}
-          position={progress.currentTime}
-          anchor={anchor}
+          selected={chapterIndex}
+          maxHeight={chapterSheetHeight}
           formatTime={time}
           categoryLabel={segmentName}
           categoryColor={segmentColor}
@@ -1482,6 +1587,11 @@ export function PlayerSurface({
             flash(`Jumped to ${title}`);
             setMenu(null);
           }}
+          onShare={(position) =>
+            work(() => Share.share({
+              message: `https://www.youtube.com/watch?v=${media.playback?.videoId}&t=${Math.floor(position)}`,
+            }))
+          }
           onClose={() => setMenu(null)}
         />
       )}
@@ -1555,6 +1665,8 @@ const makeStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
     },
     dim: { opacity: 0.38 },
+    controlCircle: { backgroundColor: '#0006', borderRadius: 100 },
+    controlPressed: { backgroundColor: '#ffffff26', borderRadius: 100 },
     grow: { flex: 1 },
     top: {
       position: 'absolute',
@@ -1599,14 +1711,40 @@ const makeStyles = (colors: ThemeColors) =>
       height: 64,
       alignItems: 'center',
       justifyContent: 'center',
+      borderRadius: 100,
+      backgroundColor: '#0006',
     },
-    bottom: { position: 'absolute', bottom: 0, left: 8, right: 8 },
+    bottom: { position: 'absolute', bottom: -12, left: 12, right: 12 },
     bottomRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      height: 48,
+      minHeight: 44,
     },
-    time: { fontSize: 13, color: 'white', fontVariant: ['tabular-nums'] },
+    time: {
+      fontSize: 14,
+      color: 'white',
+      fontVariant: ['tabular-nums'],
+      flexShrink: 1,
+      includeFontPadding: false,
+    },
+    duration: { color: '#ffffffb3' },
+    chapterButton: {
+      flex: 1,
+      minWidth: 44,
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 2,
+      marginLeft: 6,
+      paddingHorizontal: 4,
+    },
+    chapterTitle: {
+      flexShrink: 1,
+      color: 'white',
+      fontSize: 14,
+      includeFontPadding: false,
+    },
     textButton: {
       minWidth: 48,
       height: 48,

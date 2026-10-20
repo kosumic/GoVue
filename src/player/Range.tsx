@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { PanResponder, StyleSheet, View } from 'react-native';
 
 export function Range({
@@ -9,6 +9,7 @@ export function Range({
   label,
   buffer = 0,
   markers = [],
+  chapterStarts,
   color = '#ff0000',
   trackColor = '#ffffff66',
   onPreview,
@@ -22,6 +23,7 @@ export function Range({
   label: string;
   buffer?: number;
   markers?: { start: number; end: number; color: string }[];
+  chapterStarts?: number[];
   color?: string;
   trackColor?: string;
   onPreview?: (value: number | null) => void;
@@ -68,6 +70,18 @@ export function Range({
     0,
     Math.min(1, ((draft ?? value) - min) / (max - min || 1)),
   );
+  const span = max - min || 1;
+  const stops = useMemo(
+    () => [
+      min,
+      ...[...new Set(chapterStarts)]
+        .filter((start) => Number.isFinite(start) && start > min && start < max)
+        .sort((a, b) => a - b),
+      max,
+    ],
+    [chapterStarts, min, max],
+  );
+  const buffered = Math.max(0, Math.min(1, (buffer - min) / span));
   return (
     <View
       accessibilityRole="adjustable"
@@ -106,62 +120,63 @@ export function Range({
     >
       <View
         pointerEvents="none"
-        style={[s.track, { backgroundColor: trackColor }]}
+        style={[
+          s.track,
+          timeBar && s.videoTrack,
+          draft !== null && timeBar && s.activeTrack,
+        ]}
       >
-        <View
-          style={[
-            s.buffer,
-            {
-              width: `${Math.max(0, Math.min(1, buffer / (max || 1))) * 100}%`,
-            },
-          ]}
-        />
-        {markers
-          .filter(
-            (m) =>
-              Number.isFinite(m.start) &&
-              Number.isFinite(m.end) &&
-              m.end >= m.start &&
-              m.end >= min &&
-              m.start <= max,
-          )
-          .map((m, i) => (
+        {stops.slice(0, -1).map((start, index) => {
+          const left = ((start - min) / span) * trackWidth;
+          const right = ((stops[index + 1] - min) / span) * trackWidth;
+          // Clip every layer together so chapter gaps also cut the buffered
+          // track and SponsorBlock markers, without covering the picture.
+          const gap = timeBar ? Math.min(2, (right - left) / 3) : 0;
+          const inset = index > 0 ? gap / 2 : 0;
+          const sectionWidth = Math.max(
+            0,
+            right - left - inset - (index < stops.length - 2 ? gap / 2 : 0),
+          );
+          const fillWidth = (fraction: number) =>
+            Math.max(
+              0,
+              Math.min(sectionWidth, fraction * trackWidth - left - inset),
+            );
+          return (
             <View
-              key={i}
+              key={start}
               style={[
-                s.marker,
-                {
-                  left:
-                    m.start === m.end
-                      ? Math.max(
-                          0,
-                          Math.min(
-                            trackWidth - 4,
-                            ((m.start - min) / (max - min || 1)) * trackWidth -
-                              2,
-                          ),
-                        )
-                      : `${Math.max(0, Math.min(1, (m.start - min) / (max - min || 1))) * 100}%`,
-                  width:
-                    m.start === m.end
-                      ? 4
-                      : `${Math.max(0, (Math.min(max, m.end) - Math.max(min, m.start)) / (max - min || 1)) * 100}%`,
-                  minWidth: 1,
-                  backgroundColor: m.color,
-                },
+                s.section,
+                { left: left + inset, width: sectionWidth, backgroundColor: trackColor },
               ]}
-            />
-          ))}
-        <View
-          style={[
-            s.progress,
-            { width: `${ratio * 100}%`, backgroundColor: color },
-          ]}
-        />
+            >
+              <View style={[s.fill, s.buffer, { width: fillWidth(buffered) }]} />
+              <View style={[s.fill, { width: fillWidth(ratio), backgroundColor: color }]} />
+              {markers.filter((marker) =>
+                Number.isFinite(marker.start) &&
+                Number.isFinite(marker.end) &&
+                marker.end >= marker.start &&
+                marker.end >= start &&
+                marker.start <= stops[index + 1],
+              ).map((marker, markerIndex) => (
+                <View
+                  key={markerIndex}
+                  style={[s.fill, {
+                    left: marker.start === marker.end
+                      ? Math.max(0, Math.min(trackWidth - 4, ((marker.start - min) / span) * trackWidth - 2)) - left - inset
+                      : ((marker.start - min) / span) * trackWidth - left - inset,
+                    width: marker.start === marker.end ? 4 : Math.max(1, ((marker.end - marker.start) / span) * trackWidth),
+                    backgroundColor: marker.color,
+                  }]}
+                />
+              ))}
+            </View>
+          );
+        })}
         <View
           style={[
             s.thumb,
-            !timeBar && s.settingThumb,
+            timeBar ? s.videoThumb : s.settingThumb,
             { left: `${ratio * 100}%`, backgroundColor: color },
             draft !== null && timeBar && s.dragging,
           ]}
@@ -172,27 +187,31 @@ export function Range({
 }
 const s = StyleSheet.create({
   touch: { height: 48, justifyContent: 'center' },
-  timeBarTouch: { height: 48, marginBottom: -24 },
-  track: { height: 2, backgroundColor: '#ffffff66' },
-  buffer: { position: 'absolute', height: 2, backgroundColor: '#fff' },
-  progress: { position: 'absolute', height: 2, backgroundColor: '#f00' },
-  marker: { position: 'absolute', height: 2, top: 0, zIndex: 2 },
+  timeBarTouch: { height: 32 },
+  track: { height: 2 },
+  videoTrack: { height: 3 },
+  activeTrack: { height: 5 },
+  section: { position: 'absolute', top: 0, bottom: 0, borderRadius: 1, overflow: 'hidden' },
+  fill: { position: 'absolute', top: 0, bottom: 0 },
+  buffer: { backgroundColor: '#ffffff80' },
   thumb: {
     position: 'absolute',
     width: 10,
     height: 10,
-    top: -4,
+    top: '50%',
+    marginTop: -5,
     marginLeft: -5,
     borderRadius: 5,
     backgroundColor: '#f00',
     zIndex: 3,
   },
-  dragging: { width: 14, height: 14, marginLeft: -7, top: -6, borderRadius: 7 },
+  videoThumb: { width: 12, height: 12, marginLeft: -6, marginTop: -6, borderRadius: 6 },
+  dragging: { width: 16, height: 16, marginLeft: -8, marginTop: -8, borderRadius: 8 },
   settingThumb: {
     width: 12,
     height: 12,
     marginLeft: -6,
-    top: -5,
+    marginTop: -6,
     borderRadius: 6,
   },
 });
