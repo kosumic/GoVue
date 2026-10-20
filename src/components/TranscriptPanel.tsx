@@ -57,9 +57,10 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
   const [matches, setMatches] = useState<{ query: string; data: Transcript; comparison: Transcript | null; reader: TranscriptReader } | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [followPlayback, setFollowPlayback] = useState(true);
+  const [listWindow, setListWindow] = useState<{ reader: TranscriptReader; index: number; version: number } | null>(null);
   const list = useRef<FlatList<TranscriptRow>>(null);
   const trackList = useRef<ScrollView>(null);
-  const scrollTarget = useRef<{ index: number; attempts: number } | null>(null);
+  const scrollTarget = useRef<{ index: number; recovering: boolean } | null>(null);
   const scrollRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { fontScale } = useWindowDimensions();
   useEffect(() => {
@@ -102,14 +103,23 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
     else onSeek?.(source.segments[index].start);
   }
   const following = followPlayback && !query.trim();
+  useEffect(() => {
+    if (reader) setListWindow(current => current?.reader === reader ? current : {
+      reader, index: following && activeIndex >= 0 ? activeIndex : 0, version: (current?.version ?? 0) + 1,
+    });
+  }, [reader, following, activeIndex]);
   const scrollToCurrent = useCallback(() => {
+    if (scrollRetry.current !== null) clearTimeout(scrollRetry.current);
+    scrollRetry.current = null;
     const target = scrollTarget.current;
     if (target && target.index < (list.current?.props.data?.length ?? 0)) {
-      list.current?.scrollToIndex({ index: target.index, viewPosition: 0.3, animated: true });
+      const animated = !target.recovering;
+      target.recovering = false;
+      list.current?.scrollToIndex({ index: target.index, viewPosition: 0.3, animated });
     }
   }, []);
   useEffect(() => {
-    scrollTarget.current = following && activeIndex >= 0 && !loading && !error ? { index: activeIndex, attempts: 0 } : null;
+    scrollTarget.current = following && activeIndex >= 0 && !loading && !error ? { index: activeIndex, recovering: false } : null;
     scrollToCurrent();
     return () => {
       scrollTarget.current = null;
@@ -179,7 +189,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
               value={pauseAfterLine} onValueChange={onPauseAfterLine} trackColor={{ true: colors.accent }} />
           </View>}
           {canPlay && !query.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Follow playback" accessibilityState={{ selected: following }}
-            onPress={() => setFollowPlayback(true)} style={[styles.follow, following && styles.following]}>
+            onPress={() => { setFollowPlayback(true); scrollToCurrent(); }} style={[styles.follow, following && styles.following]}>
             <LocateFixed size={13} color={following ? colors.accent : colors.muted} />
             <Text style={[styles.followText, following && styles.selectedText]}>{following ? 'Following' : 'Follow playback'}</Text>
           </Pressable>}
@@ -210,17 +220,27 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
           value={query} onChangeText={setQuery} style={styles.searchInput} />
           {searching ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.count}>{query.trim() ? `${rows.length} of ${reader?.total ?? 0}` : rows.length}</Text>}
           {!!query && <IconButton icon={X} label="Clear transcript search" onPress={() => setQuery('')} />}</View>}
-        <FlatList ref={list} data={rows} extraData={{ position, wordSelection }} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={[styles.list, { paddingBottom: 24 + bottomInset }]}
+        {reader && listWindow?.reader === reader ? <FlatList key={listWindow.version} ref={list} data={rows} initialScrollIndex={listWindow.index}
+          extraData={{ position, wordSelection }} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')} contentContainerStyle={[styles.list, { paddingBottom: 24 + bottomInset }]}
           onScrollBeginDrag={stopFollowing} onLayout={scrollToCurrent}
-          onScrollToIndexFailed={({ index, averageItemLength }) => {
+          onContentSizeChange={() => { if (scrollTarget.current?.recovering) scrollToCurrent(); }}
+          onScrollToIndexFailed={({ index }) => {
             const target = scrollTarget.current;
-            if (!target || target.index !== index || target.attempts++ >= 3) return;
-            list.current?.scrollToOffset({ offset: Math.max(0, (index - 1) * averageItemLength), animated: false });
-            if (scrollRetry.current) clearTimeout(scrollRetry.current);
-            scrollRetry.current = setTimeout(scrollToCurrent, 100);
+            if (!target || target.index !== index) return;
+            target.recovering = true;
+            // A new initial render window mounts the target rows directly;
+            // scrolling to an estimated offset is clamped to measured content.
+            setListWindow(current => current?.reader === reader && current.index === index ? current : {
+              reader, index, version: (current?.version ?? 0) + 1,
+            });
           }}
           keyboardShouldPersistTaps="handled" ListEmptyComponent={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
-          renderItem={({ item }) => <View style={[styles.captionGroup, item === activeRow && styles.activeSegment]}>
+          renderItem={({ item, index }) => <View style={[styles.captionGroup, item === activeRow && styles.activeSegment]} onLayout={() => {
+            if (scrollTarget.current?.index !== index) return;
+            if (scrollRetry.current !== null) clearTimeout(scrollRetry.current);
+            // Let FlatList record the cell's measurements before aligning it.
+            scrollRetry.current = setTimeout(scrollToCurrent, 0);
+          }}>
             {item.lines.map(line => {
               const source = sources[line.track];
               const segment = source?.segments[line.index];
@@ -246,7 +266,7 @@ export function TranscriptPanel({ data, comparison = null, trackIds, comparisonL
                 </View>
               </Pressable>;
             })}
-          </View>} />
+          </View>} /> : <Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}
       </> : null}
       {wordSelection && sources.includes(wordSelection.source) && !loading && !error && <WordTranslationSheet selection={wordSelection} anchor={wordSelection.anchor} onBeforeAudio={onBeforeWordAudio} onClose={() => setWordSelection(null)} />}
     </View>
