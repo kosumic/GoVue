@@ -107,10 +107,12 @@ public final class GoVueCoreModule: Module {
     OnCreate {
       let mediaHttp = NativeMediaHttp()
       installMediaHttp(backend: mediaHttp)
+      installDownloadHttp(backend: NativeDownloadHttp())
       installMediaStreamHttp(backend: mediaHttp)
       installExtractionHttp(backend: NativeExtractionHttp())
       installAiPlatform(platform: NativeAiPlatform())
     }
+    Function("browserUrlPolicy") { (url: String) -> String in browserUrlPolicy(url: url) }
     Function("dictation") { (request: String) -> String in dictationExecute(request: request) }
     AsyncFunction("ai") { (request: String) -> String in
       let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

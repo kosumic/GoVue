@@ -31,6 +31,12 @@ mod transcript_playback;
 mod transcript_reader;
 mod transport;
 mod vocabulary;
+
+/// The same synchronous URL policy gates WebView loads and Rust tab state.
+#[uniffi::export]
+pub fn browser_url_policy(url: String) -> String {
+    browser::url_policy(&url).into()
+}
 pub use ai::{
     AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
 };
@@ -61,6 +67,35 @@ pub trait MediaHttp: Send + Sync {
 #[uniffi::export]
 pub fn install_media_http(backend: Box<dyn MediaHttp>) {
     transport::install_http(backend);
+}
+
+#[derive(uniffi::Record)]
+pub struct DownloadRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+#[derive(uniffi::Record)]
+pub struct DownloadRequest {
+    pub url: String,
+    pub user_agent: String,
+    pub origin: String,
+    pub method: String,
+    pub range: Option<DownloadRange>,
+    pub wifi_only: bool,
+}
+
+/// Native connectivity and network-restricted HTTPS, independent of JS timers.
+#[uniffi::export(callback_interface)]
+pub trait DownloadHttp: Send + Sync {
+    fn wifi_connected(&self) -> bool;
+    /// Status -1 means the allowed network disappeared; retry without failing.
+    fn fetch(&self, request: DownloadRequest) -> MediaRangeReply;
+}
+
+#[uniffi::export]
+pub fn install_download_http(backend: Box<dyn DownloadHttp>) {
+    downloads::transfer::install_http(backend);
 }
 
 /// Incremental HTTPS byte adapter. Rust owns ranges, redirects and bounds.

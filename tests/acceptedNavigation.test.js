@@ -13,7 +13,7 @@ const url = id => `https://m.youtube.com/watch?v=${id}`;
 test('accepted navigation selects native playback before page callbacks and ignores the previous URL', async t => {
   let navigate, selected, state = { tabs: [{ id: 1, url: url(first), kind: 'watch' }], activeId: 1,
     canGoBack: false, target: null, transient: 'none', revision: 1 };
-  const writes = [], loads = [];
+  const writes = [], loads = [], externalLinks = [];
   const media = { settings: {}, player: {}, cast: { state: {} }, configurePage() {}, pageTerminated() {} };
   const session = { transcript: { open: false, close() {} }, queue: { queue: [] }, setMini() {} };
   const BrowserTab = forwardRef((props, ref) => {
@@ -40,6 +40,11 @@ test('accepted navigation selects native playback before page callbacks and igno
       return state;
     } },
     './src/browser/BrowserTab': { BrowserTab },
+    './src/browser/urlPolicy': {
+      openExternalUrl: async url => { externalLinks.push(url); },
+      browserUrlPolicy: target => [url(first), url(second), url(third)].includes(target) ? 'internal' : 'external',
+      isWebUrl: target => [url(first), url(second), url(third)].includes(target),
+    },
     './src/browser/useBrowserIdentity': { useBrowserIdentity: () => ({ ready: true }) },
     './src/browser/useBrowserLaunches': { useBrowserLaunches: callback => { navigate = callback; } },
     './src/media/useMediaBrowser': { useMediaBrowser: (_view, id) => { selected = id; return media; } },
@@ -74,4 +79,11 @@ test('accepted navigation selects native playback before page callbacks and igno
   await act(() => page().onUrl(1, url(second), false));
   await act(() => page().onUrl(1, url(third), true));
   assert.equal(selected, third, 'later in-page navigation must still select its new video');
+  const writesBeforeExternal = writes.length;
+  for (const destination of ['http://example.com/', 'https://example.com:8443/'])
+    await act(() => navigate(destination));
+  assert.deepEqual(externalLinks, ['http://example.com/', 'https://example.com:8443/']);
+  assert.equal(writes.length, writesBeforeExternal, 'external URLs must not change Rust tab state');
+  assert.deepEqual(loads, [url(second)], 'external URLs must not load in the retained WebView');
+  assert.equal(selected, third);
 });

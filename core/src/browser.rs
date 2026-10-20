@@ -51,6 +51,7 @@ fn address(raw: &str) -> Result<(String, String)> {
         || url.password().is_some()
         || url.port_or_known_default() != Some(443)
         || raw.len() > 8192
+        || raw.chars().any(char::is_control)
     {
         return Err("Unsupported page address.".into());
     }
@@ -94,6 +95,25 @@ fn address(raw: &str) -> Result<(String, String)> {
         "external".into()
     };
     Ok((url.to_string(), kind))
+}
+
+pub(super) fn url_policy(raw: &str) -> &'static str {
+    if address(raw).is_ok() {
+        return "internal";
+    }
+    if raw.len() <= 8192
+        && !raw.chars().any(char::is_control)
+        && Url::parse(raw).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+        })
+    {
+        "external"
+    } else {
+        "blocked"
+    }
 }
 
 fn nav(kind: &str) -> bool {

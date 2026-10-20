@@ -6,7 +6,6 @@ import {
   Animated,
   BackHandler,
   Image,
-  Linking,
   Platform,
   Pressable,
   Share,
@@ -35,7 +34,8 @@ import {
 } from './src/player/icons';
 import { coreRequest } from './modules/govue-core';
 import { BrowserTab, type TabHandle } from './src/browser/BrowserTab';
-import { isWebUrl, isYouTubeUrl, youtubeVideoId } from './src/browser/address';
+import { isYouTubeUrl, youtubeVideoId } from './src/browser/address';
+import { browserUrlPolicy, isWebUrl, openExternalUrl } from './src/browser/urlPolicy';
 import { useMediaBrowser } from './src/media/useMediaBrowser';
 import { useDownloads } from './src/media/downloads';
 import { embeddedPlayerFrame } from './src/media/playerLayout';
@@ -202,6 +202,14 @@ function Browser() {
     return next;
   }
   const navigate = useCallback((target: string | { videoId: string; start?: number }) => {
+    if (typeof target === 'string') {
+      const policy = browserUrlPolicy(target);
+      if (policy !== 'internal') {
+        if (policy === 'external') run(() => openExternalUrl(target));
+        else run(async () => { throw Error('Unsupported page address.'); });
+        return;
+      }
+    }
     sessionRef.current?.transcript.close();
     const sequence = ++navigationSequence.current;
     run(async () => {

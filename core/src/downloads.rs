@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::fmt::Write as _;
 mod publication;
 mod store;
-mod transfer;
+pub(crate) mod transfer;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -406,6 +406,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     }
                 }
                 media::write(root, "download-settings.json", &settings)?;
+                transfer::configure(root, settings["wifiOnly"] == true);
             }
             Ok(settings)
         }

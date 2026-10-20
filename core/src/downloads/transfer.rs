@@ -5,18 +5,20 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{Seek, SeekFrom, Write},
+    io::{self, Seek, SeekFrom, Write},
     path::Path,
     sync::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
+    time::Duration,
 };
 
 const CHUNK: u64 = 1_048_576;
 struct Transfer {
     paused: Mutex<bool>,
+    wifi_only: AtomicBool,
     wake: Condvar,
     cancelled: AtomicBool,
     done: AtomicBool,
@@ -24,14 +26,67 @@ struct Transfer {
     total: u64,
     error: Mutex<Option<String>>,
     files: Vec<String>,
+    cover: Option<String>,
+}
+static HTTP: OnceLock<Box<dyn crate::DownloadHttp>> = OnceLock::new();
+pub(crate) fn install_http(backend: Box<dyn crate::DownloadHttp>) {
+    let _ = HTTP.set(backend);
+}
+pub(crate) fn fetch(request: crate::DownloadRequest) -> io::Result<crate::MediaRangeReply> {
+    HTTP.get()
+        .ok_or_else(|| io::Error::other("Download networking is unavailable."))
+        .map(|backend| backend.fetch(request))
+}
+impl Transfer {
+    fn network_waiting(&self) -> bool {
+        self.wifi_only.load(Ordering::Acquire)
+            && !HTTP.get().is_some_and(|backend| backend.wifi_connected())
+    }
+
+    // A native check on every attempt also runs while JS is suspended. Timed
+    // waits let connectivity and setting changes wake work without a JS event.
+    fn permit(&self, failed: &AtomicBool) -> io::Result<bool> {
+        let mut paused = self
+            .paused
+            .lock()
+            .map_err(|_| io::Error::other("Download stopped."))?;
+        loop {
+            if self.cancelled.load(Ordering::Relaxed) || failed.load(Ordering::Relaxed) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Download cancelled.",
+                ));
+            }
+            if !*paused && !self.network_waiting() {
+                return Ok(self.wifi_only.load(Ordering::Acquire));
+            }
+            paused = self
+                .wake
+                .wait_timeout(paused, Duration::from_millis(500))
+                .map_err(|_| io::Error::other("Download stopped."))?
+                .0;
+        }
+    }
 }
 static TRANSFERS: OnceLock<Mutex<HashMap<String, Arc<Transfer>>>> = OnceLock::new();
+pub(super) fn configure(root: &str, wifi_only: bool) {
+    let transfers = TRANSFERS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for (key, transfer) in transfers.iter() {
+        if key.starts_with(&format!("{root}/")) {
+            transfer.wifi_only.store(wifi_only, Ordering::Release);
+            transfer.wake.notify_all();
+        }
+    }
+}
 fn cleanup(transfer: Arc<Transfer>) {
     thread::spawn(move || {
         while !transfer.done.load(Ordering::Acquire) {
             thread::sleep(std::time::Duration::from_millis(100));
         }
-        for path in &transfer.files {
+        for path in transfer.files.iter().chain(transfer.cover.iter()) {
             let _ = fs::remove_file(path);
         }
     });
@@ -118,6 +173,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             .collect::<Vec<_>>();
         let transfer = Arc::new(Transfer {
             paused: Mutex::new(false),
+            wifi_only: AtomicBool::new(super::preferences(root)["wifiOnly"] == true),
             wake: Condvar::new(),
             cancelled: AtomicBool::new(false),
             done: AtomicBool::new(false),
@@ -125,7 +181,14 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             total: plan["bytes"].as_u64().unwrap_or(0),
             error: Mutex::new(None),
             files,
+            cover: plan["coverUrl"].as_str().map(|_| {
+                directory
+                    .join(format!("{id}-{nonce}-cover.tmp"))
+                    .to_string_lossy()
+                    .into_owned()
+            }),
         });
+        let cover_url = plan["coverUrl"].as_str().map(str::to_owned);
         let connections = super::preferences(root)["maxConnections"]
             .as_u64()
             .unwrap_or(4)
@@ -145,6 +208,9 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         lengths[index],
                         connections,
                     )?;
+                }
+                if let (Some(url), Some(path)) = (cover_url, &transfer.cover) {
+                    copy_cover(&transfer, url, path)?;
                 }
                 Ok(())
             })();
@@ -181,7 +247,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .lock()
         .map_err(|_| "Download stopped.")?
         .clone();
-    let value = json!({"done":done,"error":error,"received":transfer.received.load(Ordering::Relaxed),"total":transfer.total,"files":if done&&error.is_none(){transfer.files.iter().map(|p|format!("file://{p}")).collect::<Vec<_>>()}else{vec![]}});
+    let value = json!({"done":done,"error":error,"networkWaiting":!done && transfer.network_waiting(),"received":transfer.received.load(Ordering::Relaxed),"total":transfer.total,"files":if done&&error.is_none(){transfer.files.iter().map(|p|format!("file://{p}")).collect::<Vec<_>>()}else{vec![]},"coverFile":if done&&error.is_none(){transfer.cover.as_ref().map(|p|format!("file://{p}"))}else{None}});
     if string(command, "op")? == "downloads_transfer_release" {
         transfers.remove(&key);
         drop(transfers);
@@ -199,24 +265,14 @@ fn copy_chunks(
     length: u64,
 ) -> Result<()> {
     loop {
-        let mut paused = transfer.paused.lock().map_err(|_| "Download stopped.")?;
-        while *paused && !transfer.cancelled.load(Ordering::Relaxed) {
-            paused = transfer
-                .wake
-                .wait(paused)
-                .map_err(|_| "Download stopped.")?;
-        }
-        drop(paused);
-        if transfer.cancelled.load(Ordering::Relaxed) || failed.load(Ordering::Relaxed) {
-            return Err("Download cancelled.".into());
-        }
+        transfer.permit(failed).map_err(|e| e.to_string())?;
         let start = offset.fetch_add(CHUNK, Ordering::Relaxed);
         if start >= length {
             return Ok(());
         }
         let end = (start + CHUNK).min(length) - 1;
         let bytes = source
-            .bytes(start, end)
+            .download_bytes(start, end, &|| transfer.permit(failed))
             .map_err(|_| "Media request failed. Resume to refresh its address.")?;
         let mut output = file.lock().map_err(|_| "Could not assemble media file.")?;
         output
@@ -228,6 +284,32 @@ fn copy_chunks(
             .received
             .fetch_add(bytes.len() as u64, Ordering::Relaxed);
     }
+}
+
+fn copy_cover(transfer: &Transfer, url: String, path: &str) -> Result<()> {
+    let failed = AtomicBool::new(false);
+    let mut attempts = 0;
+    while attempts < 3 {
+        let wifi_only = transfer.permit(&failed).map_err(|e| e.to_string())?;
+        let reply = fetch(crate::DownloadRequest {
+            url: url.clone(),
+            user_agent: String::new(),
+            origin: "https://m.youtube.com".into(),
+            method: "GET".into(),
+            range: None,
+            wifi_only,
+        })
+        .map_err(|e| e.to_string())?;
+        if reply.status == 200 && !reply.body.is_empty() && reply.body.len() as u64 <= CHUNK {
+            return fs::write(path, reply.body)
+                .map_err(|_| "Could not save the cover image.".into());
+        }
+        if reply.status != -1 {
+            attempts += 1;
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    Err("The cover image could not be downloaded.".into())
 }
 
 fn copy_part(

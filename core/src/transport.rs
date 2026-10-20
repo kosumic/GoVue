@@ -105,6 +105,15 @@ pub(crate) fn header(name: &str, value: &str) -> Result<Header> {
     Header::from_bytes(name, value).map_err(|()| "Invalid HTTP response header.".into())
 }
 pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<Vec<u8>> {
+    range_bytes_with(source, start, end, None)
+}
+
+fn range_bytes_with(
+    source: &Source,
+    start: u64,
+    end: u64,
+    download: Option<&dyn Fn() -> io::Result<bool>>,
+) -> io::Result<Vec<u8>> {
     let agent = AGENT.get_or_init(|| {
         ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(8))
@@ -124,7 +133,17 @@ pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<V
     let mut attempt = 0;
     while attempt < 3 {
         note("upstreamStart", json!(start));
-        let reply = if let Some(backend) = HTTP.get() {
+        let reply = if let Some(permit) = download {
+            let wifi_only = permit()?;
+            crate::downloads::transfer::fetch(crate::DownloadRequest {
+                url: url.clone(),
+                user_agent: source.user_agent.clone(),
+                origin: source.origin.clone(),
+                method: if post { "POST" } else { "GET" }.into(),
+                range: Some(crate::DownloadRange { start, end }),
+                wifi_only,
+            })?
+        } else if let Some(backend) = HTTP.get() {
             backend.fetch_range(
                 url.clone(),
                 source.user_agent.clone(),
@@ -173,6 +192,10 @@ pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<V
                 },
             }
         };
+        if download.is_some() && reply.status == -1 {
+            thread::sleep(Duration::from_millis(150));
+            continue;
+        }
         if matches!(reply.status, 301 | 302 | 303 | 307 | 308) {
             let _span = crate::trace::Section::begin(c"GoVue transport: redirect");
             redirects += 1;
@@ -267,6 +290,17 @@ impl DownloadSource {
             return Err(io::Error::other("Invalid download range."));
         }
         range_bytes(&self.0, start, end)
+    }
+    pub(crate) fn download_bytes(
+        &self,
+        start: u64,
+        end: u64,
+        permit: &dyn Fn() -> io::Result<bool>,
+    ) -> io::Result<Vec<u8>> {
+        if start > end || end >= self.0.length || end - start >= CHUNK {
+            return Err(io::Error::other("Invalid download range."));
+        }
+        range_bytes_with(&self.0, start, end, Some(permit))
     }
 }
 

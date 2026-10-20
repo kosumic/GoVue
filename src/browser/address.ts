@@ -49,11 +49,3 @@ export function youtubeVideoId(input: string): string | null {
     return null;
   }
 }
-
-export function isWebUrl(value: string): boolean {
-  try {
-    return ['https:', 'http:'].includes(new URL(value).protocol);
-  } catch {
-    return false;
-  }
-}

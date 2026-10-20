@@ -401,8 +401,8 @@ export function DownloadLibrary({
                         <Text style={s.help}>
                           {entry.state === 'complete'
                             ? 'Completed'
-                            : entry.state === 'queued' &&
-                                downloads.preferences?.wifiOnly
+                            : (entry.state === 'queued' && downloads.preferences?.wifiOnly) ||
+                                (entry.state === 'downloading' && downloads.waitingForWifi.has(entry.id))
                               ? 'Waiting for Wi-Fi'
                               : entry.state.charAt(0).toUpperCase() +
                                 entry.state.slice(1)}

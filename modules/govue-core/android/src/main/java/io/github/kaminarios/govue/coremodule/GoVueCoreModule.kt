@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import expo.modules.kotlin.Promise
 import io.github.kaminarios.govue.core.execute
+import io.github.kaminarios.govue.core.browserUrlPolicy
 import io.github.kaminarios.govue.core.aiExecute
 import io.github.kaminarios.govue.core.dictationExecute
 import io.github.kaminarios.govue.core.installAiPlatform
@@ -26,6 +27,7 @@ import java.nio.ByteBuffer
 import io.github.kaminarios.govue.core.MediaHttp
 import io.github.kaminarios.govue.core.MediaRangeReply
 import io.github.kaminarios.govue.core.installMediaHttp
+import io.github.kaminarios.govue.core.installDownloadHttp
 import io.github.kaminarios.govue.core.MediaStreamHttp
 import io.github.kaminarios.govue.core.MediaStreamReply
 import io.github.kaminarios.govue.core.installMediaStreamHttp
@@ -361,12 +363,14 @@ class GoVueCoreModule : Module() {
     OnCreate {
       val mediaHttp = NativeMediaHttp(requireNotNull(appContext.reactContext).applicationContext)
       installMediaHttp(mediaHttp)
+      installDownloadHttp(NativeDownloadHttp.shared(requireNotNull(appContext.reactContext).applicationContext))
       installMediaStreamHttp(mediaHttp)
       installExtractionHttp(NativeExtractionHttp(requireNotNull(appContext.reactContext).applicationContext))
       installCastPlatform(NativeCastPlatform(requireNotNull(appContext.reactContext).applicationContext))
       installAiPlatform(NativeAiPlatform(requireNotNull(appContext.reactContext)))
       captureInitialBrowserLaunch()
     }
+    Function("browserUrlPolicy") { url: String -> browserUrlPolicy(url) }
     Function("dictation") { request: String -> dictationExecute(request) }
     AsyncFunction("ai") Coroutine { request: String ->
       withContext(Dispatchers.IO) {

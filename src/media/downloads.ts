@@ -38,10 +38,12 @@ type Running = {
 };
 type TransferStatus = {
   done: boolean;
+  networkWaiting: boolean;
   error: string | null;
   received: number;
   total: number;
   files: string[];
+  coverFile: string | null;
 };
 
 export function useDownloads(
@@ -49,6 +51,7 @@ export function useDownloads(
 ) {
   const [entries, setEntries] = useState<DownloadEntry[]>([]);
   const [ready, setReady] = useState(false);
+  const [waitingForWifi, setWaitingForWifi] = useState(new Set<string>());
   const [preferences, setPreferences] = useState<DownloadPreferences | null>(
     null,
   );
@@ -176,6 +179,14 @@ export function useDownloads(
       else if (operation.paused)
         await coreRequest({ op: 'downloads_transfer_pause', id, paused: true });
       while (!status.done) {
+        const networkWaiting = status.networkWaiting;
+        setWaitingForWifi((previous) => {
+          if (previous.has(id) === networkWaiting) return previous;
+          const next = new Set(previous);
+          if (networkWaiting) next.add(id);
+          else next.delete(id);
+          return next;
+        });
         await new Promise<void>((resolve) => setTimeout(resolve, 500));
         if (operation.cancelled) throw Error('Download cancelled.');
         status = await coreRequest<TransferStatus>({
@@ -208,12 +219,12 @@ export function useDownloads(
         await FileSystem.writeAsStringAsync(fileUri(`${id}.srt`), srt);
       }
       if (plan.coverUrl) {
-        const cover = await FileSystem.downloadAsync(
-          plan.coverUrl,
-          fileUri(`${id}.jpg`),
-        );
-        if (cover.status !== 200)
+        if (!status.coverFile)
           throw Error('The cover image could not be downloaded.');
+        await FileSystem.copyAsync({
+          from: status.coverFile,
+          to: fileUri(`${id}.jpg`),
+        });
       }
       if (operation.cancelled) throw Error('Download cancelled.');
       if (
@@ -233,6 +244,13 @@ export function useDownloads(
               : 'Download failed. Try again.',
         }).catch(() => {});
     } finally {
+      if (mounted.current)
+        setWaitingForWifi((previous) => {
+          if (!previous.has(id)) return previous;
+          const next = new Set(previous);
+          next.delete(id);
+          return next;
+        });
       if (operation.transfer)
         await coreRequest({ op: 'downloads_transfer_release', id }).catch(
           () => {},
@@ -430,6 +448,7 @@ export function useDownloads(
   }
   return {
     entries,
+    waitingForWifi,
     ready,
     preferences,
     configure,

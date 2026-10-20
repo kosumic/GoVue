@@ -8,7 +8,7 @@ import {
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
 import { useWebViewRenderer } from './useWebViewRenderer';
-import { isWebUrl } from './address';
+import { browserUrlPolicy, isWebUrl, openExternalUrl } from './urlPolicy';
 import {
   BROWSER_BRIDGE,
   BROWSER_BOOTSTRAP,
@@ -184,6 +184,7 @@ export const BrowserTab = forwardRef<
             allowFileAccessFromFileURLs={false}
             allowUniversalAccessFromFileURLs={false}
             mixedContentMode="never"
+            originWhitelist={['*']}
             webviewDebuggingEnabled={
               process.env.EXPO_PUBLIC_GOVUE_DEBUG === '1'
             }
@@ -191,15 +192,19 @@ export const BrowserTab = forwardRef<
             injectedJavaScriptBeforeContentLoaded={
               BROWSER_BOOTSTRAP + '\n' + mediaSettingsScript(settings)
             }
-            onShouldStartLoadWithRequest={(request) =>
-              valid() &&
-              (request.url === 'about:blank' || isWebUrl(request.url))
-            }
+            onShouldStartLoadWithRequest={(request) => {
+              if (!valid()) return false;
+              if (request.url === 'about:blank') return true;
+              const policy = browserUrlPolicy(request.url);
+              if (policy === 'external' && request.isTopFrame !== false)
+                void openExternalUrl(request.url).catch(() => {});
+              return policy === 'internal';
+            }}
             onMessage={(event) => {
               if (valid()) onMessage(tab.id, event);
             }}
             onNavigationStateChange={(event) => {
-              if (valid()) {
+              if (valid() && isWebUrl(event.url)) {
                 currentUrl.current = event.url;
                 onUrl(tab.id, event.url, event.canGoBack);
               }

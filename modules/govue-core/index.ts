@@ -1,6 +1,7 @@
 import { requireNativeModule } from 'expo';
 
 const native = requireNativeModule<{
+  browserUrlPolicy?(url: string): string;
   execute(request: string): Promise<string>;
   ai(request: string): Promise<string>;
   dictation?(request: string): string;
@@ -37,6 +38,11 @@ const native = requireNativeModule<{
     begin: boolean,
   ): boolean;
 }>('GoVueCore');
+
+export const browserUrlPolicy = (url: string): 'internal' | 'external' | 'blocked' => {
+  const policy = native.browserUrlPolicy?.(url);
+  return policy === 'internal' || policy === 'external' ? policy : 'blocked';
+};
 
 export function dictationRequest<T>(command: Record<string, unknown>): T {
   if (!native.dictation) throw Error('Install an updated GoVue build to use voice input.');

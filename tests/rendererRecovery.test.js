@@ -14,6 +14,7 @@ const transcript = { videoId, title: 'Saved captions', trackId: 'en', language: 
 
 // Run the real React components and hooks; replace only native/platform edges.
 async function harness(entry, os = 'android') {
+  const externalLinks = [], policyCalls = [];
   const WebView = forwardRef((props, ref) => {
     const handle = useRef(null);
     if (!handle.current) handle.current = {
@@ -39,8 +40,18 @@ async function harness(entry, os = 'android') {
     'react-native-webview': WebView,
     'react-native-safe-area-context': { SafeAreaProvider: ({ children }) => children, SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ top: 0 }) },
     'expo-status-bar': { StatusBar: () => null },
-    expo: { useEvent: (_target, _event, initial) => initial, requireNativeModule: () => ({}) },
+    expo: { useEvent: (_target, _event, initial) => initial, requireNativeModule: () => ({
+      browserUrlPolicy: url => {
+        policyCalls.push(url);
+        return new Map([
+          ['https://example.com/', 'internal'],
+          ['http://example.com/', 'external'],
+          ['https://example.com:8443/', 'external'],
+        ]).get(url) ?? (url.startsWith('https://m.youtube.com/') ? 'internal' : 'blocked');
+      },
+    }) },
     'expo-video': { VideoView: 'VideoView' },
+    'expo-web-browser': { openBrowserAsync: async url => { externalLinks.push(url); } },
     'lucide-react-native': new Proxy({}, { get: (_target, key) => key }),
     'test-components': new Proxy({}, { get: (_target, key) => props => createElement(key, props) }),
     'test-media': { useMediaBrowser: () => media },
@@ -60,7 +71,7 @@ async function harness(entry, os = 'android') {
   });
   const module = { exports: {} };
   Function('require', 'module', 'exports', result.outputFiles[0].text)(name => name in edges ? edges[name] : require(name), module, module.exports);
-  return { ...module.exports, media };
+  return { ...module.exports, media, externalLinks, policyCalls };
 }
 
 function bootstrap(props) {
@@ -169,4 +180,33 @@ for (const os of ['android', 'ios']) test(`${os} watch tab recovers its current 
   }
   await act(() => fresh.onMessage({ nativeEvent: { url, data: '{}' } }));
   assert.equal(messages.length, before.messages + 1, 'the recovered document delivers messages');
+});
+
+test('WebView navigation uses native Rust policy and hands unsupported web destinations to the browser', async t => {
+  const { BrowserTab, externalLinks, policyCalls } = await harness('src/browser/BrowserTab.tsx');
+  const ref = createRef(), pages = [];
+  let root;
+  await act(() => { root = create(createElement(BrowserTab, { ref,
+    tab: { id: 1, url: 'https://m.youtube.com/', kind: 'home' }, active: true,
+    width: 400, height: 800, settings: {}, onMessage() {}, onDead() {},
+    onUrl: (...args) => pages.push(args),
+  })); });
+  t.after(() => act(() => root.unmount()));
+  const web = root.root.findByType('WebView').props;
+  assert.deepEqual(web.originWhitelist, ['*'], 'all decisions reach the shared policy');
+  assert.equal(web.onShouldStartLoadWithRequest({ url: 'https://example.com/' }), true);
+  assert.equal(web.onShouldStartLoadWithRequest({ url: 'http://example.com/' }), false);
+  assert.equal(web.onShouldStartLoadWithRequest({ url: 'https://example.com:8443/' }), false);
+  for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'https://user:pass@example.com/'])
+    assert.equal(web.onShouldStartLoadWithRequest({ url }), false);
+  assert.equal(web.onShouldStartLoadWithRequest({ url: 'about:blank' }), true);
+  assert.equal(web.onShouldStartLoadWithRequest({ url: 'http://example.com/', isTopFrame: false }), false);
+  assert.deepEqual(externalLinks, ['http://example.com/', 'https://example.com:8443/']);
+  await act(() => {
+    web.onNavigationStateChange({ url: 'http://example.com/', canGoBack: true });
+    ref.current.navigate('https://example.com:8443/');
+  });
+  assert.deepEqual(pages, [], 'rejected URLs cannot update or replace the current document');
+  assert.equal(root.root.findByType('WebView').props.source, web.source);
+  assert.ok(policyCalls.includes('https://example.com:8443/'));
 });
