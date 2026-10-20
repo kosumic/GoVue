@@ -9,8 +9,8 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewTreeObserver
-import android.widget.EditText
 import android.widget.PopupWindow
+import androidx.appcompat.widget.AppCompatEditText
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -31,7 +31,7 @@ class CaptionSelectionView(context: Context, appContext: AppContext) : ExpoView(
   private var applying = false
   private var reportedHeight = 0f
   private val scrollListener = ViewTreeObserver.OnScrollChangedListener { positionHandles() }
-  private val text = object : EditText(context) {
+  private val text = object : AppCompatEditText(context) {
     override fun onSelectionChanged(start: Int, end: Int) {
       super.onSelectionChanged(start, end)
       if (initialized && !applying && start >= 0 && end >= 0) {
