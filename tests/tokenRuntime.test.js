@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import React, { createElement, forwardRef, useImperativeHandle, useRef } from 'react';
+import { createElement, forwardRef, useImperativeHandle, useRef } from 'react';
 import { act, create } from 'react-test-renderer';
 import { build } from 'esbuild';
 

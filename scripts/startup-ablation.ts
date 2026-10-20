@@ -157,7 +157,8 @@ if (command === 'plan') {
     child.on('error', reject);
     child.on('close', code => {
       writeFileSync(output, Buffer.concat(chunks));
-      code === 0 ? accept() : reject(Error(name + ' exited ' + code + '; log: ' + relative(root, output)));
+      if (code === 0) accept();
+      else reject(Error(name + ' exited ' + code + '; log: ' + relative(root, output)));
     });
   });
   try {

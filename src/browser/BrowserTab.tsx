@@ -19,7 +19,7 @@ import {
 import { YOUTUBE_BRIDGE } from '../youtube/pageScripts';
 import { mediaSettingsScript } from '../youtube/mediaBridge';
 import type { MediaSettings } from '../core/media';
-import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
+import { useThemeStyles, type ThemeColors } from '../theme';
 export type BrowserTabRecord = {
   id: number;
   url: string;
@@ -68,7 +68,6 @@ export const BrowserTab = forwardRef<
     ref,
   ) => {
     const renderer = useWebViewRenderer();
-    const colors = useThemeColors();
     const s = useThemeStyles(makeStyles);
     const initialSource = useRef({ uri: tab.url });
     const currentUrl = useRef(tab.url);

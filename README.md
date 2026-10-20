@@ -404,10 +404,11 @@ npm run check
 npx expo install --check
 ```
 
-These cover TypeScript, injected browser behavior, Rust formatting, Clippy, and
-Rust boundary/cache tests. CI also audits Rust dependencies, builds and lints an
-ARM64 Android APK, then compiles an unsigned ARM64 iOS app. See
-[CI documentation](.github/CI.md). Fixture and compile checks complement
+These cover JavaScript/TypeScript lint, type checking, injected browser behavior,
+Rust formatting, Clippy, and Rust boundary/cache tests. CI also audits Rust
+dependencies, runs CodeQL and PR dependency review, submits the native dependency
+graph, builds and lints an ARM64 Android APK, then compiles an unsigned ARM64 iOS
+app. See [CI documentation](.github/CI.md). Fixture and compile checks complement
 live device verification.
 
 ## Project status

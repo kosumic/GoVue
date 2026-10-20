@@ -3,15 +3,42 @@
 CI runs on pushes and pull requests targeting `master`, weekly, and manually.
 Rust and JavaScript checks run independently. Android generates the Rust bindings
 and Expo native project, builds an `arm64-v8a` debug APK, and lints both the app and
-the local Expo module. Module lint errors fail the build.
+the local Expo module. Module lint errors fail the build. JavaScript checks include
+ESLint's recommended JavaScript and TypeScript rules and React's rules of hooks.
+`npm run lint` rejects warnings and unused ESLint disable directives; it also runs
+as part of `npm run check`. Generated and vendored sources are excluded from lint.
 The Android job removes the hosted runner's preinstalled Android SDK and unused
 language runtimes before installing the Nix toolchain to leave room for native
 builds. Disk usage is logged before and after cleanup.
 After Android passes, an Apple Silicon macOS runner builds the iOS XCFramework,
 installs CocoaPods dependencies, and compiles an unsigned arm64 release app.
-`CI complete` requires all four jobs to succeed and can be used as a required
-status check. Android APK/lint reports and the unsigned iOS app are retained for
-seven days. The unsigned iOS artifact is for compile validation.
+`CI complete` requires every applicable job to succeed and can be used as a
+required status check. Android APK/lint reports and the unsigned iOS app are
+retained for seven days. The unsigned iOS artifact is for compile validation.
+
+Like Whip, CI runs CodeQL for JavaScript/TypeScript in a separate job and for
+Java/Kotlin around the Android build. Gradle's build cache is disabled so CodeQL
+observes compilation of the generated Expo project and local native module.
+Both analyses upload results to GitHub code scanning.
+
+On `master`, the Android build also resolves `:app`'s `releaseRuntimeClasspath`
+and generates a dependency graph containing the app's transitive native runtime
+dependencies. An empty or missing snapshot fails CI. A separate job submits the
+snapshot with `contents: write` without checking out or executing app code; the
+Android build itself retains `contents: read`. Snapshot artifacts expire after
+one day. Pull requests run dependency review and reject newly introduced
+vulnerabilities rated moderate or higher in GitHub's dependency graph. The native
+snapshot is submitted on `master`; PR review does not generate a native snapshot
+for the proposed Gradle changes.
+
+Enable **Dependency graph** in the repository's
+[Advanced Security settings](https://github.com/kosumic/GoVue/settings/security_analysis)
+before the first run. Dependency review and snapshot submission require it.
+
+CodeQL, dependency review, and dependency submission are included in the
+`CI complete` gate, so Dependabot waits for applicable checks before merging.
+Only dependency review outside PRs and dependency submission outside `master`
+may be skipped successfully.
 
 The app version lives in `package.json`. Like Whip, `app.config.js` reads it
 through `scripts/app-version.cjs` so Expo generates both Android and iOS with

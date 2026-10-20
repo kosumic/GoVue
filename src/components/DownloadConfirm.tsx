@@ -574,7 +574,6 @@ export function SwitchRow({
   value: boolean;
   onChange: (value: boolean) => void;
 }) {
-  const colors = useThemeColors();
   const s = useThemeStyles(makeStyles);
   return (
     <View style={s.selection}>

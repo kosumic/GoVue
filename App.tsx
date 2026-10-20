@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   AppState,
   Animated,
@@ -25,12 +24,10 @@ import type { VideoView } from 'expo-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { NavigationBar } from 'expo-navigation-bar';
 import {
-  ArrowLeft,
   Download,
   Plus as ListPlus,
   Play,
   Share2,
-  X,
 } from './src/player/icons';
 import { coreRequest } from './modules/govue-core';
 import { BrowserTab, type TabHandle } from './src/browser/BrowserTab';
@@ -59,13 +56,7 @@ import {
   MediaResolver,
   type MediaResolverHandle,
 } from './src/media/MediaResolver';
-import {
-  BROWSER_BRIDGE,
-  browserPreferencesScript,
-} from './src/youtube/browserBridge';
 import { TokenRuntime } from './src/media/TokenRuntime';
-import { mediaSettingsScript } from './src/youtube/mediaBridge';
-import type { MediaSettings } from './src/core/media';
 import { Gallery } from './src/components/Gallery';
 import { validateGallery } from './src/core/gallery';
 import { HapticStrength } from './src/player/Haptics';
@@ -446,7 +437,7 @@ function Browser() {
   function handleMessage(id: number, event: WebViewMessageEvent) {
     const { data: raw, url: origin } = event.nativeEvent;
     if (!isYouTubeUrl(origin) || raw.length > 8000000) return;
-    let message: Record<string, any>;
+    let message: Record<string, unknown>;
     try {
       message = JSON.parse(raw);
     } catch {
@@ -459,6 +450,7 @@ function Browser() {
       isYouTubeUrl(message.url) &&
       new URL(message.url).origin === new URL(origin).origin
     ) {
+      const pageUrl = message.url;
       const knownUrl = browserRef.current.tabs.find(
         (tab) => tab.id === id,
       )?.url;
@@ -476,7 +468,7 @@ function Browser() {
               knownUrl
           )
             return;
-          updateUrl(id, message.url, backAvailable.current.get(id) || false);
+          updateUrl(id, pageUrl, backAvailable.current.get(id) || false);
           if (
             typeof message.userAgent === 'string' &&
             message.userAgent.length < 1000 &&
@@ -497,7 +489,7 @@ function Browser() {
       // UI commands can arrive while YouTube commits an SPA URL. Bind them to
       // this origin and the active tab; media replies still require their exact
       // pending request and video below, including context from the parked watch.
-      const payload = message.payload;
+      const payload = message.payload as Record<string, unknown> | undefined;
       if (
         message.action === 'context' &&
         id === watchRef.current?.id &&
@@ -596,7 +588,8 @@ function Browser() {
         typeof payload?.url === 'string' &&
         isYouTubeUrl(payload.url)
       ) {
-        run(() => Share.share({ message: payload.url }));
+        const shareUrl = payload.url;
+        run(() => Share.share({ message: shareUrl }));
         return;
       }
       if (message.action === 'queueAdd' && payload) {

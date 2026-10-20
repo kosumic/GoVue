@@ -81,6 +81,7 @@ async function resetPosition(movie, stop = false) {
   await delay(6000);
   if (stop) run('shell', 'am', 'force-stop', pkg);
 }
+let failure;
 try {
   run('shell', 'am', 'force-stop', 'com.brave.browser');
   run('shell', 'am', 'force-stop', 'com.google.android.youtube');
@@ -111,8 +112,9 @@ try {
   study.completed = true;
 } catch (error) {
   study.error = error.message;
-  throw error;
-} finally {
+  failure = error;
+}
+try {
   study.finished = condition();
   writeFileSync(blockFile, JSON.stringify(study, null, 2));
   const wasForeground = appInForeground();
@@ -123,4 +125,7 @@ try {
     if (!restored.includes('Success')) throw Error('Could not restore ' + restoreProfile + ' APK.');
   }
   if (wasForeground && appInForeground()) run('shell', 'input', 'keyevent', '3');
+} catch (error) {
+  failure ??= error;
 }
+if (failure) throw failure;

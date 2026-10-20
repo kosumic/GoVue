@@ -65,6 +65,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint JavaScript and TypeScript
+        run: npm run lint
+
       - name: Check types
         run: npm run typecheck
 
@@ -77,10 +80,51 @@ jobs:
       - name: Check Expo dependencies
         run: npx expo install --check
 
+  codeql:
+    name: CodeQL JavaScript and TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - name: Analyze JavaScript and TypeScript
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        with:
+          category: /language:javascript-typescript
+
+  dependency-review:
+    name: Review dependency changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Review dependencies
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v4
+        with:
+          fail-on-severity: moderate
+
   android:
     name: Android build and lint
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -107,18 +151,45 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+        with:
+          dependency-graph: ${{ github.ref == 'refs/heads/master' && 'generate-and-upload' || 'disabled' }}
+          dependency-graph-include-projects: '^:app$'
+          dependency-graph-include-configurations: '^releaseRuntimeClasspath$'
+          dependency-graph-continue-on-failure: false
+          artifact-retention-days: 1
+
+      - name: Initialize Java and Kotlin CodeQL
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        with:
+          languages: java-kotlin
+          build-mode: manual
 
       # Enter Nix before installing packages or generating build outputs so
       # path:. does not copy node_modules/ or target/ into the Nix store.
       - name: Generate native project, build arm64 APK, and lint
+        id: android-build
         run: |
           nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
             npm ci --include=dev
             npm run core:android
             npx expo prebuild --platform android --no-install
             android/gradlew -p android :app:assembleDebug :app:lintDebug :govue-core:lintDebug \
-              -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon
+              :app:dependencies --configuration releaseRuntimeClasspath \
+              -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-build-cache --no-daemon
           NIX_SHELL
+
+      - name: Verify release dependency snapshot
+        if: github.ref == 'refs/heads/master'
+        env:
+          DEPENDENCY_GRAPH_FILE: ${{ steps.android-build.outputs.dependency-graph-file }}
+        run: |
+          test -s "$DEPENDENCY_GRAPH_FILE"
+          jq -e '.manifests | to_entries | any(.value.resolved | length > 0)' "$DEPENDENCY_GRAPH_FILE"
+
+      - name: Analyze Java and Kotlin
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        with:
+          category: /language:java-kotlin
 
       - name: Upload Android build and lint reports
         if: always()
@@ -130,6 +201,23 @@ jobs:
             android/app/build/reports/lint-results-debug.*
             modules/govue-core/android/build/reports/lint-results-debug.*
           retention-days: 7
+
+  dependency-submission:
+    name: Submit Gradle dependency graph
+    needs: android
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # Submit the build artifact without checking out or executing app code.
+      - name: Submit generated Gradle dependency graph
+        uses: gradle/actions/dependency-submission@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+        with:
+          dependency-graph: download-and-submit
+          dependency-graph-continue-on-failure: false
+          cache-disabled: true
 
   ios:
     name: iOS unsigned compile
@@ -197,12 +285,20 @@ jobs:
   check:
     name: CI complete
     if: always()
-    needs: [rust, javascript, android, ios]
+    needs: [rust, javascript, codeql, dependency-review, android, dependency-submission, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require every check to pass
         env:
           RESULTS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
         run: |
-          jq -e 'all(.[]; .result == "success")' <<< "$RESULTS"
+          jq -e --arg event "$EVENT_NAME" --arg ref "$REF" '
+            all(to_entries[];
+              .value.result == "success" or
+              (.key == "dependency-review" and $event != "pull_request" and .value.result == "skipped") or
+              (.key == "dependency-submission" and $ref != "refs/heads/master" and .value.result == "skipped")
+            )
+          ' <<< "$RESULTS"

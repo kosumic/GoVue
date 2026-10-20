@@ -6,7 +6,6 @@ import { YOUTUBE_BRIDGE, cancelPositionScript, pauseScript, playbackPositionScri
 const videoId = 'abcdefghijk';
 const otherVideoId = '0123456789a';
 const track = { vssId: '.en', name: { simpleText: 'English' }, languageCode: 'en', baseUrl: `https://www.youtube.com/api/timedtext?v=${videoId}&signature=keep-me` };
-const segment = (startMs, endMs, value) => ({ transcriptSegmentRenderer: { startMs, endMs, snippet: { runs: [{ text: value }] } } });
 
 function setup(fetch, { url = `https://www.youtube.com/watch?v=${videoId}`, tracks = [track], context = true } = {}) {
   const dom = new JSDOM('<!doctype html><title>Example - YouTube</title><video></video>', { url, runScripts: 'outside-only' });

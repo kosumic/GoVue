@@ -26,6 +26,7 @@
     "android": "expo run:android",
     "ios": "npm run core:ios && expo run:ios",
     "typecheck": "tsc --noEmit && tsc --project scripts/tsconfig.json",
+    "lint": "eslint . --max-warnings 0 --report-unused-disable-directives",
     "core:build": "node scripts/build-core.ts host",
     "core:android": "node scripts/build-core.ts android",
     "core:ios": "node scripts/build-core.ts ios",
@@ -36,7 +37,7 @@
     "fmt:core": "cargo fmt --all --check",
     "lint:core": "cargo clippy --locked --workspace --all-targets -- -D warnings",
     "test:core": "cargo test --locked -p govue-core",
-    "check": "npm run check:app-version && npm run typecheck && npm test && npm run fmt:core && npm run lint:core && npm run test:core"
+    "check": "npm run check:app-version && npm run lint && npm run typecheck && npm test && npm run fmt:core && npm run lint:core && npm run test:core"
   },
   "dependencies": {
     "@react-native-clipboard/clipboard": "1.16.3",
@@ -68,13 +69,18 @@
     "react-native-webview": "13.16.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.5",
     "@types/react": "~19.2.4",
     "babel-preset-expo": "~57.0.16",
     "esbuild": "^0.28.2",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "jsdom": "^30.1.3",
     "react-test-renderer": "19.2.3",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.0"
   },
   "enriched-markdown": {
     "enableCodeHighlight": true,
