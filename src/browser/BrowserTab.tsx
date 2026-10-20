@@ -221,12 +221,17 @@ export const BrowserTab = forwardRef<
                   event.nativeEvent.url,
                   documentGeneration.current,
                 );
-                setLoading(true);
+                // Android also emits load-start for history.pushState and
+                // replaceState. Those have no load-end when the document is
+                // already loaded, so use the native loading flag.
+                setLoading(event.nativeEvent.loading);
                 setError('');
               }
             }}
             onLoadProgress={(event) => {
-              if (valid() && event.nativeEvent.progress >= 0.5) {
+              if (!valid()) return;
+              if (event.nativeEvent.progress >= 1) setLoading(false);
+              if (event.nativeEvent.progress >= 0.5) {
                 renderer.view.current?.injectJavaScript(documentScripts());
                 onReady?.(tab.id, event.nativeEvent.url);
               }
