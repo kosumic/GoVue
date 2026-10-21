@@ -60,7 +60,7 @@
     "expo-translate-text": "^0.3.0",
     "expo-video": "~57.0.5",
     "expo-web-browser": "~57.0.3",
-    "lucide-react-native": "^1.59.0",
+    "lucide-react-native": "^1.60.0",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-enriched-markdown": "1.1.1",
