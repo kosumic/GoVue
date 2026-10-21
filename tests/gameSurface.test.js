@@ -28,7 +28,7 @@ async function surface(t, { active = true, exportError = '', audio = { phase: 'i
       Modal: ({ visible, children }) => visible ? h('Modal', null, children) : null,
       AppState: { currentState: 'active', addEventListener: () => ({ remove: noop }) },
     },
-    'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
+    'react-native-safe-area-context': { SafeAreaProvider: 'SafeAreaProvider', SafeAreaView: 'SafeAreaView' },
     'react-native-webview': forwardRef(function WebView(props, ref) {
       useImperativeHandle(ref, () => ({ injectJavaScript: script => injections.push(script) }), []);
       return h('WebView', props);

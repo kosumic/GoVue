@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Check, Copy, Expand, Minimize2, Play, RotateCw, Square, X } from 'lucide-react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import WebView from 'react-native-webview';
@@ -185,7 +185,9 @@ export function LearningGameCard(props: Props) {
       <Play size={18} color={colors.accent} /><Text style={styles.openText}>{props.game.revision ? 'Continue game' : 'Play game'}</Text>
     </Pressable>}
     <Modal visible={active && expanded} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setExpanded(false)}>
-      <SafeAreaView style={styles.fullscreen}>{controls}{!!copyError && <Text accessibilityRole="alert" style={styles.error}>{copyError}</Text>}{active && expanded && <GameSurface key={`${props.game.id}-${reload}-expanded`} {...props} expanded />}</SafeAreaView>
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.fullscreen}>{controls}{!!copyError && <Text accessibilityRole="alert" style={styles.error}>{copyError}</Text>}{active && expanded && <GameSurface key={`${props.game.id}-${reload}-expanded`} {...props} expanded />}</SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   </View>;
 }

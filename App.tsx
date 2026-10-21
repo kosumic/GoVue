@@ -751,7 +751,7 @@ function Browser() {
                   }
                   width={frame.width}
                   height={frame.height}
-                  bottomInset={Platform.OS === 'android' && isYouTubeUrl(tab.url) ? insets.bottom : 0}
+                  bottomInset={isYouTubeUrl(tab.url) ? insets.bottom : 0}
                   settings={media.settings}
                   onMessage={handleMessage}
                   onUrl={updateUrl}
