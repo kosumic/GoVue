@@ -100,12 +100,14 @@ impl MediaHttp for Http {
 
 fn read(uri: &str, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
     let response = ureq::get(uri)
-        .timeout(std::time::Duration::from_secs(3))
-        .set("Range", &format!("bytes={start}-{end}"))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(3)))
+        .build()
+        .header("Range", &format!("bytes={start}-{end}"))
         .call()
         .map_err(std::io::Error::other)?;
     let mut bytes = Vec::new();
-    response.into_reader().read_to_end(&mut bytes)?;
+    response.into_body().into_reader().read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 

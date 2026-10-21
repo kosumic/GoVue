@@ -40,7 +40,12 @@ fn auto_keeps_lower_sizes_for_the_selected_codec_and_manual_quality_stays_pinned
             assert_eq!(playback["startupHeight"], 0);
         }
         let uri = playback["uri"].as_str().unwrap();
-        let text = ureq::get(uri).call().unwrap().into_string().unwrap();
+        let text = ureq::get(uri)
+            .call()
+            .unwrap()
+            .body_mut()
+            .read_to_string()
+            .unwrap();
         assert!(!text.contains("googlevideo"));
         let document = roxmltree::Document::parse(&text).unwrap();
         let videos: Vec<_> = document
@@ -95,7 +100,12 @@ fn startup_limit_uses_an_available_height_and_keeps_higher_formats() {
         assert_eq!(playback["startupHeight"], expected);
         assert_eq!(playback["qualityHeight"], 0, "Auto remains adaptive");
         let uri = playback["uri"].as_str().unwrap();
-        let text = ureq::get(uri).call().unwrap().into_string().unwrap();
+        let text = ureq::get(uri)
+            .call()
+            .unwrap()
+            .body_mut()
+            .read_to_string()
+            .unwrap();
         let document = roxmltree::Document::parse(&text).unwrap();
         let video_count = document
             .descendants()

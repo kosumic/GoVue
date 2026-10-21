@@ -606,7 +606,12 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
         "only initialization, index and overlapping audio are fetched"
     );
     let uri = clip["uri"].as_str().unwrap();
-    let manifest = ureq::get(uri).call().unwrap().into_string().unwrap();
+    let manifest = ureq::get(uri)
+        .call()
+        .unwrap()
+        .body_mut()
+        .read_to_string()
+        .unwrap();
     assert!(manifest.contains("segment-0.m4s"));
     assert!(!manifest.contains("PRIVATE_SIGNED_AUDIO"));
     let segment = url::Url::parse(uri).unwrap().join("segment-0.m4s").unwrap();
@@ -614,6 +619,7 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     ureq::get(segment.as_str())
         .call()
         .unwrap()
+        .into_body()
         .into_reader()
         .read_to_end(&mut data)
         .unwrap();

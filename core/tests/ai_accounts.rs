@@ -249,13 +249,15 @@ fn start(root: &Path, id: &str, kind: &str) -> String {
         .into()
 }
 fn request_callback(url: &Url) -> u16 {
-    match ureq::AgentBuilder::new()
-        .redirects(0)
+    match ureq::Agent::config_builder()
+        .max_redirects(0)
+        .http_status_as_error(false)
         .build()
+        .new_agent()
         .get(url.as_str())
         .call()
     {
-        Ok(r) | Err(ureq::Error::Status(_, r)) => r.status(),
+        Ok(r) => r.status().as_u16(),
         Err(e) => panic!("Callback failed: {e}"),
     }
 }

@@ -290,25 +290,29 @@ fn fetch_response_bounded(
         http.request(request)
     } else {
         // Host CLI uses the same bounded contract as Android/iOS.
-        let agent = ureq::AgentBuilder::new()
-            .redirects(0)
-            .timeout(Duration::from_secs(15))
-            .build();
-        let mut call = agent.request(&request.method, &request.url);
+        let agent = ureq::Agent::config_builder()
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .timeout_global(Some(Duration::from_secs(15)))
+            .build()
+            .new_agent();
+        let mut call = ureq::http::Request::builder()
+            .method(request.method.as_str())
+            .uri(&request.url);
         for header in request.headers {
-            call = call.set(&header.name, &header.value);
+            call = call.header(&header.name, &header.value);
         }
-        let response = if method == "POST" {
-            call.send_string(&request.body)
-        } else {
-            call.call()
-        };
-        match response {
-            Ok(response) | Err(ureq::Error::Status(_, response)) => {
-                let status = i32::from(response.status());
+        let call = call
+            .body(request.body.as_bytes())
+            .map_err(|_| "Invalid extraction request.")?;
+        match agent.run(call) {
+            Ok(response) => {
+                let status = i32::from(response.status().as_u16());
                 let headers = response
-                    .all("set-cookie")
-                    .into_iter()
+                    .headers()
+                    .get_all("set-cookie")
+                    .iter()
+                    .filter_map(|value| value.to_str().ok())
                     .map(|value| ExtractionHeader {
                         name: "Set-Cookie".into(),
                         value: value.into(),
@@ -316,6 +320,7 @@ fn fetch_response_bounded(
                     .collect();
                 let mut body = Vec::new();
                 response
+                    .into_body()
                     .into_reader()
                     .take(u64::from(request.max_bytes) + u64::from(!request.prefix_only))
                     .read_to_end(&mut body)

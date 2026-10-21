@@ -124,11 +124,13 @@ fn source(case: &str, length: u64) -> String {
 }
 fn read(uri: &str) -> std::io::Result<Vec<u8>> {
     let response = ureq::get(uri)
-        .timeout(Duration::from_secs(5))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build()
         .call()
         .map_err(std::io::Error::other)?;
     let mut bytes = Vec::new();
-    response.into_reader().read_to_end(&mut bytes)?;
+    response.into_body().into_reader().read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -143,10 +145,12 @@ fn streams_the_first_range_incrementally_and_closes_rejected_or_incomplete_bodie
     let client_uri = uri.clone();
     let client = std::thread::spawn(move || {
         let response = ureq::get(&client_uri)
-            .timeout(Duration::from_secs(5))
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
             .call()
             .unwrap();
-        let mut reader = response.into_reader();
+        let mut reader = response.into_body().into_reader();
         let mut bytes = vec![0; 1024];
         reader.read_exact(&mut bytes).unwrap();
         prefix_tx.send(bytes.clone()).unwrap();

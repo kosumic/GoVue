@@ -115,11 +115,14 @@ fn range_bytes_with(
     download: Option<&dyn Fn() -> io::Result<bool>>,
 ) -> io::Result<Vec<u8>> {
     let agent = AGENT.get_or_init(|| {
-        ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(8))
-            .timeout_read(Duration::from_secs(15))
-            .redirects(0)
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(8)))
+            .timeout_recv_response(Some(Duration::from_secs(15)))
+            .timeout_recv_body(Some(Duration::from_secs(15)))
+            .max_redirects(0)
+            .http_status_as_error(false)
             .build()
+            .new_agent()
     });
     let mut last = "Media range unavailable.".to_string();
     let mut post = source.post.load(Ordering::Relaxed);
@@ -157,25 +160,30 @@ fn range_bytes_with(
                 "{url}{}range={start}-{end}",
                 if url.contains('?') { "&" } else { "?" }
             );
-            let request = agent
-                .request(if post { "POST" } else { "GET" }, &address)
-                .set("User-Agent", &source.user_agent)
-                .set("Accept-Encoding", "identity")
-                .set("Referer", &format!("{}/", source.origin))
-                .set("Origin", &source.origin);
-            match if post {
-                request.send_bytes(&[0x78, 0])
-            } else {
-                request.call()
-            } {
-                Ok(response) | Err(ureq::Error::Status(_, response)) => {
-                    let status = i32::from(response.status());
-                    let location = response.header("Location").map(str::to_owned);
+            let body: &[u8] = if post { &[0x78, 0] } else { &[] };
+            let request = ureq::http::Request::builder()
+                .method(if post { "POST" } else { "GET" })
+                .uri(&address)
+                .header("User-Agent", &source.user_agent)
+                .header("Accept-Encoding", "identity")
+                .header("Referer", format!("{}/", source.origin))
+                .header("Origin", &source.origin)
+                .body(body)
+                .map_err(io::Error::other)?;
+            match agent.run(request) {
+                Ok(response) => {
+                    let status = i32::from(response.status().as_u16());
+                    let location = response
+                        .headers()
+                        .get("Location")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned);
                     let mut bytes = Vec::with_capacity(
                         usize::try_from(end - start + 1)
                             .map_err(|_| io::Error::other("Media range is too large."))?,
                     );
                     response
+                        .into_body()
                         .into_reader()
                         .take(CHUNK + 1)
                         .read_to_end(&mut bytes)?;
@@ -185,7 +193,7 @@ fn range_bytes_with(
                         location,
                     }
                 }
-                Err(ureq::Error::Transport(_)) => crate::MediaRangeReply {
+                Err(_) => crate::MediaRangeReply {
                     status: 0,
                     body: Vec::new(),
                     location: None,
@@ -885,7 +893,12 @@ mod tests {
         assert_eq!(source["contentType"], "hls");
         assert_eq!(source["qualityHeight"], 0);
         let uri = source["uri"].as_str().unwrap();
-        let master = ureq::get(uri).call().unwrap().into_string().unwrap();
+        let master = ureq::get(uri)
+            .call()
+            .unwrap()
+            .body_mut()
+            .read_to_string()
+            .unwrap();
         assert!(master.contains("RESOLUTION=2160x1080"));
         assert!(master.contains("RESOLUTION=720x360"));
         assert!(!master.contains("private"));
@@ -905,7 +918,8 @@ mod tests {
         let playlist = ureq::get(audio.as_str())
             .call()
             .unwrap()
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .unwrap();
         assert!(playlist.contains("#EXT-X-BYTERANGE:200@156"));
         let file = base
@@ -921,13 +935,23 @@ mod tests {
             )
             .unwrap();
         let response = ureq::get(file.as_str())
-            .set("Range", "bytes=10-19")
+            .header("Range", "bytes=10-19")
             .call()
             .unwrap();
         assert_eq!(response.status(), 206);
-        assert_eq!(response.header("Content-Range"), Some("bytes 10-19/556"));
+        assert_eq!(
+            response
+                .headers()
+                .get("Content-Range")
+                .and_then(|value| value.to_str().ok()),
+            Some("bytes 10-19/556")
+        );
         let mut bytes = Vec::new();
-        response.into_reader().read_to_end(&mut bytes).unwrap();
+        response
+            .into_body()
+            .into_reader()
+            .read_to_end(&mut bytes)
+            .unwrap();
         assert_eq!(bytes, (10u8..20).collect::<Vec<_>>());
         command["height"] = json!(360);
         let pinned = playback(&command).unwrap();
@@ -935,7 +959,8 @@ mod tests {
         let pinned_master = ureq::get(pinned["uri"].as_str().unwrap())
             .call()
             .unwrap()
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .unwrap();
         assert!(pinned_master.contains("RESOLUTION=720x360"));
         assert!(!pinned_master.contains("RESOLUTION=2160x1080"));
@@ -943,7 +968,7 @@ mod tests {
         for revoked in [uri, audio.as_str(), file.as_str()] {
             assert!(matches!(
                 ureq::get(revoked).call(),
-                Err(ureq::Error::Status(404, _))
+                Err(ureq::Error::StatusCode(404))
             ));
         }
         assert!(ureq::get(pinned["uri"].as_str().unwrap()).call().is_ok());

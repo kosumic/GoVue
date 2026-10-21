@@ -84,10 +84,12 @@ fn the_player_receives_initial_bytes_while_later_upstream_ranges_are_still_block
     let client_uri = uri.clone();
     let client = std::thread::spawn(move || {
         let response = ureq::get(&client_uri)
-            .timeout(Duration::from_secs(5))
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
             .call()
             .unwrap();
-        let mut reader = response.into_reader();
+        let mut reader = response.into_body().into_reader();
         let mut bytes = vec![0; 1024];
         reader.read_exact(&mut bytes).unwrap();
         prefix_tx.send(bytes.clone()).unwrap();

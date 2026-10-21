@@ -229,7 +229,7 @@ fn send_callback(
     fields: &HashMap<String, String>,
     state: &str,
     client: Option<&str>,
-) -> ureq::Response {
+) -> ureq::http::Response<ureq::Body> {
     let mut u = Url::parse(&fields["redirect_uri"]).unwrap();
     u.query_pairs_mut()
         .append_pair("state", state)
@@ -237,13 +237,15 @@ fn send_callback(
     if let Some(client) = client {
         u.query_pairs_mut().append_pair("client_id", client);
     }
-    match ureq::AgentBuilder::new()
-        .redirects(0)
+    match ureq::Agent::config_builder()
+        .max_redirects(0)
+        .http_status_as_error(false)
         .build()
+        .new_agent()
         .get(u.as_str())
         .call()
     {
-        Ok(r) | Err(ureq::Error::Status(_, r)) => r,
+        Ok(r) => r,
         Err(e) => panic!("Loopback callback failed: {e}"),
     }
 }
@@ -301,10 +303,18 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     );
     let response = send_callback(&fields, &fields["state"], Some("oaiapp_fixture"));
     assert_eq!(response.status(), 302);
-    assert_eq!(response.header("Location"), first["returnUrl"].as_str());
+    assert_eq!(
+        response
+            .headers()
+            .get("Location")
+            .and_then(|value| value.to_str().ok()),
+        first["returnUrl"].as_str()
+    );
     assert!(
         !response
-            .header("Location")
+            .headers()
+            .get("Location")
+            .and_then(|value| value.to_str().ok())
             .unwrap()
             .contains("fixture-code")
     );
@@ -460,9 +470,10 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     );
     thread::sleep(Duration::from_millis(250));
     assert!(
-        ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_millis(100))
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_millis(100)))
             .build()
+            .new_agent()
             .get(&f["redirect_uri"])
             .call()
             .is_err()
