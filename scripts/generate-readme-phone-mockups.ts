@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const [input = '.cache/readme-preview/raw', ...requested] = process.argv.slice(2);
-const names = ['browse', 'playback', 'transcript', 'search', 'word-card', 'languages', 'chat', 'providers', 'download', 'extensions'];
+const names = ['browse', 'transcript', 'search', 'word-card', 'languages', 'chat', 'game', 'providers', 'download', 'extensions'];
 const selected = requested.length ? requested : names;
 if (selected.some(name => !names.includes(name))) throw Error('Unknown README screenshot name.');
 const source = resolve(root, input);

@@ -37,6 +37,7 @@ progress. See [project status](#project-status) for verified behavior and open w
   - [Read along in two languages](#read-along-in-two-languages)
   - [Build vocabulary from what you watch](#build-vocabulary-from-what-you-watch)
   - [Talk to your own AI models](#talk-to-your-own-ai-models)
+  - [Create learning games with the agent](#create-learning-games-with-the-agent)
   - [Keep videos for later](#keep-videos-for-later)
 - [Get started](#get-started)
 - [How it works](#how-it-works)
@@ -60,34 +61,34 @@ progress. See [project status](#project-status) for verified behavior and open w
 <table>
   <tr>
     <td align="center"><img src="assets/screenshots/browse.webp" alt="GoVue searching YouTube for Easy French's lesson on introducing yourself" width="320"></td>
-    <td align="center"><img src="assets/screenshots/playback.webp" alt="GoVue playing Easy French's introduction lesson with native controls above YouTube comments" width="320"></td>
+    <td align="center"><img src="assets/screenshots/transcript.webp" alt="GoVue showing French and English captions in separate transcript panes with current words highlighted beneath the updated native player" width="320"></td>
   </tr>
   <tr>
     <td align="center"><strong>Find something to learn</strong><br>Browse YouTube's videos, channels, and recommendations.</td>
-    <td align="center"><strong>Watch with native controls</strong><br>Choose playback speed and quality while keeping the page interactive.</td>
+    <td align="center"><strong>Read in two languages</strong><br>Follow French and English in separate panes, and tap to seek.</td>
   </tr>
   <tr>
-    <td align="center"><img src="assets/screenshots/transcript.webp" alt="GoVue transcript reader highlighting French phrases for introducing yourself beneath the native player" width="320"></td>
     <td align="center"><img src="assets/screenshots/search.webp" alt="GoVue searching the French transcript for comment to find questions to practice" width="320"></td>
+    <td align="center"><img src="assets/screenshots/word-card.webp" alt="GoVue's native selection handles highlighting comment tu t'appelles above the phrase card, with the ChatGPT / Codex provider picker and a real French example translated into English" width="320"></td>
   </tr>
   <tr>
-    <td align="center"><strong>Read every line</strong><br>Follow the transcript, search captions, and tap to seek.</td>
     <td align="center"><strong>Find phrases to practice</strong><br>Search French captions for words and expressions.</td>
+    <td align="center"><strong>Select a word or phrase</strong><br>Drag the handles and choose an AI model for examples and grammar.</td>
   </tr>
   <tr>
-    <td align="center"><img src="assets/screenshots/word-card.webp" alt="GoVue's long-press word card showing a French usage example for comment, its English translation, and a grammar explanation" width="320"></td>
     <td align="center"><img src="assets/screenshots/languages.webp" alt="GoVue language preferences with native English and French at A2 Elementary" width="320"></td>
+    <td align="center"><img src="assets/screenshots/chat.webp" alt="GoVue chat showing French questions and English translations from GPT-6-Astra, the attached transcript, and response actions including branching into a new chat" width="320"></td>
   </tr>
   <tr>
-    <td align="center"><strong>Long-press a word</strong><br>Ask for usage examples, translations, and grammar in its word card.</td>
     <td align="center"><strong>Set your learning goals</strong><br>Keep the languages you know and the levels you want to reach.</td>
+    <td align="center"><strong>Ask about the lesson</strong><br>Use your AI model with the video's transcript attached.</td>
   </tr>
   <tr>
-    <td align="center"><img src="assets/screenshots/chat.webp" alt="GoVue chat showing informal and formal French questions with English translations from GPT-6-Astra and the French transcript attached" width="320"></td>
+    <td align="center"><img src="assets/screenshots/game.webp" alt="A French introduction quiz created by GoVue's AI agent, with lesson audio, multiple-choice answers, and English feedback" width="320"></td>
     <td align="center"><img src="assets/screenshots/providers.webp" alt="GoVue provider connections offering ChatGPT and Codex sign-in alongside API and other account connections" width="320"></td>
   </tr>
   <tr>
-    <td align="center"><strong>Ask about the lesson</strong><br>Use your AI model with the video's transcript attached.</td>
+    <td align="center"><strong>Ask the agent for a learning game</strong><br>Turn a lesson into a playable quiz with original caption audio.</td>
     <td align="center"><strong>Connect your AI</strong><br>Sign in with an account or choose an API connection.</td>
   </tr>
   <tr>
@@ -100,8 +101,9 @@ progress. See [project status](#project-status) for verified behavior and open w
   </tr>
 </table>
 
-Captured from an ARM64 release build in the iPhone 17 Pro simulator running
-iOS 26.5, framed with the same iPhone mockup as Whip, using Easy French's
+Captured in the iPhone 17 Pro simulator running iOS 26.5, with changed screens
+refreshed from the GoVue 0.2.0 ARM64 release build. Framed with the same iPhone
+mockup as Whip, using Easy French's
 [lesson on introducing yourself](https://www.youtube.com/watch?v=tCd_4uCD5eo).
 [Capture details](assets/screenshots/README.md).
 
@@ -121,7 +123,7 @@ iOS 26.5, framed with the same iPhone mockup as Whip, using Easy French's
 
 - Open **Transcript** from the player to search captions, follow playback, and
   tap a line or a timed word to seek.
-- Compare up to two languages, interleaved by timestamp. Search either language;
+- Compare up to two languages in equal-height panes. Search either language;
   copy and share include both.
 - Keep authored line breaks, emphasis, and Japanese pronunciation readings.
 - Choose available caption tracks or YouTube machine translations, inspect
@@ -133,6 +135,8 @@ iOS 26.5, framed with the same iPhone mockup as Whip, using Easy French's
   levels, under **Extensions → Languages**.
 - Hold a transcript word to translate it on device and save it with its video
   context and timestamp.
+- Drag the selection handles to translate and save a whole phrase, or choose
+  an AI provider directly in the card.
 - Ask your selected AI model for translated usage examples or an explanation of
   the word's base form and grammar in the current caption.
 - Listen to examples with text-to-speech or use **Play word** to hear the original
@@ -153,13 +157,21 @@ ML Kit; iOS translation requires iOS 18 or newer.
 - Search messages and conversations; pin, archive, rename, or delete saved chats.
 - Dictate questions, read answers aloud, and save **AGENT.md instructions** for
   your preferred language, learning level, or response style.
-- Ask for interactive learning games that can replay caption audio and retain
-  progress between sessions.
 
 Account eligibility and model access depend on the provider. See the
 [reader and chat guide](docs/reader-and-chat.md) for controls, timing behavior,
 voice input, and usage statistics, and the
 [interactive games reference](docs/interactive-games.md) for the game runtime.
+
+### Create learning games with the agent
+
+Ask the agent something like **“Create a French quiz from this video, with audio
+clips and explanations in English.”** It creates a game you can play inside the
+conversation or expand to fill the screen.
+
+- Practice with the lesson's original caption audio and feedback on your answers.
+- Return to saved games in **Practice**, with progress kept between sessions.
+- Ask the agent to adapt the activity to your language level or learning goals.
 
 ### Keep videos for later
 

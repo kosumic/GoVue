@@ -2,7 +2,8 @@
 
 [Back to GoVue](../README.md)
 
-The player's **Transcript** and **AI** buttons appear before speed and quality.
+The player's **Transcript** and **AI** buttons appear beside the speed control.
+Choose video quality in the player's **Settings** menu.
 Transcript opens the reader; AI opens the same full-screen conversation workspace
 as **Chat** in the bottom navigation.
 
@@ -19,8 +20,8 @@ the current word is highlighted, and tapping a word seeks to its start. Captions
 without word timings use the line start. Refresh an older cached transcript to
 fetch word timings.
 
-Select up to two transcript languages to compare captions interleaved in timestamp
-order, even when the languages split lines differently. Search matches either
+Select up to two transcript languages to compare captions in equal-height panes,
+with each language following playback independently. Search matches either
 language and keeps the paired lines together; copy and share include both selected
 languages. Tap a selected language to remove it.
 
@@ -30,9 +31,10 @@ Readings are searchable and included when copying or sharing. Subtle dividers
 mark possible speaker changes when the caption track supplies those flags,
 including changes within a caption; they do not identify speakers.
 
-**Translate…** offers YouTube's available machine translations with their source
-language. Default caption selection follows the selected audio track when YouTube
-supplies the association. **Caption details** shows source structure, audio
+**Translations…** groups available caption translations; **Auto-translate…**
+offers YouTube's machine translations with their source language. Default caption
+selection follows the selected audio track when YouTube supplies the association.
+**Caption details** shows source structure, audio
 associations, recognition scores, and speech-boundary statistics. These scores
 are not calibrated accuracy percentages, and speech-boundary hints do not
 identify speakers.
@@ -54,6 +56,11 @@ translate into a language you know, preferring your native language. Words in a
 known language translate into all your learning languages, with a separate
 result for each. Languages outside your profile use a known language, or English
 when none is available.
+
+Drag either native selection handle to extend the selection to a phrase. The
+card follows the selected text and supports copying and saving it. Phrase audio
+is available when word timings are present. Choose the AI provider and model in
+the card.
 
 The card can generate a usage example with translations using your selected AI
 model, or explain the word's base form and grammar in its current caption, in
