@@ -18,6 +18,11 @@
   <a href="https://x.com/Kosumi1989"><img src="https://img.shields.io/badge/Follow-%40Kosumi1989-000000?logo=x&amp;logoColor=white" alt="Follow @Kosumi1989 on X"></a>
 </p>
 
+<p align="center">
+  <a href="https://youtu.be/apYmn1kmMcQ"><img src="https://img.youtube.com/vi/apYmn1kmMcQ/maxresdefault.jpg" alt="Watch the GoVue launch video on YouTube" width="800"></a><br>
+  <a href="https://youtu.be/apYmn1kmMcQ"><strong>Watch the GoVue launch video</strong></a>
+</p>
+
 GoVue brings YouTube browsing and language learning into one mobile app. Find a
 video, follow its captions, replay a phrase, save an unfamiliar word, or ask your
 chosen AI model about what you just watched. Comments, recommendations,
