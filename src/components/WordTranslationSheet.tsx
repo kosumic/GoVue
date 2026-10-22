@@ -107,9 +107,20 @@ export function WordTranslationSheet({ selection, anchor, pending = false, frame
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.wordHeading}>
             <Text selectable style={styles.word}>{selection.word}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={phrase ? copied ? 'Phrase copied' : 'Copy phrase' : copied ? 'Word copied' : 'Copy word'} disabled={pending} accessibilityState={{ disabled: pending }} accessibilityLiveRegion="polite" onPress={() => copyText(selection.word)} style={({ pressed }) => [styles.copyButton, pressed && { opacity: 0.35 }]}>
-              {copied ? <Check size={24} color={colors.accent} /> : <Copy size={24} color={colors.ink} />}
-            </Pressable>
+            <View style={styles.wordActions}>
+              <Pressable accessibilityRole="button" accessibilityLabel={phrase ? copied ? 'Phrase copied' : 'Copy phrase' : copied ? 'Word copied' : 'Copy word'} disabled={pending} accessibilityState={{ disabled: pending }} accessibilityLiveRegion="polite" onPress={() => copyText(selection.word)} style={({ pressed }) => [styles.actionButton, (pending || pressed) && styles.disabled]}>
+                {copied ? <Check size={24} color={colors.accent} /> : <Copy size={24} color={colors.ink} />}
+              </Pressable>
+              {timed && !pending && <Pressable accessibilityRole="button" accessibilityLabel={audio.phase === 'idle' ? phrase ? 'Play phrase' : 'Play word' : 'Stop word audio'} accessibilityState={{ busy: audio.phase === 'loading' }} onPress={() => {
+                speech.stop();
+                if (audio.phase === 'idle') void audio.play('word').catch(() => {}); else audio.stop();
+              }} style={({ pressed }) => [styles.actionButton, pressed && styles.disabled]}>
+                {audio.phase === 'loading' ? <ActivityIndicator color={colors.accent} /> : audio.phase === 'playing' ? <Square size={24} color={colors.ink} /> : <Volume2 size={24} color={colors.ink} />}
+              </Pressable>}
+              <Pressable accessibilityRole="button" accessibilityLabel={phrase ? 'Save phrase' : 'Save word'} accessibilityState={{ disabled: saving || pending, busy: saving }} disabled={saving || pending} onPress={() => { void save(); }} style={({ pressed }) => [styles.actionButton, (saving || pending || pressed) && styles.disabled]}>
+                {saving ? <ActivityIndicator color={colors.accent} /> : <BookmarkPlus size={24} color={colors.ink} />}
+              </Pressable>
+            </View>
           </View>
           <Text style={styles.help}>Drag either handle to change the selection.</Text>
           {pending ? <ActivityIndicator accessibilityLabel="Updating selection" color={colors.accent} /> : error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : results ? results.map(result =>
@@ -121,20 +132,8 @@ export function WordTranslationSheet({ selection, anchor, pending = false, frame
             </View>) : <ActivityIndicator accessibilityLabel="Preparing word translations" color={colors.accent} />}
           {results?.some(result => result.text === null && !result.error) && <Text style={styles.help}>The first translation may download language models.</Text>}
           {(!!error || results?.some(result => !!result.error)) && <IconButton icon={RotateCw} label="Retry word translation" onPress={() => setRevision(value => value + 1)} />}
-          {timed && !pending && <Pressable accessibilityRole="button" accessibilityLabel={audio.phase === 'idle' ? phrase ? 'Play phrase' : 'Play word' : 'Stop word audio'} onPress={() => {
-            speech.stop();
-            if (audio.phase === 'idle') void audio.play('word').catch(() => {}); else audio.stop();
-          }} style={styles.save}>
-            {audio.phase === 'loading' ? <ActivityIndicator color={colors.accent} /> : audio.phase === 'playing' ? <Square size={19} color={colors.ink} /> : <Volume2 size={19} color={colors.ink} />}
-            <Text style={styles.saveText}>{audio.phase === 'loading' ? 'Loading audio…' : audio.phase === 'playing' ? 'Stop audio' : phrase ? 'Play phrase' : 'Play word'}</Text>
-          </Pressable>}
           {!!audio.error && <Text accessibilityRole="alert" style={styles.error}>{audio.error}</Text>}
-          <Pressable accessibilityRole="button" accessibilityLabel={phrase ? 'Save phrase' : 'Save word'} accessibilityState={{ disabled: saving || pending }} disabled={saving || pending} onPress={() => { void save(); }} style={styles.save}>
-            <BookmarkPlus size={19} color={colors.ink} /><Text style={styles.saveText}>{saving ? 'Saving…' : phrase ? 'Save phrase' : 'Save word'}</Text>
-          </Pressable>
           {!!saveStatus && <Text accessibilityLiveRegion="polite" style={styles.help}>{saveStatus}</Text>}
-          <WordAiProviderPicker ai={ai} />
-          {!pending && !aiAvailable && <Text style={styles.help}>{ai.error || (!ai.ready ? 'Loading AI providers…' : 'Choose a connected provider and model to generate examples and grammar explanations.')}</Text>}
           <Pressable accessibilityRole="button" accessibilityLabel="Generate example" accessibilityState={{ disabled: example.busy || !aiAvailable }} disabled={example.busy || !aiAvailable} onPress={() => { void example.generate(); }} style={[styles.save, !aiAvailable && styles.disabled]}>
             {example.busy ? <ActivityIndicator color={colors.accent} /> : <Sparkles size={19} color={colors.ink} />}<Text style={styles.saveText}>{example.busy ? 'Generating example…' : 'Generate example'}</Text>
           </Pressable>
@@ -164,6 +163,8 @@ export function WordTranslationSheet({ selection, anchor, pending = false, frame
             <Text selectable style={styles.saveText}>Base form: {grammar.result.baseForm}</Text>
             <Text selectable style={styles.answer}>{grammar.result.explanation}</Text>
           </View>}
+          <WordAiProviderPicker ai={ai} />
+          {!pending && !aiAvailable && <Text style={styles.help}>{ai.error || (!ai.ready ? 'Loading AI providers…' : 'Choose a connected provider and model to generate examples and grammar explanations.')}</Text>}
         </ScrollView>
       </View>
   </View>;
@@ -178,7 +179,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   content: { paddingHorizontal: 20, paddingBottom: 8, gap: 14 },
   wordHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   word: { flexShrink: 1, color: colors.ink, fontSize: 28, fontWeight: '600' },
-  copyButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  wordActions: { flexDirection: 'row', flexShrink: 0 },
+  actionButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   label: { color: colors.muted, fontSize: 12 },
   translation: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
   result: { gap: 8, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
