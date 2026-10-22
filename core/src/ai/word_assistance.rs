@@ -150,15 +150,16 @@ pub(super) fn audio(command: &Value, root: &Path) -> Result<Value> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let path = root.to_str().ok_or("Invalid caption storage path.")?;
-        let (start, end) = crate::vocabulary::word_audio(command, path)?
-            .ok_or("This word has no individual audio timestamps.")?;
+        let timing = crate::vocabulary::word_audio(command, path)?
+            .ok_or("This selection has no playable word or caption timestamps.")?;
+        let (start, end) = (timing.start, timing.end);
         let data = crate::load(path, video_id, string(command, "trackId")?)?;
         let index = command["segmentIndex"]
             .as_u64()
             .ok_or("Invalid caption reference.")?;
         let cue = games::Cue::from_transcript(&data, &format!("cue-{index}"))?;
         if start < cue.start || end > cue.start + cue.duration + 0.01 {
-            return Err("The word's timestamps are outside this caption.".into());
+            return Err("The selection's timestamps are outside this caption.".into());
         }
         (start, end, cue)
     };

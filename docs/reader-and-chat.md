@@ -58,8 +58,9 @@ result for each. Languages outside your profile use a known language, or English
 when none is available.
 
 Drag either native selection handle to extend the selection to a phrase. The
-card follows the selected text and supports copying and saving it. Phrase audio
-is available when word timings are present. Choose the AI provider and model in
+card follows the selected text and supports copying and saving it. The speaker
+icon plays the selected word or phrase when word timings are present, or the
+containing caption otherwise. Choose the AI provider and model at the bottom of
 the card.
 
 The card can generate a usage example with translations using your selected AI
@@ -68,8 +69,10 @@ your known/native language. Each example sentence and translation has a speaker
 button for text-to-speech in its own language.
 
 If the word has individual timestamps, **Play word** plays its original audio
-and stops at the word's end. It shares the reader and games' lazy video-caption
-audio cache; words in the same caption reuse downloaded fragments.
+and stops at the word's end. Otherwise, **Play caption** plays the full caption
+when its duration or the next caption supplies a valid end boundary. It shares
+the reader and games' lazy video-caption audio cache; words in the same caption
+reuse downloaded fragments.
 
 The first translation may download a language model. Android uses ML Kit through
 `expo-translate-text`; iOS translation requires iOS 18 or newer. Rebuild the native

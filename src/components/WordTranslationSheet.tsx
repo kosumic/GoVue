@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { BookOpen, BookmarkPlus, Check, Copy, RotateCw, Sparkles, Square, Volume2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { planWordTranslation, saveWord, wordAudioTiming, type WordSelection, type WordTranslationPlan } from '../core/vocabulary';
+import { planWordTranslation, saveWord, wordAudioTiming, type WordAudioTiming, type WordSelection, type WordTranslationPlan } from '../core/vocabulary';
 import { stopCaptionAudio, useWordAudio } from '../ai/useGameAudio';
 import { useWordAssistance, type WordExample, type WordGrammar } from '../ai/useWordAssistance';
 import { useAi } from '../ai/useAi';
@@ -46,7 +46,7 @@ export function WordTranslationSheet({ selection, anchor, pending = false, frame
   const [revision, setRevision] = useState(0);
   const [saveStatus, setSaveStatus] = useState('');
   const [saving, setSaving] = useState(false);
-  const [timed, setTimed] = useState(false);
+  const [audioKind, setAudioKind] = useState<WordAudioTiming['kind'] | null>(null);
   const ai = useAi(true, 'word-assistance');
   const provider = ai.providers.find(p => p.id === ai.activeId);
   const group = ai.groups.find(g => g.id === ai.activeId);
@@ -82,8 +82,8 @@ export function WordTranslationSheet({ selection, anchor, pending = false, frame
   useEffect(() => { setSaveStatus(''); setSaving(false); }, [selection]);
   useEffect(() => {
     let active = true;
-    setTimed(false);
-    void wordAudioTiming(selection).then(timing => { if (active) setTimed(timing !== null); }).catch(() => {});
+    setAudioKind(null);
+    void wordAudioTiming(selection).then(timing => { if (active) setAudioKind(timing?.kind ?? null); }).catch(() => {});
     return () => { active = false; };
   }, [selection]);
   useEffect(() => {
@@ -111,7 +111,7 @@ export function WordTranslationSheet({ selection, anchor, pending = false, frame
               <Pressable accessibilityRole="button" accessibilityLabel={phrase ? copied ? 'Phrase copied' : 'Copy phrase' : copied ? 'Word copied' : 'Copy word'} disabled={pending} accessibilityState={{ disabled: pending }} accessibilityLiveRegion="polite" onPress={() => copyText(selection.word)} style={({ pressed }) => [styles.actionButton, (pending || pressed) && styles.disabled]}>
                 {copied ? <Check size={24} color={colors.accent} /> : <Copy size={24} color={colors.ink} />}
               </Pressable>
-              {timed && !pending && <Pressable accessibilityRole="button" accessibilityLabel={audio.phase === 'idle' ? phrase ? 'Play phrase' : 'Play word' : 'Stop word audio'} accessibilityState={{ busy: audio.phase === 'loading' }} onPress={() => {
+              {audioKind && !pending && <Pressable accessibilityRole="button" accessibilityLabel={audio.phase === 'idle' ? audioKind === 'caption' ? 'Play caption' : phrase ? 'Play phrase' : 'Play word' : audioKind === 'caption' ? 'Stop caption audio' : 'Stop word audio'} accessibilityHint={audioKind === 'caption' ? 'Plays the full caption containing this selection.' : undefined} accessibilityState={{ busy: audio.phase === 'loading' }} onPress={() => {
                 speech.stop();
                 if (audio.phase === 'idle') void audio.play('word').catch(() => {}); else audio.stop();
               }} style={({ pressed }) => [styles.actionButton, pressed && styles.disabled]}>

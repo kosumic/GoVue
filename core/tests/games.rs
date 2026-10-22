@@ -637,6 +637,22 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
         root,
         json!({"op":"ai_game_audio_release","token":shared["token"]}),
     );
+    let word_audio = json!({"op":"ai_word_audio","videoId":video,"trackId":".en","segmentIndex":0,"tokenIndex":2,"word":"words"});
+    let caption = ok(root, word_audio.clone());
+    assert_eq!(caption["start"], clip["start"]);
+    assert_eq!(caption["end"], clip["end"]);
+    assert_eq!(
+        ranges.0.lock().unwrap().len(),
+        3,
+        "untimed words replay the whole cached caption"
+    );
+    ok(
+        root,
+        json!({"op":"ai_game_audio_release","token":caption["token"]}),
+    );
+    let mut invalid_word = word_audio;
+    invalid_word["word"] = json!("stale word");
+    assert_eq!(call(root, invalid_word)["ok"], false);
     for (field, value) in [
         ("videoId", json!("0123456789a")),
         ("trackId", json!(".fr")),

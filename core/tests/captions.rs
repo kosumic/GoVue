@@ -129,13 +129,19 @@ fn player_pages_preserve_every_word_with_absent_or_shared_word_timings() {
 #[test]
 fn phrase_actions_use_the_whole_range_and_bound_audio_duration() {
     let store = Store::new();
-    for duration in [2500, 40_000] {
-        let source = json!({"events":[{"tStartMs":1000,"dDurationMs":duration,"segs":[
+    for (duration, timed) in [(2500, true), (40_000, true), (2500, false), (40_000, false)] {
+        let mut parts = json!([
             {"utf8":"Hello, ","tOffsetMs":0},
             {"utf8":"world!\n","tOffsetMs":600},
             {"utf8":"Hello again.","tOffsetMs":1400}
-        ]}]})
-        .to_string();
+        ]);
+        if !timed {
+            for part in parts.as_array_mut().unwrap() {
+                part.as_object_mut().unwrap().remove("tOffsetMs");
+            }
+        }
+        let source =
+            json!({"events":[{"tStartMs":1000,"dDurationMs":duration,"segs":parts}]}).to_string();
         store.ingest(VIDEO, &source);
         let range = store.value(json!({"op":"vocabulary_selection","videoId":VIDEO,"trackId":".en","segmentIndex":0,"selectionStart":0,"selectionEnd":25}));
         assert_eq!(range["word"], "Hello, world! Hello again");
@@ -145,7 +151,7 @@ fn phrase_actions_use_the_whole_range_and_bound_audio_duration() {
         assert_eq!(
             audio,
             if duration == 2500 {
-                json!({"start":1.0,"end":3.5})
+                json!({"start":1.0,"end":3.5,"kind":if timed { "word" } else { "caption" }})
             } else {
                 Value::Null
             }

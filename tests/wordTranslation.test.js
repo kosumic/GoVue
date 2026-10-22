@@ -11,8 +11,8 @@ const source = { videoId: 'abcdefghijk', trackId: '.en', segments: [{ text: 'Hel
 const selection = { source, segmentIndex: 0, tokenIndex: 0, word: 'Hello' };
 const plan = (targetLangCode, targetLanguage, input = 'Hello') => ({ input, sourceLangCode: 'en', targetLangCode, targetLanguage, sameLanguage: false });
 
-async function harness() {
-  const plans = [], native = [], saves = [];
+async function harness(audioTiming = null) {
+  const plans = [], native = [], saves = [], audioPlays = [];
   const deferred = (list, args) => new Promise((resolve, reject) => list.push({ args, resolve, reject }));
   const bundle = await build({ entryPoints: ['src/components/WordTranslationSheet.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', packages: 'external',
     plugins: [{ name: 'translation-platform', setup(builder) {
@@ -30,8 +30,8 @@ async function harness() {
   });
   const module = { exports: {} };
   Function('require', 'module', 'exports', bundle.outputFiles[0].text)(name => {
-    if (name === 'test-core') return { planWordTranslation: (...args) => deferred(plans, args), saveWord: (...args) => deferred(saves, args), wordAudioTiming: async () => null };
-    if (name === 'test-word-tools') return { useWordAudio: () => ({ phase: 'idle', error: '', play() {}, stop() {} }), useWordAssistance: () => ({ result: null, error: '', busy: false, generate() {} }), useExampleSpeech: () => ({ active: null, error: '', speak() {}, stop() {} }) };
+    if (name === 'test-core') return { planWordTranslation: (...args) => deferred(plans, args), saveWord: (...args) => deferred(saves, args), wordAudioTiming: async () => audioTiming };
+    if (name === 'test-word-tools') return { useWordAudio: () => ({ phase: 'idle', error: '', async play(...args) { audioPlays.push(args); }, stop() {} }), useWordAssistance: () => ({ result: null, error: '', busy: false, generate() {} }), useExampleSpeech: () => ({ active: null, error: '', speak() {}, stop() {} }) };
     if (name === 'test-ai') return { useAi: () => ({ ready: true, providers: [], groups: [], activeId: null }) };
     if (name === 'test-ai-picker') return { WordAiProviderPicker: 'WordAiProviderPicker' };
     if (name === 'test-native') return { translate: (...args) => deferred(native, args) };
@@ -47,7 +47,7 @@ async function harness() {
   let props = { selection, onClose() {} }, root;
   const element = () => createElement(module.exports.WordTranslationSheet, props);
   await act(() => { root = create(element()); });
-  return { root, plans, native, saves,
+  return { root, plans, native, saves, audioPlays,
     render: changes => act(() => { props = { ...props, ...changes }; root.update(element()); }),
     reply: (item, value) => act(async () => item.resolve(value)),
     fail: (item, error) => act(async () => item.reject(error)),
@@ -57,7 +57,12 @@ async function harness() {
 }
 
 test('every learning-language result appears independently and native options never contain undefined', async t => {
-  const env = await harness(); t.after(env.unmount);
+  const env = await harness({ start: 1, end: 3, kind: 'caption' }); t.after(env.unmount);
+  const play = env.root.root.findByProps({ accessibilityLabel: 'Play caption' });
+  assert.equal(play.findAllByType('Text').length, 0, 'caption playback remains an icon button');
+  assert.equal(play.parent, env.root.root.findByProps({ accessibilityLabel: 'Copy word' }).parent);
+  await env.press('Play caption');
+  assert.deepEqual(env.audioPlays, [['word']]);
   await env.reply(env.plans[0], [plan('es', 'Spanish'), plan('de', 'German')]);
   assert.match(env.text(), /Spanish/); assert.match(env.text(), /German/);
   assert.equal(env.native.length, 1, 'native translation sessions run sequentially');
@@ -120,11 +125,13 @@ test('dismissed planning never invokes native translation and same-language fall
 });
 
 test('dragging keeps the card nonmodal, drops old translations, and saves the updated phrase', async t => {
-  const env = await harness(); t.after(env.unmount);
+  const env = await harness({ start: 1, end: 2, kind: 'word' }); t.after(env.unmount);
+  assert.equal(env.root.root.findAllByProps({ accessibilityLabel: 'Play word' }).length, 1);
   assert.equal(env.root.root.findAllByType('Modal').length, 0, 'the source handles remain in the active window');
   assert.ok(env.root.root.findAllByType('View').some(node => node.props.pointerEvents === 'box-none'));
   await env.reply(env.plans[0], [plan('es', 'Spanish'), plan('de', 'German')]);
   await env.render({ pending: true });
+  assert.equal(env.root.root.findAllByProps({ accessibilityLabel: 'Play word' }).length, 0);
   assert.equal(env.root.root.findByProps({ accessibilityLabel: 'Save word' }).props.disabled, true);
   const next = { ...selection, word: 'Hello world', endTokenIndex: 2 };
   await env.render({ selection: next });
@@ -133,6 +140,8 @@ test('dragging keeps the card nonmodal, drops old translations, and saves the up
   assert.doesNotMatch(env.text(), /Stale greeting/);
   assert.equal(env.native.length, 1, 'remaining translations for the old word were cancelled');
   await env.render({ pending: false });
+  await env.press('Play phrase');
+  assert.deepEqual(env.audioPlays, [['word']]);
   assert.deepEqual(env.plans[1].args[0], next);
   await env.reply(env.plans[1], [plan('es', 'Spanish', 'Hello world')]);
   assert.equal(env.native[1].args[0].input, 'Hello world');

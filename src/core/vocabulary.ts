@@ -30,7 +30,8 @@ export type CaptionRange = { tokenIndex: number; endTokenIndex: number; word: st
 export const captionSelection = (selection: WordSelection, range?: { selectionStart: number; selectionEnd: number }) =>
   coreRequest<CaptionRange>({ op: 'vocabulary_selection', videoId: selection.source.videoId, trackId: selection.source.trackId, segmentIndex: selection.segmentIndex, tokenIndex: selection.tokenIndex, ...(range ?? {}) });
 export type WordTranslationPlan = { input: string; sourceLangCode: string; targetLangCode: string; targetLanguage: string; sameLanguage: boolean };
+export type WordAudioTiming = { start: number; end: number; kind: 'word' | 'caption' };
 export const wordAudioTiming = ({ source, segmentIndex, tokenIndex, endTokenIndex, word }: WordSelection) =>
-  coreRequest<{ start: number; end: number } | null>({ op: 'vocabulary_word_audio', videoId: source.videoId, trackId: source.trackId, segmentIndex, tokenIndex, endTokenIndex, word });
+  coreRequest<WordAudioTiming | null>({ op: 'vocabulary_word_audio', videoId: source.videoId, trackId: source.trackId, segmentIndex, tokenIndex, endTokenIndex, word });
 export const planWordTranslation = ({ source, segmentIndex, tokenIndex, endTokenIndex, word }: WordSelection) =>
   coreRequest<WordTranslationPlan[]>({ op: 'vocabulary_translation', videoId: source.videoId, trackId: source.trackId, segmentIndex, tokenIndex, endTokenIndex, word });

@@ -316,16 +316,45 @@ pub(super) fn word_context(command: &Value, root: &str) -> Result<Value> {
     )
 }
 
-pub(super) fn word_audio(command: &Value, root: &str) -> Result<Option<(f64, f64)>> {
+#[derive(Serialize)]
+pub(super) struct WordAudioTiming {
+    pub start: f64,
+    pub end: f64,
+    kind: &'static str,
+}
+
+pub(super) fn word_audio(command: &Value, root: &str) -> Result<Option<WordAudioTiming>> {
     let data = load(
         root,
         string(command, "videoId")?,
         string(command, "trackId")?,
     )?;
     let token = selection(&data, command, true)?;
-    Ok(token.start.zip(token.end).filter(|(start, end)| {
+    let valid = |(start, end): &(f64, f64)| {
         start.is_finite() && end.is_finite() && *start >= 0.0 && end > start && end - start <= 30.0
-    }))
+    };
+    if let Some((start, end)) = token.start.zip(token.end).filter(valid) {
+        return Ok(Some(WordAudioTiming {
+            start,
+            end,
+            kind: "word",
+        }));
+    }
+    let segment_index = index(command, "segmentIndex")?;
+    let segment = &data.segments[segment_index];
+    let end = if segment.duration > 0.0 {
+        Some(segment.start + segment.duration)
+    } else {
+        data.segments.get(segment_index + 1).map(|next| next.start)
+    };
+    Ok(end
+        .map(|end| (segment.start, end))
+        .filter(valid)
+        .map(|(start, end)| WordAudioTiming {
+            start,
+            end,
+            kind: "caption",
+        }))
 }
 
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
@@ -343,8 +372,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 "selectionEnd":selected.utf16_end}),
             )
         }
-        "vocabulary_word_audio" => Ok(word_audio(command, root)?
-            .map_or(Value::Null, |(start, end)| json!({"start":start,"end":end}))),
+        "vocabulary_word_audio" => Ok(json!(word_audio(command, root)?)),
         "vocabulary_details" => with_transcript(
             root,
             string(command, "videoId")?,
