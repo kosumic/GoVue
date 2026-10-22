@@ -214,7 +214,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
             <TranscriptList rows={paneRows} activeIndex={track === undefined
               ? indices[0][activeIndices[0]] ?? indices[1][activeIndices[1]] ?? -1
               : indices[track][activeIndices[track]] ?? -1}
-              following={following} followRevision={followRevision} enabled={!loading && !error} comparison={!!comparison}
+              following={following} followRevision={followRevision} enabled={!loading && !error}
               style={styles.pane} extraData={{ position, activeKey, wordSelection }} onStopFollowing={stopFollowing}
               contentContainerStyle={[styles.list, { paddingBottom: 24 + (track === 0 ? 0 : bottomInset) }]}
               empty={<Text style={styles.help}>{searchError || (searching ? 'Searching…' : 'No matching lines.')}</Text>}

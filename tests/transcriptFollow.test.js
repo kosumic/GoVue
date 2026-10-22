@@ -86,7 +86,7 @@ test('opening late mounts the playing line before any rows are measured', async 
   assert.equal(env.windows.length, 1, 'waiting for native measurements does not cause remount or timer loops');
   await env.measure(1200);
   await env.tick(0);
-  assert.deepEqual(env.scrolls.at(-1), { index: 1200, viewPosition: 0.3, animated: false });
+  assert.deepEqual(env.scrolls.at(-1), { index: 1200, viewPosition: 0, animated: false });
 });
 
 test('a distant seek renders its target, and dragging cancels alignment until following resumes', async t => {
@@ -128,7 +128,11 @@ async function visibilityHarness(t, frames = [{ y: 20, height: 180 }, { y: 200, 
   class NativeList extends React.Component {
     constructor(props) { super(props); list = this; offset = 0; }
     getNativeScrollRef() { return { measureInWindow: callback => callback(0, 100, 300, 300) }; }
-    scrollToOffset(value) { offsets.push(value); offset = value.offset; }
+    scrollToOffset(value) {
+      offsets.push(value);
+      offset = value.offset;
+      this.props.onScroll({ nativeEvent: { contentOffset: { y: offset } } });
+    }
     scrollToIndex(value) { indices.push(value); }
     render() {
       return React.createElement('FlatList', {}, this.props.data.map((item, index) =>
@@ -147,10 +151,18 @@ async function visibilityHarness(t, frames = [{ y: 20, height: 180 }, { y: 200, 
   const element = () => React.createElement(module.exports.TranscriptList, props);
   await act(() => { root = create(element(), { createNodeMock: element =>
     element.type === 'View' ? measure(element.props.children.props.index) : null }); });
+  await act(() => list.props.onLayout());
+  offsets.length = 0;
+  indices.length = 0;
   t.after(() => act(() => root.unmount()));
   return { offsets, indices,
+    offset: () => offset,
     render: changes => act(() => { props = { ...props, ...changes }; root.update(element()); }),
-    remount: () => act(() => { props = { ...props, rows: [...props.rows] }; root.update(element()); }),
+    remount: async () => {
+      await act(() => { props = { ...props, rows: [...props.rows] }; root.update(element()); });
+      await act(() => list.props.onLayout());
+    },
+    layout: () => act(() => list.props.onLayout()),
     line: (index, y, height = 24) => act(() => {
       root.root.findAllByType('Caption').find(node => node.props.index === index).props.onFollow({ node: measure(index), y, height });
     }),
@@ -168,42 +180,61 @@ test('following wrapped lines leaves a fully visible multi-line caption still', 
   assert.deepEqual(env.indices, []);
 });
 
-test('an already-visible next caption does not jump while its spoken text layout is pending', async t => {
+test('a new timestamped caption moves to the top even when it was already visible', async t => {
   const env = await visibilityHarness(t);
   await env.render({ activeIndex: 1 });
-  assert.deepEqual(env.offsets, []);
-  assert.deepEqual(env.indices, [], 'the fallback checks the mounted caption before jumping');
+  assert.deepEqual(env.offsets, [{ offset: 200, animated: false }]);
+  assert.equal(env.offset(), 200, 'the previous caption ends at the top edge and is hidden');
+  for (const y of [0, 24, 48]) await env.line(1, y);
+  await env.layout();
+  assert.equal(env.offsets.length, 1, 'wrapped lines and layout events do not realign the caption');
+  assert.deepEqual(env.indices, []);
 });
 
-test('a partially hidden caption scrolls only enough to reveal its clipped edge in either direction', async t => {
+test('caption changes align the new caption at the top in either direction', async t => {
   const env = await visibilityHarness(t);
   await env.render({ activeIndex: 2 });
-  assert.deepEqual(env.offsets, [{ offset: 72, animated: false }]);
+  assert.deepEqual(env.offsets, [{ offset: 280, animated: false }]);
   await env.render({ activeIndex: 0 });
-  assert.deepEqual(env.offsets.at(-1), { offset: 8, animated: false });
+  assert.deepEqual(env.offsets.at(-1), { offset: 20, animated: false });
   assert.deepEqual(env.indices, []);
 });
 
-test('a caption taller than the pane follows its spoken lines only when they leave view', async t => {
+test('a long caption pages its spoken line to the top and leaves subsequent visible lines still', async t => {
   const env = await visibilityHarness(t, [{ y: 20, height: 1200 }]);
-  assert.deepEqual(env.offsets, [], 'a visible tall caption waits for its spoken line instead of aligning the whole row');
-  for (const y of [0, 120, 240]) await env.line(0, y);
+  assert.equal(env.offset(), 20, 'the long caption starts at the top');
+  for (const y of [0, 120, 240, 264]) await env.line(0, y);
   assert.deepEqual(env.offsets, []);
-  await env.line(0, 264);
   await env.line(0, 288);
-  await env.line(0, 288);
+  assert.deepEqual(env.offsets, [{ offset: 308, animated: false }], 'all visual lines before the spoken line are hidden');
+  for (const y of [312, 336, 360, 384, 408, 432, 456, 480, 504, 528, 552]) await env.line(0, y);
+  await env.layout();
+  assert.equal(env.offsets.length, 1, 'following does not stick to the bottom and scroll on every wrapped line');
+  await env.line(0, 576);
+  await env.line(0, 576);
   await env.line(0, 0);
-  assert.deepEqual(env.offsets, [20, 44, 8].map(offset => ({ offset, animated: false })),
-    'each newly hidden line reveals only its missing edge, including a backward seek');
+  assert.deepEqual(env.offsets, [308, 596, 20].map(offset => ({ offset, animated: false })),
+    'the next page and a backward seek also place the spoken line at the top');
   assert.deepEqual(env.indices, []);
+});
+
+test('a spoken line received during caption alignment is followed after the caption reaches the top', async t => {
+  const env = await visibilityHarness(t, [{ y: 20, height: 80 }, { y: 100, height: 1200 }]);
+  env.defer();
+  await env.render({ activeIndex: 1 });
+  await env.line(1, 500);
+  await env.flush();
+  assert.deepEqual(env.offsets, [100, 600].map(offset => ({ offset, animated: false })));
+  assert.equal(env.offset(), 600, 'a seek into a long caption finishes with its spoken line at the top');
 });
 
 test('a remounted pane starts with its own native scroll offset', async t => {
   const env = await visibilityHarness(t, [{ y: 8, height: 1200 }]);
   await env.line(0, 264);
   await env.line(0, 288);
-  assert.deepEqual(env.offsets, [8, 32].map(offset => ({ offset, animated: false })));
+  assert.deepEqual(env.offsets, [{ offset: 296, animated: false }]);
   await env.remount();
+  assert.equal(env.offset(), 8, 'the new pane aligns using its own native offset');
   await env.line(0, 0);
   assert.equal(env.offsets.length, 2, 'the previous pane offset cannot pull a newly mounted caption away from the top');
 });
@@ -211,9 +242,7 @@ test('a remounted pane starts with its own native scroll offset', async t => {
 test('a mounted destination with a clipped native view retains the index-jump fallback', async t => {
   const env = await visibilityHarness(t, [{ y: 20, height: 80 }, { y: 1000, height: 80, clipped: true }]);
   await env.render({ activeIndex: 1 });
-  assert.deepEqual(env.indices, [{ index: 1, viewPosition: 0.3, animated: false }]);
-  await env.render({ comparison: true });
-  assert.deepEqual(env.indices.at(-1), { index: 1, viewPosition: 0, animated: false });
+  assert.deepEqual(env.indices, [{ index: 1, viewPosition: 0, animated: false }]);
   assert.deepEqual(env.offsets, []);
 });
 

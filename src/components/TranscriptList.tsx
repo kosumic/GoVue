@@ -6,7 +6,7 @@ export type TranscriptFocus = { node: { measureInWindow: (callback: (x: number, 
 
 // Each language keeps its own render window and measurements. A long caption
 // can scroll within its pane without moving the other language out of view.
-export function TranscriptList({ rows, activeIndex, following, followRevision, enabled, extraData, style, contentContainerStyle, empty, onStopFollowing, renderRow, comparison = false }: {
+export function TranscriptList({ rows, activeIndex, following, followRevision, enabled, extraData, style, contentContainerStyle, empty, onStopFollowing, renderRow }: {
   rows: TranscriptRow[];
   activeIndex: number;
   following: boolean;
@@ -18,11 +18,10 @@ export function TranscriptList({ rows, activeIndex, following, followRevision, e
   empty: ReactNode;
   onStopFollowing: () => void;
   renderRow: (row: TranscriptRow, active: boolean, follow: (focus: TranscriptFocus) => void) => ReactNode;
-  comparison?: boolean;
 }) {
   const [window, setWindow] = useState<{ rows: TranscriptRow[]; index: number; version: number } | null>(null);
   const list = useRef<FlatList<TranscriptRow>>(null);
-  const target = useRef<{ index: number; recovering: boolean } | null>(null);
+  const target = useRef<{ index: number; recovering: boolean; aligned: boolean } | null>(null);
   const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollOffset = useRef(0);
   const rowNodes = useRef(new Map<number, View>());
@@ -31,12 +30,14 @@ export function TranscriptList({ rows, activeIndex, following, followRevision, e
   const mountList = useCallback((node: FlatList<TranscriptRow> | null) => {
     list.current = node;
     scrollOffset.current = 0;
+    focus.current = null;
+    if (target.current) target.current.aligned = false;
     ++measurement.current;
   }, []);
-  const reveal = useCallback((index: number, node: TranscriptFocus['node'], line?: TranscriptFocus) => {
-    const revision = ++measurement.current;
+  const reveal = useCallback((index: number, node: TranscriptFocus['node'], line?: TranscriptFocus, onAligned?: () => void) => {
     const current = target.current;
-    if (!current || current.index !== index) return;
+    if (!current || current.index !== index || (line && !current.aligned)) return;
+    const revision = ++measurement.current;
     const viewport = list.current?.getNativeScrollRef();
     if (!viewport || !('measureInWindow' in viewport)) return;
     viewport.measureInWindow((_x, top, _width, height) => {
@@ -44,28 +45,25 @@ export function TranscriptList({ rows, activeIndex, following, followRevision, e
         if (target.current !== current || revision !== measurement.current || height <= 0) return;
         // Android can keep a row mounted while clipping its native view.
         if (nodeHeight <= 0) {
-          list.current?.scrollToIndex({ index, viewPosition: comparison ? 0 : 0.3, animated: false });
+          list.current?.scrollToIndex({ index, viewPosition: 0, animated: false });
           return;
         }
         const padding = Math.min(12, height * 0.05);
-        const visibleTop = top + padding;
         const visibleBottom = top + height - padding;
-        // A visible tall caption must wait for its spoken line's text layout.
-        if (!line && nodeHeight > visibleBottom - visibleTop && y < visibleBottom && y + nodeHeight > visibleTop) return;
-        // For an offscreen tall caption, reveal its beginning until text is ready.
-        const lineHeight = line?.height ?? Math.min(nodeHeight, visibleBottom - visibleTop);
-        if (lineHeight <= 0) return;
         const lineTop = y + (line?.y ?? 0);
-        const lineBottom = lineTop + lineHeight;
-        if (lineTop >= visibleTop && lineBottom <= visibleBottom) return;
-        const delta = lineTop < visibleTop ? lineTop - visibleTop : lineBottom - visibleBottom;
-        const offset = Math.max(0, scrollOffset.current + delta);
-        if (Math.abs(offset - scrollOffset.current) < 1) return;
-        scrollOffset.current = offset;
-        list.current?.scrollToOffset({ offset, animated: false });
+        // New captions start at the top. Within a long caption, wait until
+        // the spoken line leaves view, then hide all preceding visual lines.
+        if (line && lineTop >= top && lineTop + line.height <= visibleBottom) return;
+        if (!line) current.aligned = true;
+        const offset = Math.max(0, scrollOffset.current + lineTop - top);
+        if (Math.abs(offset - scrollOffset.current) >= 1) {
+          scrollOffset.current = offset;
+          list.current?.scrollToOffset({ offset, animated: false });
+        }
+        onAligned?.();
       });
     });
-  }, [comparison]);
+  }, []);
   const followLine = useCallback((index: number, value: TranscriptFocus) => {
     focus.current = { rows, index, value };
     reveal(index, value.node, value);
@@ -80,23 +78,22 @@ export function TranscriptList({ rows, activeIndex, following, followRevision, e
     retry.current = null;
     const current = target.current;
     if (current && current.index < (list.current?.props.data?.length ?? 0)) {
-      const visual = focus.current;
-      if (visual?.rows === rows && visual.index === current.index) {
-        current.recovering = false;
-        followLine(current.index, visual.value);
+      const followVisual = () => {
+        const visual = focus.current;
+        if (visual?.rows === rows && visual.index === current.index) followLine(current.index, visual.value);
+      };
+      if (current.aligned) {
+        followVisual();
         return;
       }
       current.recovering = false;
       const node = rowNodes.current.get(current.index);
-      if (node) {
-        reveal(current.index, node);
-        return;
-      }
-      list.current?.scrollToIndex({ index: current.index, viewPosition: comparison ? 0 : 0.3, animated: false });
+      if (node) reveal(current.index, node, undefined, followVisual);
+      else list.current?.scrollToIndex({ index: current.index, viewPosition: 0, animated: false });
     }
-  }, [comparison, followLine, reveal, rows]);
+  }, [followLine, reveal, rows]);
   useEffect(() => {
-    target.current = following && activeIndex >= 0 && enabled ? { index: activeIndex, recovering: false } : null;
+    target.current = following && activeIndex >= 0 && enabled ? { index: activeIndex, recovering: false, aligned: false } : null;
     if (target.current && list.current && !rowNodes.current.has(activeIndex)) {
       // Cached cell offsets can be stale after a tall caption changes the
       // render window. Mount an offscreen seek destination with fresh metrics.
@@ -119,12 +116,16 @@ export function TranscriptList({ rows, activeIndex, following, followRevision, e
     }}
     onLayout={scrollToCurrent}
     scrollEventThrottle={16}
-    onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
+    onScroll={event => {
+      scrollOffset.current = event.nativeEvent.contentOffset.y;
+      if (target.current) scrollToCurrent();
+    }}
     onContentSizeChange={() => { if (target.current?.recovering) scrollToCurrent(); }}
     onScrollToIndexFailed={({ index }) => {
       const current = target.current;
       if (!current || current.index !== index) return;
       current.recovering = true;
+      current.aligned = false;
       // Mount an unmeasured destination directly rather than guessing its offset.
       setWindow(previous => previous?.rows === rows && previous.index === index ? previous : {
         rows, index, version: (previous?.version ?? 0) + 1,
