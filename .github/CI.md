@@ -21,6 +21,21 @@ Java/Kotlin around the Android build. Gradle's build cache is disabled so CodeQL
 observes compilation of the generated Expo project and local native module.
 Both analyses upload results to GitHub code scanning.
 
+`npm ci` also applies temporary, version-checked security backports in
+`scripts/patch-security-dependencies.ts`. `braces` 3.0.3 bounds parser nesting
+and validates supplied AST depth/cycles using
+[upstream PR #88](https://github.com/micromatch/braces/pull/88).
+`node-forge` 1.4.0 rejects surplus nested RSA DigestAlgorithm elements using
+[upstream PR #1152](https://github.com/digitalbazaar/forge/pull/1152).
+Behavioral regressions run in `npm test`. Remove each backport after upgrading
+to an upstream release that fixes its advisory; installation fails on version
+or source changes so the patches cannot silently stop applying. These local
+backports do not clear Dependabot's version-based alerts.
+
+`plugins/withAndroidDependencyConstraints.cjs` keeps the generated app's Gson
+and Commons IO dependencies above their vulnerable versions. Prebuild applies
+these Gradle constraints repeatedly without editing the ignored native project.
+
 On `master`, the Android build also resolves `:app`'s `releaseRuntimeClasspath`
 and generates a dependency graph containing the app's transitive native runtime
 dependencies. An empty or missing snapshot fails CI. A separate job submits the

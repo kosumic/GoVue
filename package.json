@@ -21,7 +21,7 @@
   "scripts": {
     "preview:mockups": "node scripts/generate-readme-phone-mockups.ts",
     "page:build": "node scripts/build-page.ts",
-    "postinstall": "node scripts/patch-video.ts && node scripts/patch-translate.ts && npm run page:build",
+    "postinstall": "node scripts/patch-security-dependencies.ts && node scripts/patch-video.ts && node scripts/patch-translate.ts && npm run page:build",
     "start": "expo start --dev-client --scheme govue --host lan",
     "android": "expo run:android",
     "ios": "npm run core:ios && expo run:ios",

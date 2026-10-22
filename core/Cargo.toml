@@ -24,7 +24,7 @@ ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 tiny_http = "0.12"
 base64 = "0.23"
 getrandom = "0.2"
-jsonwebtoken = { version = "9.3", default-features = false }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 
 [lints]
 workspace = true
