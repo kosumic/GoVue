@@ -1,9 +1,10 @@
 # Core request lock profiling
 
-`REQUEST_LOCK` still serializes the entire `execute()` dispatch and transcript
-access from extraction and AI workers. It protects storage read-modify-write
-operations, including vocabulary updates. This instrumentation does not remove
-or narrow that synchronization.
+`REQUEST_LOCK` serializes storage mutations and most `execute()` operations,
+including vocabulary read-modify-write updates and transcript persistence from
+extraction workers. Transcript restoration takes a short snapshot under this
+lock, then reads, decodes, normalizes, and builds its response outside it. Reader
+session snapshots use their existing reader mutex without taking the global lock.
 
 Every acquisition now emits three Android Perfetto slices:
 
@@ -14,8 +15,8 @@ Every acquisition now emits three Android Perfetto slices:
 The wait and hold slices are siblings inside the caller slice. Dispatch adds a
 `GoVue core op: <family>` child inside the hold slice, including separate
 `transcript_accept`, `transcript_restore`, `player_settings`, and `downloads`
-labels. Request parsing is included in hold time; response-envelope serialization
-after dispatch is excluded, as before. Error returns and unwinding close slices
+labels. Request JSON parsing and response-envelope serialization are outside the
+lock. Error returns and unwinding close slices
 through RAII. A poisoned-lock failure has a wait slice without a hold slice.
 
 Labels are static and contain no request payloads, vocabulary, caption text,
@@ -53,6 +54,8 @@ preserve atomic storage updates and lock ordering. Verify any split live on
 Android and check concurrent vocabulary updates and transcript cache access.
 
 ## Pixel measurements, 2026-10-22
+
+The measurements in this section precede the snapshot optimization.
 
 The instrumented arm64 release was built and installed on a Pixel 9 Pro. A
 temporary instrumentation helper called the installed release's UniFFI boundary
@@ -113,3 +116,71 @@ workflow is recorded in `ui-verified.pftrace`, with `ui-summary.csv`,
 `ui-integrity.csv`, and screenshots confirming the reader, refresh, search, and
 caption metadata. The temporary helper APK was uninstalled after measurement;
 the profiling release remains installed.
+
+## Snapshot synchronization
+
+Warm transcript reads retain an immutable `Arc<Transcript>` from the bounded
+three-document memory cache. They no longer clone every cue, and callbacks run
+after releasing the memory-cache mutex. Extraction also builds its transcript
+response after releasing the persistence lock. Cache encoding, atomic file
+replacement, pruning, and vocabulary updates retain their existing global lock.
+
+Restoration without a track still selects the twenty newest eligible cache
+files, preserving audio-track matching and the previous fallback order. It opens
+the files while holding `REQUEST_LOCK`; these handles retain the selected file
+versions across atomic replacement or eviction. Decoding reads one document at
+a time, capped at the existing document byte limit. An explicit-track restore
+uses the matching immutable memory document or an opened file for that identity.
+
+Each memory-cache mutation replaces a revision token. A decoded file snapshot
+enters the memory cache only if its token is still current. A concurrent accept,
+extraction, reader seed, or restore therefore prevents older work from replacing
+newer cached data. The caller can still receive its consistent earlier snapshot;
+reader cancellation and revision checks continue to govern its presentation.
+Invalidation is conservative across all cache roots and may skip a cache insert
+after an unrelated cache change.
+
+## Pixel comparison after the snapshot change
+
+The same Pixel 9 Pro ran the same helper against the optimized arm64 release:
+five transcript calls per case, with the same four small-request workers and
+fixture sizes. All nine cases succeeded. The retained 30-second recording
+contains all 45 transcript acquisitions and reports no trace loss or buffer
+overwrites. A longer preliminary recording overwrote its earliest scenarios;
+it is excluded from the comparison below.
+
+All durations below are milliseconds. Small-request wait is the maximum across
+browser state, player settings, vocabulary, and downloads in that scenario.
+
+| Restore | Cues | Max hold before | Max hold after | Max small-request wait before | Max small-request wait after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| File | 500 | 8.515 | 0.572 | 6.094 | 2.345 |
+| Memory | 500 | 1.616 | 0.099 | 4.603 | 1.696 |
+| File | 5,000 | 92.916 | 0.251 | 92.566 | 2.052 |
+| Memory | 5,000 | 19.272 | 0.042 | 17.683 | 1.710 |
+| File | 20,000 | 216.251 | 0.286 | 214.870 | 1.258 |
+| Memory | 20,000 | 92.661 | 0.067 | 92.310 | 3.394 |
+
+These samples demonstrate shorter lock holds and waits under the generated
+restoration workload; they do not establish a typical user-visible speedup.
+The legacy JSON accept path still parses and normalizes inside its dispatch
+lock: its 20,000-cue maximum hold was 146.405 ms in the new recording. Cache
+encoding and persistence also remain serialized. Further narrowing needs its
+own measurements and synchronization audit.
+
+`npm run check` passed with 156 JavaScript tests and 136 Rust tests, including
+the new replacement-snapshot and concurrent vocabulary/cache regression cases.
+`npx expo install --check` also passed. Host checks used RAM-backed temporary
+fixtures because of the previously observed host filesystem delays.
+
+The reader also restored the saved public `rfscVS0vtbw` transcript, refreshed it,
+and found 265 matches for `function`. Caption details confirmed all 2,935 source
+cues. The temporary profiling helper was uninstalled afterward; the optimized
+profiling release remains installed.
+
+Local evidence is in `.cache/transcript-snapshot-pixel/`: the retained capture
+is `verified-stress.pftrace`, with `verified-stress-acquisitions.csv`,
+`verified-stress-scenarios.csv`, `verified-stress-stages.csv`,
+`verified-stress-integrity.csv`, `verified-stress-results.txt`, and APK/library
+hashes in `build-sha256.txt`. Screenshots `reader-ui.png`, `refreshed-ui.png`,
+`search-ui.png`, and `details-ui.png` record the reader verification.

@@ -306,6 +306,17 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    // These reads take immutable snapshots under their own short lock scopes.
+    if op == "restore" {
+        return transcript::restore(&command, root);
+    }
+    if op == "transcript_session_snapshot" {
+        let _span = trace::Section::begin(c"GoVue core op: transcript_session_snapshot");
+        return transcript_session::snapshot(&command, root);
+    }
+    let _guard = REQUEST_LOCK
+        .lock(c"GoVue core request: execute")
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     if op.starts_with("app_") {
         let _span = trace::Section::begin(c"GoVue core op: app");
         return app::dispatch(&command);
@@ -386,10 +397,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
 #[uniffi::export]
 pub fn execute(request: String, storage_path: String) -> String {
     let _span = trace::Section::begin(c"GoVue core: execute");
-    let guard = REQUEST_LOCK
-        .lock(c"GoVue core request: execute")
-        .map_err(|_| "Core state is unavailable. Restart GoVue.".into());
-    match guard.and_then(|_guard| dispatch(&request, &storage_path)) {
+    match dispatch(&request, &storage_path) {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
         Err(error) => json!({"ok":false,"error":error}).to_string(),
     }

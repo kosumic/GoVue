@@ -5,9 +5,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 mod store;
-pub(crate) use store::{load, remember, save, with_transcript};
+pub(crate) use store::{load, remember, remember_shared, save, with_transcript};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,20 +178,15 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             normalize(&mut data)?;
         }
         // Captions remain usable when device storage is full or unavailable.
-        remember(root, &data)?;
+        let data = Arc::new(data);
+        remember_shared(root, Arc::clone(&data))?;
         let cache_saved = {
             let _span = trace::Section::begin(c"GoVue transcript: rust.cache_save");
             save(root, &data).is_ok()
         };
         return Ok(
-            json!({"type":"transcript","requestId":request_id,"videoId":id,"ok":true,"transcript":data,"cacheSaved":cache_saved}),
+            json!({"type":"transcript","requestId":request_id,"videoId":id,"ok":true,"transcript":data.as_ref(),"cacheSaved":cache_saved}),
         );
-    }
-    if op == "restore" {
-        if let Some(track) = command["trackId"].as_str() {
-            return Ok(load(root, id, track).map_or(Value::Null, |data| json!(data)));
-        }
-        return store::restore(root, id, command["audioKey"].as_str().unwrap_or(""));
     }
     let track = string(command, "trackId")?;
     if op == "transcript_playback" {
@@ -204,9 +200,8 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             transcript_reader::dispatch(op, &data, command, root)
         }
         "transcript_playback" => transcript_playback::step(&data, command),
-        "load" => {
-            Ok(serde_json::to_value(data).map_err(|_| "Could not encode cached transcript.")?)
-        }
+        "load" => Ok(serde_json::to_value(data.as_ref())
+            .map_err(|_| "Could not encode cached transcript.")?),
         "search" => {
             let query = string(command, "query")?;
             if query.len() > 10_000 {
@@ -238,4 +233,30 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         }
         _ => Err("Unsupported core operation.".into()),
     }
+}
+
+/// Retain a consistent cache version, then decode and serialize without blocking
+/// unrelated storage operations. Explicit tracks keep the legacy null-on-miss policy.
+pub(crate) fn restore(command: &Value, root: &str) -> Result<Value> {
+    let id = string(command, "videoId")?;
+    if !video_id(id) {
+        return Err("Invalid video identity.".into());
+    }
+    let track = command["trackId"].as_str();
+    let snapshot = {
+        let _guard = crate::REQUEST_LOCK
+            .lock(c"GoVue core request: transcript.restore")
+            .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
+        let _span = trace::Section::begin(c"GoVue core op: transcript_restore");
+        store::snapshot(root, id, track)?
+    };
+    let _span = trace::Section::begin(c"GoVue transcript: rust.cache_restore");
+    let resolved = snapshot.resolve(root, id, track, command["audioKey"].as_str().unwrap_or(""));
+    if track.is_some() {
+        return Ok(resolved
+            .ok()
+            .flatten()
+            .map_or(Value::Null, |data| json!(data.as_ref())));
+    }
+    Ok(resolved?.map_or(Value::Null, |data| json!(data.as_ref())))
 }

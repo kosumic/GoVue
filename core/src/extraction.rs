@@ -386,7 +386,7 @@ fn transcript(
         if track != "default" {
             command["trackId"] = json!(track);
         }
-        let saved = crate::dispatch(&command.to_string(), root)?;
+        let saved = crate::transcript::restore(&command, root)?;
         if !saved.is_null() && (track == "default" || saved["trackId"] == track) {
             return Ok(saved);
         }
@@ -481,12 +481,14 @@ fn transcript(
     };
     crate::transcript::normalize(&mut data)?;
     job.check()?;
-    let _guard = crate::REQUEST_LOCK
+    let guard = crate::REQUEST_LOCK
         .lock(c"GoVue core request: extraction.persist_transcript")
         .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
-    crate::transcript::remember(root, &data)?;
+    let data = Arc::new(data);
+    crate::transcript::remember_shared(root, Arc::clone(&data))?;
     let _ = crate::transcript::save(root, &data);
-    Ok(json!(data))
+    drop(guard);
+    Ok(json!(data.as_ref()))
 }
 fn catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value> {
     let _span = crate::trace::Section::begin(c"GoVue extraction: media");

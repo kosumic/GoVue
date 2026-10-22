@@ -32,6 +32,29 @@ fn check(reader: &Reader) -> Result<()> {
         Ok(())
     }
 }
+
+pub(crate) fn snapshot(command: &Value, root: &str) -> Result<Value> {
+    let session = SessionId::parse(string(command, "sessionId")?, 100)
+        .map_err(|_| "Invalid reader session.")?;
+    let key = ReaderKey {
+        root: root.into(),
+        session,
+    };
+    let reader = READERS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "Transcript reader is busy.")?
+        .get(&key)
+        .cloned()
+        .ok_or("This reader has closed.")?;
+    let state = reader
+        .state
+        .lock()
+        .map_err(|_| "Transcript reader is busy.")?
+        .clone();
+    Ok(state)
+}
+
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let id = SessionId::parse(string(command, "sessionId")?, 100)
         .map_err(|_| "Invalid reader session.")?;
@@ -44,14 +67,6 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .lock()
         .map_err(|_| "Transcript reader is busy.")?;
     let op = string(command, "op")?;
-    if op == "transcript_session_snapshot" {
-        let reader = readers.get(&key).ok_or("This reader has closed.")?;
-        return Ok(reader
-            .state
-            .lock()
-            .map_err(|_| "Transcript reader is busy.")?
-            .clone());
-    }
     let version = command["version"]
         .as_u64()
         .ok_or("Missing reader revision.")?;

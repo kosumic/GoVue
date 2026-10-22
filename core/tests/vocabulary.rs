@@ -71,6 +71,56 @@ impl Drop for Store {
 }
 
 #[test]
+fn concurrent_restores_cache_replacements_and_vocabulary_saves_preserve_all_words() {
+    let store = Store::new();
+    let words = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ];
+    let segments: Value = words
+        .iter()
+        .enumerate()
+        .map(|(index, word)| json!({"start":index,"duration":1,"text":word}))
+        .collect();
+    store.transcript_segments("en", segments.clone());
+    let start = std::sync::Barrier::new(words.len() + 4);
+    std::thread::scope(|scope| {
+        for (index, word) in words.iter().enumerate() {
+            let (store, start) = (&store, &start);
+            scope.spawn(move || {
+                start.wait();
+                assert_eq!(store.save("en", index, 0, word)["saved"], true);
+            });
+        }
+        for track in [Value::Null, json!("en")] {
+            let (store, start) = (&store, &start);
+            scope.spawn(move || {
+                start.wait();
+                for _ in 0..24 {
+                    let restored =
+                        store.value(json!({"op":"restore","videoId":VIDEO,"trackId":track}));
+                    assert_eq!(restored["segments"].as_array().unwrap().len(), words.len());
+                    assert_eq!(restored["segments"][0]["text"], words[0]);
+                }
+            });
+        }
+        let (store, start, segments) = (&store, &start, &segments);
+        scope.spawn(move || {
+            start.wait();
+            for _ in 0..8 {
+                store.transcript_segments("en", segments.clone());
+            }
+        });
+        start.wait();
+    });
+    let saved = store.list("");
+    let saved = saved.as_array().unwrap();
+    assert_eq!(saved.len(), words.len());
+    for word in words {
+        assert!(saved.iter().any(|entry| entry["word"] == word));
+    }
+}
+
+#[test]
 fn selection_maps_utf16_handles_to_the_correct_words_and_normalizes_line_breaks() {
     let store = Store::new();
     let text = "👋 Hello, world!\nHello again.";

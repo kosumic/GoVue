@@ -228,10 +228,10 @@ fn caption(root: &Path, value: &Value) -> Result<Option<TranscriptRef>> {
         string(value, "trackId")?,
     )?;
     Ok(Some(TranscriptRef {
-        video_id: transcript.video_id,
-        track_id: transcript.track_id,
-        title: transcript.title,
-        language: transcript.language,
+        video_id: transcript.video_id.clone(),
+        track_id: transcript.track_id.clone(),
+        title: transcript.title.clone(),
+        language: transcript.language.clone(),
     }))
 }
 
@@ -657,7 +657,7 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     if reply.games.len() >= 3 {
         return Err("At most three games can be created in one reply.".into());
     }
-    let mut game = games::Game::create(definition, call_id, transcript.as_ref())?;
+    let mut game = games::Game::create(definition, call_id, transcript.as_deref())?;
     if game.source.is_none() {
         game.source = chat.video_id.as_ref().map(|id| games::Source {
             video_id: id.clone(),

@@ -483,9 +483,9 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             let entry = SavedWord {
                 id,
                 word: token.text,
-                language: data.language,
-                video_id: data.video_id,
-                title: data.title,
+                language: data.language.clone(),
+                video_id: data.video_id.clone(),
+                title: data.title.clone(),
                 start,
                 context: segment.text.clone(),
                 saved_at: u64::try_from(

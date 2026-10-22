@@ -153,8 +153,8 @@ pub(super) fn dispatch(
         }
         None => None,
     };
-    let mut rows = rows(primary, comparison.as_ref());
-    let sources = [primary, comparison.as_ref().unwrap_or(primary)];
+    let mut rows = rows(primary, comparison.as_deref());
+    let sources = [primary, comparison.as_deref().unwrap_or(primary)];
     if op == "transcript_export" {
         let mut lines = Vec::new();
         for row in rows {
