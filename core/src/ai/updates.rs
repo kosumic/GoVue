@@ -1,6 +1,67 @@
 //! Bounded, revisioned projections for the chat UI. Private provider state never crosses this path.
 use super::usage;
 use serde_json::{Value, json};
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
+
+/// Coalesce a burst without losing its last change. Completion bypasses the delay.
+pub(super) struct Notifier {
+    channel: String,
+    state: Arc<Mutex<NotificationState>>,
+}
+
+#[derive(Default)]
+struct NotificationState {
+    scheduled: bool,
+    finished: bool,
+}
+
+impl Notifier {
+    pub fn new(id: &str) -> Self {
+        Self {
+            channel: format!("ai:{id}"),
+            state: Arc::default(),
+        }
+    }
+
+    pub fn changed(&self) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.scheduled || state.finished {
+            return;
+        }
+        state.scheduled = true;
+        drop(state);
+        let pending = self.state.clone();
+        let channel = self.channel.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            let Ok(mut state) = pending.lock() else {
+                return;
+            };
+            state.scheduled = false;
+            let notify = !state.finished;
+            drop(state);
+            if notify {
+                crate::changed(&channel);
+            }
+        });
+    }
+
+    pub fn finish(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.finished {
+                return;
+            }
+            state.finished = true;
+        }
+        crate::changed(&self.channel);
+    }
+}
 
 const FIELDS: &[&str] = &[
     "status",

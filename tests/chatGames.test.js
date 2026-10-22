@@ -25,7 +25,7 @@ async function harness(t) {
   const result = await build({ entryPoints: ['src/ai/useChats.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
     plugins: [{ name: 'game-core', setup(builder) { builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'test-core', external: true })); } }],
   });
-  const core = { aiRequest(command) {
+  const core = { observeCoreUpdates() { return { remove() {} }; }, aiRequest(command) {
     if (command.op === 'ai_chat_session_cancel') return Promise.resolve(null);
     if (command.op === 'ai_chat_session_forget') return Promise.resolve({});
     if (command.op === 'ai_chat_session_feedback' && !feedbackReady) return Promise.resolve(null);
@@ -37,7 +37,8 @@ async function harness(t) {
     return new Promise(resolve => { entry.resolve = value => { entry.answered = true; resolve(value); }; });
   } };
   const module = { exports: {} };
-  Function('require', 'module', 'exports', result.outputFiles[0].text)(name => name === 'test-core' ? core : require(name), module, module.exports);
+  const app = { currentState: 'active', addEventListener() { return { remove() {} }; } };
+  Function('require', 'module', 'exports', result.outputFiles[0].text)(name => name === 'test-core' ? core : name === 'react-native' ? { AppState: app } : require(name), module, module.exports);
   function Chat() { controller = module.exports.useChats(true, ''); return null; }
   let root;
   await act(async () => { root = create(createElement(Chat)); });

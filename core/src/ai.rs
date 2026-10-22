@@ -194,6 +194,8 @@ impl AiResponse {
                             .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                             .blocks
                     );
+                    drop(state);
+                    job.notifications.changed();
                 }
                 Ok(())
             })
@@ -978,6 +980,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
                     .clear();
                 state["usage"] = Value::Null;
                 drop(state);
+                job.notifications.changed();
                 error = e;
             }
         }
@@ -1179,6 +1182,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?["reasoningEffort"] =
         json!(reasoning);
+    job.notifications.changed();
     let max_output = model.max_output_tokens;
     match protocol {
         "responses" => {
@@ -1301,6 +1305,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         state["contextWindow"] = json!(limit);
         state["maxOutputTokens"] = json!(max_output);
     }
+    job.notifications.changed();
     hs.push(("Content-Type", "application/json".into()));
     hs.push(("Accept", "text/event-stream".into()));
     if let Some(extra) = options["headers"].as_object() {
@@ -1919,11 +1924,13 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                     .lock()
                     .map_err(|_| "AI state is unavailable. Restart GoVue.")?["status"] =
                     json!("cancelled");
+                job.notifications.finish();
             } else {
                 jobs()
                     .lock()
                     .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                     .remove(id);
+                job.notifications.finish();
             }
             Ok(interrupted)
         }

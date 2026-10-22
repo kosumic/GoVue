@@ -16,6 +16,9 @@ const conversation = (reasoningEffort = 'low', content = '', status = 'streaming
 async function harness() {
   const calls = [];
   const cancellations = [];
+  const listeners = new Map();
+  const appListeners = new Set();
+  const app = { currentState: 'active', addEventListener(_name, listener) { appListeners.add(listener); return { remove: () => appListeners.delete(listener) }; } };
   let cancellation = null;
   let controller;
   const result = await build({ entryPoints: ['src/ai/useChats.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
@@ -23,7 +26,11 @@ async function harness() {
       builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'test-core', external: true }));
     } }],
   });
-  const core = { aiRequest(command) {
+  const core = { observeCoreUpdates(channel, listener) {
+    const subscription = { channel, listener };
+    listeners.set(subscription, subscription);
+    return { remove: () => listeners.delete(subscription) };
+  }, aiRequest(command) {
     if (command.op === 'ai_chat_session_cancel') { cancellations.push(command); return Promise.resolve(cancellation); }
     if (command.op === 'ai_chat_session_feedback') return Promise.resolve(null);
     if (command.op === 'ai_chat_session_forget') return Promise.resolve({});
@@ -35,16 +42,16 @@ async function harness() {
     return new Promise(resolve => { entry.resolve = value => { entry.answered = true; resolve(value); }; });
   } };
   const module = { exports: {} };
-  Function('require', 'module', 'exports', result.outputFiles[0].text)(name => name === 'test-core' ? core : require(name), module, module.exports);
+  Function('require', 'module', 'exports', result.outputFiles[0].text)(name => name === 'test-core' ? core : name === 'react-native' ? { AppState: app } : require(name), module, module.exports);
   function Chat({ visible = true }) { controller = module.exports.useChats(visible, ''); return null; }
   let root;
   await act(async () => { root = create(createElement(Chat)); });
-  return { calls, cancellations, render: visible => act(async () => root.update(createElement(Chat, { visible }))), cancelWith: value => { cancellation = value; }, chat: () => controller, pending: op => calls.find(entry => entry.command.op === op && !entry.answered),
+  return { calls, cancellations, listeners, render: visible => act(async () => root.update(createElement(Chat, { visible }))), cancelWith: value => { cancellation = value; }, chat: () => controller, pending: op => calls.find(entry => entry.command.op === op && !entry.answered),
+    notify: (channel = 'ai:task') => act(async () => { for (const entry of listeners.values()) if (entry.channel === channel) entry.listener(); }),
+    app: state => act(async () => { app.currentState = state; for (const listener of appListeners) listener(state); }),
     reply: (op, value) => act(async () => { const entry = calls.find(entry => entry.command.op === op && !entry.answered); assert.ok(entry, op); entry.resolve(value); }),
     unmount: () => act(async () => root.unmount()) };
 }
-
-const nextPoll = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 180)); });
 
 test('closing and reopening a chat preserves its active reply for native completion notifications', async t => {
   const env = await harness(); t.after(env.unmount);
@@ -60,11 +67,89 @@ test('closing and reopening a chat preserves its active reply for native complet
   await act(async () => { await env.chat().open('chat'); });
   assert.equal(env.cancellations.length, cancellations, 'reopening the same chat must preserve its task');
   assert.equal(env.chat().conversation.messages[1].content, 'Still generating');
-  await nextPoll();
+  await env.notify();
   await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 2, state: { status: 'completed', replyId: 'reply', text: 'Saved reply' } });
   await env.reply('ai_chat_get', conversation('low', 'Saved reply', 'completed'));
   assert.equal(env.chat().busy, false);
   assert.equal(env.chat().conversation.messages[1].content, 'Saved reply');
+});
+
+test('task notifications retain changes during a read and idle reads use the fallback', async t => {
+  const env = await harness(); t.after(env.unmount);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await act(() => { void env.chat().send('fixture', 'Hello', null); });
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: conversation() });
+  assert.equal(env.listeners.size, 1, 'subscribe before receiving the initial snapshot');
+  await env.notify('ai:other-task');
+  assert.equal(env.calls.filter(entry => entry.command.op === 'ai_chat_poll').length, 1);
+  for (let index = 0; index < 10; index++) await env.notify();
+  assert.equal(env.calls.filter(entry => entry.command.op === 'ai_chat_poll').length, 1, 'notifications cannot overlap a read');
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'running', replyId: 'reply', text: 'First' } });
+  assert.equal(env.pending('ai_chat_poll').command.afterRevision, 1, 'an event during the read causes one follow-up');
+  await env.reply('ai_chat_poll', { kind: 'delta', baseRevision: 1, revision: 2, fields: {}, strings: { text: { append: ' second' } }, arrays: {} });
+  assert.equal(env.chat().conversation.messages.at(-1).content, 'First second');
+  assert.equal(env.pending('ai_chat_poll'), undefined);
+  await act(async () => t.mock.timers.tick(1999));
+  assert.equal(env.pending('ai_chat_poll'), undefined, 'idle progress does not use the old fast timer');
+  await act(async () => t.mock.timers.tick(1));
+  assert.equal(env.pending('ai_chat_poll').command.afterRevision, 2);
+  await env.reply('ai_chat_poll', { kind: 'unchanged', revision: 2 });
+  await env.notify();
+  await env.reply('ai_chat_poll', { kind: 'delta', baseRevision: 2, revision: 3, fields: { status: 'completed' }, strings: { text: { append: ' final' } }, arrays: {} });
+  await env.reply('ai_chat_get', conversation('low', 'First second final', 'completed'));
+  assert.equal(env.chat().busy, false);
+  assert.equal(env.listeners.size, 0);
+  await act(async () => t.mock.timers.tick(10000));
+  assert.equal(env.pending('ai_chat_poll'), undefined, 'completion removes the fallback');
+});
+
+test('hidden and background chats pause reads and resume at the current revision', async t => {
+  const env = await harness(); t.after(env.unmount);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await act(() => { void env.chat().send('fixture', 'Hello', null); });
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: conversation() });
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'running', replyId: 'reply', text: 'First' } });
+  const cancellations = env.cancellations.length;
+  await env.render(false);
+  await env.notify();
+  await act(async () => t.mock.timers.tick(10000));
+  assert.equal(env.pending('ai_chat_poll'), undefined);
+  assert.equal(env.chat().busy, true);
+  assert.equal(env.cancellations.length, cancellations);
+  await env.render(true);
+  assert.equal(env.pending('ai_chat_poll').command.afterRevision, 1);
+  await env.reply('ai_chat_get', conversation());
+  await env.reply('ai_chat_poll', { kind: 'delta', baseRevision: 1, revision: 2, fields: {}, strings: { text: { append: ' resumed' } }, arrays: {} });
+  await env.app('background');
+  await env.notify();
+  await act(async () => t.mock.timers.tick(10000));
+  assert.equal(env.pending('ai_chat_poll'), undefined);
+  assert.equal(env.cancellations.length, cancellations);
+  await env.app('active');
+  assert.equal(env.pending('ai_chat_poll').command.afterRevision, 2);
+  await env.reply('ai_chat_poll', { kind: 'unchanged', revision: 2 });
+  await act(async () => env.chat().stop());
+  assert.equal(env.listeners.size, 0, 'cancellation wakes and releases an idle watcher');
+  await env.notify();
+  await act(async () => t.mock.timers.tick(10000));
+  assert.equal(env.pending('ai_chat_poll'), undefined);
+});
+
+test('a revision gap resyncs while retaining notifications received during recovery', async t => {
+  const env = await harness(); t.after(env.unmount);
+  await act(() => { void env.chat().send('fixture', 'Hello', null); });
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: conversation() });
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'running', replyId: 'reply', text: 'First' } });
+  await env.notify();
+  await env.reply('ai_chat_poll', { kind: 'delta', baseRevision: 3, revision: 4, fields: {}, strings: {}, arrays: {} });
+  assert.equal(env.pending('ai_chat_poll').command.afterRevision, undefined, 'a gap requires a fresh snapshot');
+  await env.notify();
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 4, state: { status: 'running', replyId: 'reply', text: 'Recovered' } });
+  assert.equal(env.pending('ai_chat_poll').command.afterRevision, 4);
+  await env.reply('ai_chat_poll', { kind: 'delta', baseRevision: 4, revision: 5, fields: { status: 'completed' }, strings: { text: { append: ' final' } }, arrays: {} });
+  await env.reply('ai_chat_get', conversation('low', 'Recovered final', 'completed'));
+  assert.equal(env.chat().conversation.messages.at(-1).content, 'Recovered final');
+  assert.equal(env.listeners.size, 0);
 });
 
 test('branch creation switches to the saved copy once and ignores completion after navigation', async t => {
@@ -111,7 +196,7 @@ test('messages sent during startup queue in order and streamed steering switches
   assert.equal(env.calls.filter(entry => entry.command.op === 'ai_chat_poll').length, 1, 'queueing keeps one poller');
   await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'running', replyId: 'reply', text: 'Original progress', pendingMessages: pending } });
   assert.equal(env.chat().conversation.messages[1].content, 'Original progress');
-  await nextPoll();
+  await env.notify();
   await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 2, state: { status: 'running', replyId: 'steered-reply', text: 'Hola', pendingMessages: [] } });
   const steered = conversation('low', 'Original progress', 'completed');
   steered.activeTask = 'task';
@@ -121,7 +206,7 @@ test('messages sent during startup queue in order and streamed steering switches
   assert.equal(env.chat().conversation.messages[3].content, 'Hola');
   assert.deepEqual(env.chat().conversation.pendingMessages, []);
   assert.equal(env.chat().busy, true);
-  await nextPoll();
+  await env.notify();
   await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 3, state: { status: 'completed', replyId: 'steered-reply', text: 'Hola mundo', pendingMessages: [] } });
   const completed = { ...steered, activeTask: null, messages: steered.messages.map(m => m.id === 'steered-reply' ? { ...m, content: 'Hola mundo', status: 'completed' } : m) };
   await env.reply('ai_chat_get', completed);

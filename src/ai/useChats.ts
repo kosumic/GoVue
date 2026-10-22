@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { aiRequest } from '../../modules/govue-core';
+import { AppState } from 'react-native';
+import { aiRequest, observeCoreUpdates } from '../../modules/govue-core';
 import type { MessageUsageDetails, TokenUsage } from './usage';
 import type { GameAction, LearningGame } from './games';
 import { applyChatUpdate, type ChatStream, type ChatUpdate } from './chatUpdates';
@@ -42,6 +43,9 @@ export function useChats(visible: boolean, contextId: string) {
   const historyEpoch = useRef(0);
   const previousContext = useRef(contextId);
   const mounted = useRef(true);
+  const shown = useRef(visible);
+  const foreground = useRef(AppState.currentState === 'active');
+  const watcher = useRef<{ wake(): void } | null>(null);
   const gameWrites = useRef(Promise.resolve());
   const [feedbackVersion, setFeedbackVersion] = useState(0);
 
@@ -65,6 +69,7 @@ export function useChats(visible: boolean, contextId: string) {
   function cancel(clearFeedback: boolean) {
     const version = ++epoch.current;
     task.current = null; starting.current = null;
+    watcher.current?.wake();
     sending.current = false; setBusy(false); setLoading(false);
     const chatId = current.current?.id;
     void aiRequest<{ conversation?: Conversation } | null>({ op: 'ai_chat_session_cancel', sessionId, version, chatId, clearFeedback }).then(result => {
@@ -77,8 +82,28 @@ export function useChats(visible: boolean, contextId: string) {
   async function watch(started: Started, version: number) {
     let stream: ChatStream | null = null;
     const active = () => mounted.current && version === epoch.current && task.current === started.taskId;
+    let pending = true;
+    let waiting: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const wake = () => { pending = true; waiting?.(); };
+    const observer = { wake };
+    watcher.current?.wake();
+    watcher.current = observer;
+    // Subscribe before the initial snapshot, retaining events received during a read.
+    const subscription = observeCoreUpdates(`ai:${started.taskId}`, wake);
     try {
       while (active()) {
+        if (!shown.current || !foreground.current || !pending) {
+          await new Promise<void>(resolve => {
+            waiting = resolve;
+            if (shown.current && foreground.current) timer = setTimeout(wake, 2000);
+          });
+          waiting = undefined;
+          clearTimeout(timer);
+          if (!active()) return;
+          if (!shown.current || !foreground.current) continue;
+        }
+        pending = false;
         const event = await aiRequest<ChatUpdate>({ op: 'ai_chat_poll', taskId: started.taskId, ...(stream ? { afterRevision: stream.revision } : {}) });
         if (!active()) return;
         let next = applyChatUpdate(stream, event);
@@ -109,11 +134,13 @@ export function useChats(visible: boolean, contextId: string) {
           if (active()) update({ ...saved, reasoningEffort: revision === reasoningRevision.current ? saved.reasoningEffort : current.current?.reasoningEffort });
           return;
         }
-        await new Promise(resolve => setTimeout(resolve, 150));
       }
     } catch (e) {
       if (active()) setError(e instanceof Error ? e.message : 'Could not finish this response.');
     } finally {
+      subscription?.remove();
+      clearTimeout(timer);
+      if (watcher.current === observer) watcher.current = null;
       await aiRequest({ op: 'ai_chat_session_forget', sessionId, version, taskId: started.taskId }).catch(() => {});
       if (active()) { task.current = null; sending.current = false; setBusy(false); }
       if (mounted.current) void refresh().catch(() => {});
@@ -286,6 +313,17 @@ export function useChats(visible: boolean, contextId: string) {
   useEffect(() => {
     mounted.current = true;
     return () => { stop(); mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    shown.current = visible;
+    watcher.current?.wake();
+  }, [visible]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      foreground.current = state === 'active';
+      watcher.current?.wake();
+    });
+    return () => subscription.remove();
   }, []);
   useEffect(() => {
     let active = true;

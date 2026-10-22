@@ -20,6 +20,7 @@ pub(super) struct Job {
     pub(super) state: Mutex<Value>,
     pub(super) activity: Mutex<activity::Tape>,
     pub(super) updates: Mutex<updates::Cursor>,
+    pub(super) notifications: updates::Notifier,
     pub(super) conversation: OnceLock<(PathBuf, String)>,
     pub(super) last_status: AtomicI32,
 }
@@ -34,6 +35,7 @@ impl Job {
         self.state
             .lock()
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?["blocks"] = blocks;
+        self.notifications.changed();
         Ok(())
     }
     pub(super) fn pending(&self) -> Result<()> {
@@ -69,10 +71,13 @@ impl Job {
         let result = settled.and(result);
         // Polling reports a poisoned state directly; a worker must not recover it.
         let Ok(mut s) = self.state.lock() else {
+            self.notifications.finish();
             return;
         };
         if self.cancelled.load(Ordering::Relaxed) {
             s["status"] = json!("cancelled");
+            drop(s);
+            self.notifications.finish();
             return;
         }
         match result {
@@ -85,6 +90,8 @@ impl Job {
                 s["error"] = json!(e);
             }
         }
+        drop(s);
+        self.notifications.finish();
     }
 }
 pub(super) fn jobs() -> &'static Mutex<HashMap<String, Arc<Job>>> {
@@ -115,8 +122,10 @@ pub(super) fn new_job(owner: &str) -> Result<Arc<Job>> {
     for id in finished {
         all.remove(&id);
     }
+    let id = random()?;
     let job = Arc::new(Job {
-        id: random()?,
+        notifications: updates::Notifier::new(&id),
+        id,
         owner: owner.into(),
         cancelled: AtomicBool::new(false),
         state: Mutex::new(json!({"status":"running","text":""})),

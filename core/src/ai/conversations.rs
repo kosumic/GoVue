@@ -576,6 +576,7 @@ pub(super) fn steer(job: &Job, terminal: bool) -> Result<Option<(String, String)
     state["pendingMessages"] = json!([]);
     state["steeringCommitted"] = json!(true);
     drop(state);
+    job.notifications.changed();
     Ok(Some((content, reply_id)))
 }
 
@@ -623,6 +624,7 @@ fn enqueue(root: &Path, chat: &mut Conversation, c: &Value) -> Result<Value> {
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?["pendingMessages"] =
         json!(chat.pending_messages);
+    job.notifications.changed();
     Ok(json!({"taskId":job.id,"conversation":presentation(chat)?}))
 }
 pub(super) fn interrupt(job: &Arc<Job>) -> Result<Value> {
@@ -704,6 +706,7 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     state["gameCommitted"] = json!(true);
     state["games"] = snapshot;
     drop(state);
+    job.notifications.changed();
     Ok(result)
 }
 

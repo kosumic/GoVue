@@ -50,6 +50,7 @@ async function harness(videoId, restore = async id => transcript(id)) {
     }
   } };
   const native = { View: 'View', Text: 'Text', Pressable: 'Pressable', KeyboardAvoidingView: 'KeyboardAvoidingView', BackHandler: { addEventListener(_event, handler) { backHandlers.add(handler); return { remove: () => backHandlers.delete(handler) }; } }, Keyboard: { dismiss() {} }, Alert: { alert() {} }, Platform: { OS: 'android' }, StyleSheet: { create: value => value, hairlineWidth: 1 } };
+  native.AppState = { currentState: 'active', addEventListener: () => ({ remove() {} }) };
   const result = await build({ entryPoints: ['src/components/AiSheet.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic',
     plugins: [{ name: 'chat-edges', setup(builder) {
       builder.onResolve({ filter: /modules\/govue-core$/ }, () => ({ path: 'mock-core', external: true }));
