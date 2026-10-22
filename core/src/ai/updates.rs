@@ -1,5 +1,6 @@
 //! Bounded, revisioned projections for the chat UI. Private provider state never crosses this path.
-use super::*;
+use super::usage;
+use serde_json::{Value, json};
 
 const FIELDS: &[&str] = &[
     "status",

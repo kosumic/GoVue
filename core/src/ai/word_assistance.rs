@@ -1,7 +1,12 @@
 //! Short, private word-learning tasks reuse the configured provider without
 //! creating a conversation or changing the user's active chat.
-use super::*;
+use super::{CONFIG_LOCK, chat, config, games, new_job, provider};
+use crate::{Result, string};
+use serde::Deserialize;
+use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::thread;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

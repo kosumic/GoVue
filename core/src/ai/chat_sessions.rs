@@ -1,5 +1,9 @@
 //! Conversation/task ownership and deferred game feedback live beside saved chats.
-use super::*;
+use crate::{Result, string};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Default)]
 struct Session {

@@ -1,5 +1,13 @@
 //! Connection settings shared by discovery, inference and both native platforms.
-use super::*;
+use super::{
+    CONFIG_LOCK, Job, Provider, cancel_owner, catalog, config, provider, public_config, random,
+    read_secret, session, validate_provider, write_secret,
+};
+use crate::Result;
+use serde_json::{Value, json};
+use std::path::Path;
+use std::sync::Arc;
+use url::Url;
 
 pub(super) fn can_append_v1(p: &Provider) -> bool {
     !catalog::oauth(p)

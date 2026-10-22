@@ -1,5 +1,9 @@
 //! A bounded, model-maintained checklist, independent of provider framing.
-use super::*;
+use super::Job;
+use crate::{Result, string};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

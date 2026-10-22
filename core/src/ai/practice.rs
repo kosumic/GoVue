@@ -1,6 +1,13 @@
 //! Saved games outlive their chats. Review queues and game transitions stay in Rust.
-use super::*;
-use std::{collections::HashSet, io::Read};
+use super::{games, valid_id};
+use crate::{Result, string};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 const MAX_GAMES: usize = 500;
 const MAX_GAME_BYTES: usize = 1_200_000;

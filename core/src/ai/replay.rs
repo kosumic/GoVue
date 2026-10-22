@@ -1,6 +1,11 @@
 //! Provider wire history is memory-only: signed reasoning never enters saved chats.
-use super::*;
+use super::{Job, Provider, valid_id};
+use crate::Result;
+use serde_json::Value;
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 
 const MAX_BYTES: usize = 8_000_000;
 const MAX_ENTRIES: usize = 12;

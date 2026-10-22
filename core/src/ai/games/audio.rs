@@ -1,11 +1,21 @@
 //! Caption clips cache fMP4 initialization and indexed audio fragments lazily.
 //! The generated document never receives network addresses or filesystem paths.
-use super::*;
+use super::Cue;
+use crate::Result;
+use crate::ai::{now, random, valid_id};
 use crate::{
     media::{container, playback},
     transport::{DownloadSource, header},
 };
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::{fs, thread};
 use tiny_http::{Method, Response, Server, StatusCode};
 
 const MAX_CLIP: u64 = 12_000_000;

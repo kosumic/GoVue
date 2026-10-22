@@ -1,6 +1,16 @@
 //! Local conversations and provider-independent turn construction.
-use super::*;
+use super::{
+    CONFIG_LOCK, Job, MAX_OUTPUT, activity, catalog, chat_sessions, config, games, jobs, new_job,
+    now, practice, provider, random, replay, search, usage, valid_id,
+};
+use crate::{Result, string};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+use std::{fs, thread};
 
 const MAX_CHAT: usize = 4_000_000;
 const MAX_CHATS: usize = 100;

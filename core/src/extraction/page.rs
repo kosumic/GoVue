@@ -1,5 +1,10 @@
 //! The live page supplies caption bytes; Rust owns selection, parsing and storage.
-use super::*;
+use super::{Job, json_response, text};
+use crate::{MAX_BYTES, Result, Track, string, video_id};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 struct Page {
     adapter: String,
@@ -169,6 +174,11 @@ pub(super) fn reply(command: &Value, root: &str, job: &Job) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extraction::{JOBS, Runtime, Session, UA, dispatch, runtime_tasks};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, Condvar};
+    use std::thread;
+    use std::time::Instant;
 
     const VIDEO: &str = "abcdefghijk";
     const LABEL: &str = "English (auto-generated)";

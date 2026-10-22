@@ -1,5 +1,7 @@
 //! Local literal search. Offsets identify matches in UTF-8, never JS string indices.
-use super::*;
+use crate::Result;
+use serde::Serialize;
+use serde_json::{Value, json};
 
 const MAX_MATCHES: usize = 500;
 const CONTEXT: usize = 48;

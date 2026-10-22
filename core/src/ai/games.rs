@@ -1,5 +1,8 @@
 //! Generated interfaces are documents; all durable game transitions run here.
-use super::*;
+use super::{now, random, valid_id};
+use crate::{Result, string};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 pub(super) mod audio;
 

@@ -1,5 +1,7 @@
 //! Provider-specific tool framing stays out of conversations and game logic.
-use super::*;
+use super::{games, plan, practice, replay, usage};
+use crate::Result;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub(super) fn merge_usage(prefix: &Value, next: &Value) -> Value {
