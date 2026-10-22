@@ -1,12 +1,10 @@
 #![cfg(test)]
 
-use govue_core::{MediaHttp, MediaRangeReply, execute, install_media_http};
+use govue_core::{MediaHttp, MediaRangeReply};
 use serde_json::{Value, json};
-use std::{
-    io::Read,
-    sync::{Arc, Condvar, Mutex, mpsc},
-    time::Duration,
-};
+use std::io::Read;
+use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::Duration;
 
 #[derive(Default)]
 struct State {
@@ -65,11 +63,11 @@ impl MediaHttp for Http {
 #[test]
 fn the_player_receives_initial_bytes_while_later_upstream_ranges_are_still_blocked() {
     let control = Arc::new(Control::default());
-    install_media_http(Box::new(Http(control.clone())));
+    govue_core::install_media_http(Box::new(Http(control.clone())));
     let release = Release(control.clone());
     let call = |command: Value| -> Value {
         let result: Value =
-            serde_json::from_str(&execute(command.to_string(), String::new())).unwrap();
+            serde_json::from_str(&govue_core::execute(command.to_string(), String::new())).unwrap();
         assert_eq!(result["ok"], true, "{result}");
         result["value"].clone()
     };

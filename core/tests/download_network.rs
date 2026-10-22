@@ -1,18 +1,13 @@
 #![cfg(test)]
 
-use govue_core::{DownloadHttp, DownloadRequest, MediaRangeReply, execute, install_download_http};
+use govue_core::{DownloadHttp, DownloadRequest, MediaRangeReply};
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, Sender},
-    },
-    thread,
-    time::{Duration, Instant},
-};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
+use std::{fs, thread};
 
 const CHUNK: u64 = 1_048_576;
 struct Pending {
@@ -83,7 +78,7 @@ impl Download {
     }
     fn call(&self, mut command: Value) -> Value {
         command["id"] = self.id.clone();
-        let reply: Value = serde_json::from_str(&execute(
+        let reply: Value = serde_json::from_str(&govue_core::execute(
             command.to_string(),
             self.root.to_string_lossy().into_owned(),
         ))
@@ -126,7 +121,7 @@ fn blocked(requests: &Receiver<Pending>) {
 fn native_policy_gates_chunks_redirects_retries_parallel_workers_and_covers_without_js() {
     let wifi = Arc::new(AtomicBool::new(false));
     let (send, requests) = mpsc::channel();
-    install_download_http(Box::new(Backend {
+    govue_core::install_download_http(Box::new(Backend {
         wifi: wifi.clone(),
         requests: Mutex::new(send),
     }));

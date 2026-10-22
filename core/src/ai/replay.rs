@@ -1,6 +1,8 @@
 //! Provider wire history is memory-only: signed reasoning never enters saved chats.
-use super::{Job, Provider, valid_id};
 use crate::Result;
+use crate::ai::jobs::Job;
+use crate::ai::providers;
+use crate::ai::providers::Provider;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -59,7 +61,7 @@ pub(super) fn remember(p: &Provider, c: &Value, job: &Job, protocol: &str, body:
     let Some(scope) = scope(p, job, protocol) else {
         return;
     };
-    let Some(reply) = c["replyId"].as_str().filter(|id| valid_id(id)) else {
+    let Some(reply) = c["replyId"].as_str().filter(|id| providers::valid_id(id)) else {
         return;
     };
     let Some(rows) = body[field(protocol)].as_array() else {

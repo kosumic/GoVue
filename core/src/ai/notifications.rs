@@ -1,6 +1,7 @@
 //! Reply notification policy is shared; native adapters only present OS alerts.
-use super::valid_id;
-use crate::{Result, string};
+use crate::ai::providers;
+
+use crate::Result;
 use serde_json::Value;
 use std::sync::{Mutex, OnceLock};
 
@@ -68,8 +69,8 @@ pub(crate) fn visible(command: &Value) -> Result<Value> {
     let chat = if command["chatId"].is_null() {
         None
     } else {
-        let id = string(command, "chatId")?;
-        if !valid_id(id) {
+        let id = crate::string(command, "chatId")?;
+        if !providers::valid_id(id) {
             return Err("Invalid chat notification target.".into());
         }
         Some(id.into())

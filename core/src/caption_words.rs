@@ -1,5 +1,5 @@
 //! Optional source timings aligned to the same Unicode words used for saving.
-use crate::{Segment, clean, number};
+use crate::Segment;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
@@ -27,7 +27,7 @@ pub(crate) fn parse(parts: &[Value], start: f64, duration: f64) -> Vec<Word> {
             continue;
         };
         if let Some(raw) = part.get("tOffsetMs") {
-            let Some(next) = number(raw).filter(|n| n.is_finite() && *n >= offset) else {
+            let Some(next) = crate::number(raw).filter(|n| n.is_finite() && *n >= offset) else {
                 return Vec::new();
             };
             offset = next;
@@ -55,7 +55,7 @@ pub(crate) fn parse(parts: &[Value], start: f64, duration: f64) -> Vec<Word> {
     let segment = Segment {
         start,
         duration,
-        text: clean(
+        text: crate::clean(
             &parts
                 .iter()
                 .filter_map(|part| part["utf8"].as_str())

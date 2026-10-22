@@ -2,11 +2,11 @@
 //! The generated document never receives network addresses or filesystem paths.
 use super::Cue;
 use crate::Result;
-use crate::ai::{now, random, valid_id};
-use crate::{
-    media::{container, playback},
-    transport::{DownloadSource, header},
-};
+use crate::ai::{identity, providers};
+use crate::{media, transport};
+
+use crate::media::playback;
+use crate::transport::DownloadSource;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -126,12 +126,15 @@ fn server() -> Result<&'static ClipServer> {
                     let head = request.method() == &Method::Head;
                     let mut response = Response::from_data(if head { Vec::new() } else { data })
                         .with_status_code(StatusCode(status))
-                        .with_header(header("Content-Type", mime)?)
-                        .with_header(header("Cache-Control", "no-store")?)
-                        .with_header(header("Accept-Ranges", "bytes")?)
-                        .with_header(header("Content-Length", &data_length.to_string())?);
+                        .with_header(transport::header("Content-Type", mime)?)
+                        .with_header(transport::header("Cache-Control", "no-store")?)
+                        .with_header(transport::header("Accept-Ranges", "bytes")?)
+                        .with_header(transport::header(
+                            "Content-Length",
+                            &data_length.to_string(),
+                        )?);
                     if let Some((a, b)) = range {
-                        response.add_header(header(
+                        response.add_header(transport::header(
                             "Content-Range",
                             &format!("bytes {a}-{b}/{length}"),
                         )?);
@@ -147,7 +150,7 @@ fn server() -> Result<&'static ClipServer> {
 }
 
 pub(in crate::ai) fn release(token: &str) -> Result<Value> {
-    if !valid_id(token) {
+    if !providers::valid_id(token) {
         return Err("Invalid game audio session.".into());
     }
     if let Some(Ok(server)) = SERVER.get() {
@@ -211,7 +214,7 @@ fn cache_key(video_id: &str, cue: &Cue) -> String {
 }
 fn register(directory: PathBuf, data: &mut Metadata) -> Result<Value> {
     let server = server()?;
-    let token = random()?;
+    let token = identity::random()?;
     let mut clips = server
         .clips
         .lock()
@@ -227,7 +230,7 @@ fn register(directory: PathBuf, data: &mut Metadata) -> Result<Value> {
         let _ = write!(manifest, "#EXTINF:{duration:.6},\nsegment-{i}.m4s\n");
     }
     manifest.push_str("#EXT-X-ENDLIST\n");
-    data.used_at = now();
+    data.used_at = identity::now();
     let _ = fs::write(
         directory.join("clip.json"),
         serde_json::to_vec(data).unwrap_or_default(),
@@ -330,7 +333,7 @@ fn prepared(directory: PathBuf, data: &mut Metadata, cache_only: bool) -> Result
     if !cache_only {
         return register(directory, data);
     }
-    data.used_at = now();
+    data.used_at = identity::now();
     fs::write(
         directory.join("clip.json"),
         serde_json::to_vec(data).map_err(|_| "Could not encode audio cache metadata.")?,
@@ -366,7 +369,7 @@ fn prepare_clip(
         .iter()
         .filter(|s| {
             s["kind"] == "audio"
-                && container(s) == Some("audio/mp4")
+                && media::container(s) == Some("audio/mp4")
                 && s["mimeType"].as_str().is_some_and(|m| m.contains("mp4a"))
                 && playback::indexed(s)
         })
@@ -435,7 +438,7 @@ fn prepare_clip(
             end: cue.start + cue.duration - first.start,
             durations: segments.iter().map(|s| s.duration).collect(),
             sizes,
-            used_at: now(),
+            used_at: identity::now(),
         };
         fs::write(
             directory.join("clip.json"),

@@ -1,18 +1,13 @@
 #![cfg(test)]
 
 //! Regressions after the Pixel video chat opened empty with its transcript attached.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 
 #[derive(Default)]
 struct Backend {
@@ -69,7 +64,7 @@ impl Drop for Store {
     }
 }
 fn call(root: &Path, command: Value) -> Value {
-    serde_json::from_str(&ai_execute(
+    serde_json::from_str(&govue_core::ai_execute(
         command.to_string(),
         root.to_string_lossy().into_owned(),
     ))
@@ -89,7 +84,7 @@ fn cache_track(root: &Path, video: &str, track: &str) {
         "tracks":[{"id":".en","label":"English","language":"en","automatic":false},{"id":".ja","label":"Japanese","language":"ja","automatic":false}],
         "segments":[{"start":12.5,"duration":2,"text":"Caption context for the question."}]
     }});
-    let result: Value = serde_json::from_str(&execute(json!({"op":"accept","videoId":video,"requestId":"video-chat:fixture","origin":"https://www.youtube.com","raw":raw.to_string()}).to_string(), root.to_string_lossy().into_owned())).unwrap();
+    let result: Value = serde_json::from_str(&govue_core::execute(json!({"op":"accept","videoId":video,"requestId":"video-chat:fixture","origin":"https://www.youtube.com","raw":raw.to_string()}).to_string(), root.to_string_lossy().into_owned())).unwrap();
     assert_eq!(result["ok"], true, "{result}");
 }
 fn wait(root: &Path, started: &Value) {
@@ -241,7 +236,7 @@ fn verify_branch(root: &Path, backend: &Backend, id: &str, provider: &str) {
 )]
 fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     let store = Store::new();
     let root = &store.0;
     let video = "abcdefghijk";

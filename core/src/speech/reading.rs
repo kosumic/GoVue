@@ -1,10 +1,10 @@
-use crate::{Result, string};
+use crate::Result;
 use pulldown_cmark::{Event, Options, Parser, TagEnd};
 use serde_json::{Value, json};
 
 /// Prepare only the visible response text; reasoning and tool activity never enter TTS.
 pub(crate) fn plan(command: &Value) -> Result<Value> {
-    let markdown = string(command, "text")?;
+    let markdown = crate::string(command, "text")?;
     if markdown.len() > 2_000_000 || markdown.contains('\0') {
         return Err("This response is too large or contains unsupported speech characters.".into());
     }

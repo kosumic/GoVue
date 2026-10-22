@@ -128,15 +128,24 @@ pub fn install_download_platform(platform: Box<dyn DownloadPlatform>) {
     downloads::runner::install(platform);
 }
 
+/// One buffered range response. Signed addresses remain in native memory only.
 #[derive(uniffi::Record)]
 pub struct MediaRangeReply {
+    /// HTTP status, zero for transport failure, or -1 when an allowed download network disappears.
     pub status: i32,
+    /// Response bytes; Rust rejects bodies outside the requested range bounds.
     pub body: Vec<u8>,
+    /// A redirect target for Rust to validate; adapters must not follow it.
     pub location: Option<String>,
 }
 
+/// Blocking HTTPS byte requests invoked from Rust workers, never the UI thread.
 #[uniffi::export(callback_interface)]
 pub trait MediaHttp: Send + Sync {
+    /// Fetches the inclusive range `start..=end` using `GET` or the media `POST` fallback.
+    ///
+    /// Disable redirects, persistent caches and request logging. Rust validates
+    /// redirects and response bounds. Report transport failure with status zero.
     fn fetch_range(
         &self,
         url: String,
@@ -148,6 +157,7 @@ pub trait MediaHttp: Send + Sync {
     ) -> MediaRangeReply;
 }
 
+/// Installs the buffered media adapter before starting media requests.
 #[uniffi::export]
 pub fn install_media_http(backend: Box<dyn MediaHttp>) {
     transport::install_http(backend);
@@ -182,16 +192,32 @@ pub fn install_download_http(backend: Box<dyn DownloadHttp>) {
     downloads::transfer::install_http(backend);
 }
 
-/// Incremental HTTPS byte adapter. Rust owns ranges, redirects and bounds.
+/// Headers and an opaque body handle for one bounded HTTPS response.
 #[derive(uniffi::Record)]
 pub struct MediaStreamReply {
+    /// HTTP status, or zero for transport failure, timeout or exhausted capacity.
     pub status: i32,
+    /// Nonzero only while a readable body is retained by the adapter.
+    /// Rust owns this handle until it closes it, including on rejected replies.
     pub handle: u64,
+    /// Response body length, or -1 when unknown. This is not the full media size.
     pub length: i64,
+    /// Unfollowed redirect target, returned for validation by Rust.
     pub location: Option<String>,
 }
+/// Blocking incremental HTTPS callbacks invoked on Rust transport workers.
+///
+/// Implementations support concurrent responses with independent opaque handles.
+/// Signed URLs, headers and response bytes must not be logged or persisted.
+/// Rust owns range limits, redirect policy and premature-EOF detection.
 #[uniffi::export(callback_interface)]
 pub trait MediaStreamHttp: Send + Sync {
+    /// Opens the inclusive range `start..=end` and returns after headers arrive.
+    ///
+    /// Rust supplies `GET` or the media `POST` fallback and ranges of at most
+    /// 1 MiB. Do not follow redirects or buffer the complete response. Retain a
+    /// body handle only for HTTP 200/206; release failed response resources before
+    /// returning. Bound network waits and report transport failure as status zero.
     fn open_range(
         &self,
         url: String,
@@ -201,9 +227,20 @@ pub trait MediaStreamHttp: Send + Sync {
         start: u64,
         end: u64,
     ) -> MediaStreamReply;
+    /// Returns at most `max_bytes` bytes; Rust requests between 1 and 65,536.
+    ///
+    /// An empty vector means EOF, failure, timeout or a closed/unknown handle.
+    /// Rust treats empty reads before the expected range length as incomplete.
+    /// Adapters may release exhausted handles here; subsequent close is harmless.
     fn read(&self, handle: u64, max_bytes: u32) -> Vec<u8>;
+
+    /// Releases a retained response and cancels outstanding I/O for that handle.
+    ///
+    /// Repeated calls and zero/unknown handles must be harmless. Rust closes on
+    /// completion, cancellation and error, including when a reply is rejected.
     fn close(&self, handle: u64);
 }
+/// Installs the streaming adapter before starting media requests.
 #[uniffi::export]
 pub fn install_media_stream_http(backend: Box<dyn MediaStreamHttp>) {
     transport::streaming::install(backend);

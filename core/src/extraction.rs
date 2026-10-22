@@ -1,28 +1,22 @@
 //! Standalone YouTube extraction. Rust owns HTTP, protocol state, validation and
 //! caches. The platform transports bounded HTTPS bytes; an isolated renderer
 //! supplies only BotGuard snapshot/token strings. No YouTube page is executed.
-use crate::{MAX_BYTES, Result, Track, Transcript, json, media, string, video_id};
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD},
-};
+use crate::{MAX_BYTES, Result, Track, Transcript, json, media};
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc, Condvar, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    thread,
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 use url::Url;
 
 mod network;
 mod page;
 mod player_cache;
-use network::{HTTP, allowed_address, fetch, fetch_response, response_text};
-use player_cache::{Player, player};
+use network::HTTP;
+use player_cache::Player;
 
 const ORIGIN: &str = "https://www.youtube.com";
 const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
@@ -50,31 +44,39 @@ type Jobs = HashMap<RequestKey, Arc<Job>>;
 static JOBS: OnceLock<Mutex<Jobs>> = OnceLock::new();
 static WORKERS: AtomicUsize = AtomicUsize::new(0);
 
+/// An extraction request or response header, retained only in memory.
 #[derive(uniffi::Record)]
 pub struct ExtractionHeader {
     pub name: String,
     pub value: String,
 }
+/// A bounded HTTPS request planned and validated by the Rust extractor.
 #[derive(uniffi::Record)]
 pub struct ExtractionRequest {
     pub url: String,
     pub method: String,
     pub headers: Vec<ExtractionHeader>,
     pub body: String,
+    /// Maximum response bytes the adapter may read.
     pub max_bytes: u32,
+    /// Allows returning only the bounded prefix instead of requiring the full body.
     pub prefix_only: bool,
 }
+/// Response bytes and headers for Rust to validate before parsing.
 #[derive(uniffi::Record)]
 pub struct ExtractionReply {
+    /// HTTP status, or zero if no response was obtained.
     pub status: i32,
     pub body: Vec<u8>,
     pub headers: Vec<ExtractionHeader>,
 }
+/// Blocking native HTTPS effects; extraction state and parsing stay in Rust.
 #[uniffi::export(callback_interface)]
 pub trait ExtractionHttp: Send + Sync {
     /// Called on a Rust worker. No redirects, automatic cookie jar, logging or disk cache.
     fn request(&self, request: ExtractionRequest) -> ExtractionReply;
 }
+/// Installs the extraction adapter. The first adapter remains installed for this process.
 #[uniffi::export]
 pub fn install_extraction_http(backend: Box<dyn ExtractionHttp>) {
     let _ = HTTP.set(backend);
@@ -167,14 +169,31 @@ impl Job {
     }
 }
 
-fn caption_source(job: &Job, url: &str, verified: bool, translated: bool) -> Result<String> {
-    let mut reply = fetch_response(job, url, None, false, &[])?;
-    if !verified && matches!(reply.status, 403 | 429) {
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CaptionVerification {
+    Unverified,
+    Verified,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CaptionKind {
+    Original,
+    Translated,
+}
+
+fn caption_source(
+    job: &Job,
+    url: &str,
+    verification: CaptionVerification,
+    kind: CaptionKind,
+) -> Result<String> {
+    let mut reply = network::fetch_response(job, url, None, false, &[])?;
+    if verification == CaptionVerification::Unverified && matches!(reply.status, 403 | 429) {
         // An unmarked caption URL can still require verification. Allow the
         // existing token flow once, without retrying the same request in a loop.
         return Ok(String::new());
     }
-    if reply.status == 429 && translated {
+    if reply.status == 429 && kind == CaptionKind::Translated {
         let since = job
             .session
             .lock()
@@ -183,13 +202,13 @@ fn caption_source(job: &Job, url: &str, verified: bool, translated: bool) -> Res
         let ready_at = since + TRANSLATION_SESSION_AGE;
         if ready_at > Instant::now() {
             job.wait_until(ready_at)?;
-            reply = fetch_response(job, url, None, false, &[])?;
+            reply = network::fetch_response(job, url, None, false, &[])?;
         }
         if reply.status == 429 {
             return Err("YouTube is temporarily limiting translated captions. Keep watching and try again shortly.".into());
         }
     }
-    response_text(reply)
+    network::response_text(reply)
 }
 fn json_response(raw: &str) -> Result<Value> {
     serde_json::from_str(raw).map_err(|_| "Unreadable YouTube extraction data.".into())
@@ -268,7 +287,7 @@ fn parse_challenge(response: &Value) -> Result<Value> {
     }
 }
 fn token(job: &Job, player: &Player) -> Result<String> {
-    let response = json_response(&fetch(
+    let response = json_response(&network::fetch(
         job,
         &format!("{ORIGIN}/api/jnn/v1/Create"),
         Some(json!([REQUEST_KEY])),
@@ -303,7 +322,7 @@ fn token(job: &Job, player: &Player) -> Result<String> {
             .map_err(|_| "Invalid extraction origin.")?
             .join(address)
             .map_err(|_| "Invalid token interpreter address.")?;
-        fetch(job, address.as_str(), None, true, &[])?
+        network::fetch(job, address.as_str(), None, true, &[])?
     } else {
         challenge[1]
             .as_array()
@@ -315,7 +334,7 @@ fn token(job: &Job, player: &Player) -> Result<String> {
     let snapshot = job.evaluate(
         json!({"stage":"snapshot","program":program,"globalName":name,"interpreter":interpreter}),
     )?;
-    let integrity = json_response(&fetch(
+    let integrity = json_response(&network::fetch(
         job,
         &format!("{ORIGIN}/api/jnn/v1/GenerateIT"),
         Some(json!([REQUEST_KEY, snapshot])),
@@ -337,7 +356,7 @@ fn token(job: &Job, player: &Player) -> Result<String> {
         "mintRefreshThreshold":integrity[2],"websafeFallbackToken":integrity[3],"videoId":player.id.as_str()}))
 }
 fn caption_address(raw: &str, id: &str, po_token: Option<&str>) -> Result<String> {
-    allowed_address(raw, false)?;
+    network::allowed_address(raw, false)?;
     let url = Url::parse(raw).map_err(|_| "Invalid caption address.")?;
     if url.path() != "/api/timedtext"
         || url
@@ -391,7 +410,7 @@ fn transcript(
             return Ok(saved);
         }
     }
-    let player = player(job, root, id, fresh, true)?;
+    let player = player_cache::player(job, root, id, fresh, true)?;
     let source_id = track
         .strip_prefix("translate:")
         .and_then(|rest| rest.split_once(':'))
@@ -415,7 +434,11 @@ fn transcript(
         .iter()
         .position(|t| t.id == source_id)
         .ok_or("This caption source is unavailable.")?;
-    let translated = selected.translated_from.is_some();
+    let kind = if selected.translated_from.is_some() {
+        CaptionKind::Translated
+    } else {
+        CaptionKind::Original
+    };
     // Protected caption tracks can return HTTP 200 with no bytes even after a
     // standalone token challenge. Let the active player supply its own proof.
     let from_page = page::captions(job, root, id, selected).ok().flatten();
@@ -424,10 +447,10 @@ fn transcript(
         captions
     } else {
         let result = (|| -> Result<_> {
-            let raw = string(&list["captionTracks"][index], "baseUrl")?;
+            let raw = crate::string(&list["captionTracks"][index], "baseUrl")?;
             let address_for = |proof| -> Result<String> {
                 let mut address = caption_address(raw, id, proof)?;
-                if translated {
+                if kind == CaptionKind::Translated {
                     address.push('&');
                     address.push_str(
                         &url::form_urlencoded::Serializer::new(String::new())
@@ -445,11 +468,16 @@ fn transcript(
             let mut source = if requires_token {
                 String::new()
             } else {
-                caption_source(job, &address, false, translated)?
+                caption_source(job, &address, CaptionVerification::Unverified, kind)?
             };
             if source.trim().is_empty() {
                 let proof = token(job, &player)?;
-                source = caption_source(job, &address_for(Some(&proof))?, true, translated)?;
+                source = caption_source(
+                    job,
+                    &address_for(Some(&proof))?,
+                    CaptionVerification::Verified,
+                    kind,
+                )?;
             }
             if source.trim().is_empty() {
                 return Err("YouTube returned no caption text after verification.".into());
@@ -495,7 +523,7 @@ fn catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value> {
     if !fresh && let Some(cached) = media::cached_catalog(root, id) {
         return Ok(cached);
     }
-    let player = player(job, root, id, fresh, false)?;
+    let player = player_cache::player(job, root, id, fresh, false)?;
     let data = &player.data;
     let mut formats = Vec::new();
     for list in ["formats", "adaptiveFormats"] {
@@ -550,7 +578,7 @@ fn chapter_catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value
     // ytInitialData. Caption readiness alone cannot satisfy chapter loading.
     let raw = match cached {
         Some(chapters) => chapters,
-        None => player(job, root, id, true, true)?.chapters,
+        None => player_cache::player(job, root, id, true, true)?.chapters,
     };
     let chapters = json!(media::chapter_list(&json!(raw)));
     job.check()?;
@@ -620,7 +648,7 @@ fn launch_video(command: &Value, root: &str) -> Result<Option<String>> {
             .query_pairs()
             .find(|(key, _)| key == "v")
             .map(|(_, id)| id.into_owned())
-            .filter(|id| video_id(id))
+            .filter(|id| crate::video_id(id))
     }))
 }
 
@@ -654,7 +682,7 @@ fn runtime_tasks(root: &str, from_page: bool) -> Result<Value> {
 }
 
 fn request_id(command: &Value) -> Result<&str> {
-    let request = string(command, "requestId")?;
+    let request = crate::string(command, "requestId")?;
     if request.is_empty()
         || request.len() > 150
         || !request
@@ -663,7 +691,7 @@ fn request_id(command: &Value) -> Result<&str> {
     {
         return Err("Invalid extraction request identity.".into());
     }
-    let op = string(command, "op")?;
+    let op = crate::string(command, "op")?;
     if request == PREPARATION_REQUEST
         && !matches!(op, "extract_prepare" | "extract_launch" | "extract_release")
     {
@@ -673,7 +701,7 @@ fn request_id(command: &Value) -> Result<&str> {
 }
 
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
-    let op = string(command, "op")?;
+    let op = crate::string(command, "op")?;
     if op == "extract_page_register" {
         return page::register(command, root);
     }
@@ -717,12 +745,12 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             let id = if let Some(id) = &selected {
                 id.as_str()
             } else {
-                string(command, "videoId")?
+                crate::string(command, "videoId")?
             };
             let kind = if preparing {
                 "media"
             } else {
-                string(command, "kind")?
+                crate::string(command, "kind")?
             };
             let track = command["trackId"].as_str().unwrap_or("default");
             let audio_key = command["audioKey"].as_str().unwrap_or("");
@@ -733,7 +761,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             if user_agent.len() > 1000 || user_agent.chars().any(char::is_control) {
                 return Err("Invalid extraction browser identity.".into());
             }
-            if !video_id(id)
+            if !crate::video_id(id)
                 || !matches!(kind, "media" | "transcript" | "chapters")
                 || track.len() > 512
                 || audio_key.len() > 512
@@ -854,7 +882,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             {
                 return Err("The extraction token request changed.".into());
             }
-            let result = string(command, "value")?;
+            let result = crate::string(command, "value")?;
             if result.len() > 2_000_000 || result.is_empty() || result.chars().any(char::is_control)
             {
                 return Err("Invalid extraction token response.".into());
@@ -919,7 +947,9 @@ mod tests {
     use super::player_cache::PLAYERS;
     use super::*;
     use std::collections::VecDeque;
-    use std::{fs, path::Path, sync::atomic::AtomicUsize};
+    use std::fs;
+    use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn translation_wait_is_cancellable_and_has_its_own_job_budget() {
@@ -975,10 +1005,13 @@ mod tests {
             "https://user@www.youtube.com/api/timedtext",
             "https://127.0.0.1/watch",
         ] {
-            assert!(allowed_address(address, false).is_err(), "{address}");
+            assert!(
+                network::allowed_address(address, false).is_err(),
+                "{address}"
+            );
         }
-        assert!(allowed_address("https://www.google.com/js/bg/test.js", true).is_ok());
-        assert!(allowed_address("https://www.google.com/api/private", true).is_err());
+        assert!(network::allowed_address("https://www.google.com/js/bg/test.js", true).is_ok());
+        assert!(network::allowed_address("https://www.google.com/api/private", true).is_err());
     }
 
     #[test]

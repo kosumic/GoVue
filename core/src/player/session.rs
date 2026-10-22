@@ -1,14 +1,10 @@
 //! Playback policy and asynchronous ownership, independent of React and Expo Video.
-use crate::{Result, json, string};
+use crate::{Result, json};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    sync::{
-        Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[derive(Default)]
 struct Session {
@@ -42,7 +38,7 @@ impl Session {
 static SESSIONS: OnceLock<Mutex<HashMap<u64, Session>>> = OnceLock::new();
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub(crate) fn dispatch(command: &Value) -> Result<Value> {
-    let op = string(command, "op")?;
+    let op = crate::string(command, "op")?;
     let mut sessions = SESSIONS
         .get_or_init(Default::default)
         .lock()
@@ -173,7 +169,7 @@ pub(crate) fn dispatch(command: &Value) -> Result<Value> {
         "player_session_replace_current" => Ok(json!(token == Some(session.replacement))),
         "player_session_commit" => {
             let playback = &command["playback"];
-            let video = string(playback, "videoId")?;
+            let video = crate::string(playback, "videoId")?;
             if !crate::video_id(video) {
                 return Err("Invalid video identity.".into());
             }

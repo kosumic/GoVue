@@ -1,14 +1,11 @@
 //! Reader document loading, cache policy, and cancellation shared by all platforms.
-use crate::{Result, identity::SessionId, json, request, string};
+use crate::identity::SessionId;
+use crate::{Result, json};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
 
 struct Reader {
     version: u64,
@@ -34,7 +31,7 @@ fn check(reader: &Reader) -> Result<()> {
 }
 
 pub(crate) fn snapshot(command: &Value, root: &str) -> Result<Value> {
-    let session = SessionId::parse(string(command, "sessionId")?, 100)
+    let session = SessionId::parse(crate::string(command, "sessionId")?, 100)
         .map_err(|_| "Invalid reader session.")?;
     let key = ReaderKey {
         root: root.into(),
@@ -56,7 +53,7 @@ pub(crate) fn snapshot(command: &Value, root: &str) -> Result<Value> {
 }
 
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
-    let id = SessionId::parse(string(command, "sessionId")?, 100)
+    let id = SessionId::parse(crate::string(command, "sessionId")?, 100)
         .map_err(|_| "Invalid reader session.")?;
     let key = ReaderKey {
         root: root.into(),
@@ -66,7 +63,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| "Transcript reader is busy.")?;
-    let op = string(command, "op")?;
+    let op = crate::string(command, "op")?;
     let version = command["version"]
         .as_u64()
         .ok_or("Missing reader revision.")?;
@@ -113,7 +110,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     if op != "transcript_session_load" {
         return Err("Unknown reader action.".into());
     }
-    let video = string(command, "videoId")?;
+    let video = crate::string(command, "videoId")?;
     let audio = command["audioKey"].as_str().unwrap_or("");
     let tracks = command["trackIds"]
         .as_array()
@@ -194,7 +191,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 let saved = if fresh || retained.is_some() {
                     Value::Null
                 } else {
-                    request(
+                    crate::request(
                         &json!({"op":"restore","videoId":video,"audioKey":audio,
                         "trackId":if track=="default" {Value::Null}else{track.clone()}}),
                         &root,

@@ -1,10 +1,9 @@
 #![cfg(test)]
 
-use govue_core::execute;
 use serde_json::{Value, json};
 
 fn call(command: Value) -> Value {
-    serde_json::from_str(&execute(command.to_string(), String::new())).unwrap()
+    serde_json::from_str(&govue_core::execute(command.to_string(), String::new())).unwrap()
 }
 
 #[test]

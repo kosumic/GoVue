@@ -1,8 +1,8 @@
 #![cfg(test)]
 
-use govue_core::execute;
 use serde_json::{Value, json};
-use std::{fs, time::SystemTime};
+use std::fs;
+use std::time::SystemTime;
 
 #[test]
 fn pip_actions_follow_preferences_queue_and_audio_handoff_without_persisting_window_state() {
@@ -15,7 +15,7 @@ fn pip_actions_follow_preferences_queue_and_audio_handoff_without_persisting_win
             .as_nanos()
     ));
     let call = |command: Value| {
-        serde_json::from_str::<Value>(&execute(
+        serde_json::from_str::<Value>(&govue_core::execute(
             command.to_string(),
             directory.to_string_lossy().into_owned(),
         ))

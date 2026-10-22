@@ -1,18 +1,14 @@
 //! Native-lifetime download orchestration. JS observes snapshots and requests actions.
-use super::{history, preferences, store, transfer};
-use crate::{DownloadPlatform, Result, json, media, request, string};
+use super::{store, transfer};
+use crate::downloads;
+use crate::{DownloadPlatform, Result, json, media};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Condvar, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::Duration,
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::Duration;
+use std::{fs, thread};
 
 static PLATFORM: OnceLock<Box<dyn DownloadPlatform>> = OnceLock::new();
 static RUNNERS: OnceLock<Mutex<HashMap<String, Arc<Runner>>>> = OnceLock::new();
@@ -39,7 +35,7 @@ fn platform() -> Result<&'static dyn DownloadPlatform> {
         .ok_or("Install an updated GoVue build to download media.".into())
 }
 fn entries(root: &str) -> Result<Value> {
-    history(&json!({"entries":media::read(root,"downloads.json",json!([]))}))
+    downloads::history(&json!({"entries":media::read(root,"downloads.json",json!([]))}))
 }
 fn entry(root: &str, id: &str) -> Result<Value> {
     entries(root)?
@@ -94,7 +90,7 @@ fn event(root: &str, id: &str, name: &str, values: Value) -> Result<Value> {
             command[key] = value.clone();
         }
     }
-    request(&command, root)
+    crate::request(&command, root)
 }
 fn snapshot(root: &str, runner: &Runner) -> Result<Value> {
     let mut waiting = Vec::new();
@@ -110,13 +106,13 @@ fn snapshot(root: &str, runner: &Runner) -> Result<Value> {
     drop(jobs);
     Ok(
         json!({"entries":entries(root)?,"ready":runner.ready.load(Ordering::Acquire),
-        "waitingForWifi":waiting,"preferences":preferences(root)}),
+        "waitingForWifi":waiting,"preferences":downloads::preferences(root)}),
     )
 }
 fn notify(root: &str) {
     if let (Ok(entries), Ok(platform)) = (entries(root), platform()) {
         let wifi = transfer::wifi_connected();
-        let wifi_only = preferences(root)["wifiOnly"] == true;
+        let wifi_only = downloads::preferences(root)["wifiOnly"] == true;
         let active: Vec<_> = entries
             .as_array()
             .into_iter()
@@ -164,14 +160,14 @@ fn delete_files(value: &Value) -> Result<()> {
     Ok(())
 }
 fn restore(root: &str) -> Result<()> {
-    request(&json!({"op":"downloads_restore"}), root)?;
+    crate::request(&json!({"op":"downloads_restore"}), root)?;
     for value in entries(root)?
         .as_array()
         .into_iter()
         .flatten()
         .filter(|e| e["state"] == "complete")
     {
-        let id = string(value, "id")?;
+        let id = crate::string(value, "id")?;
         let published = value["artifacts"]
             .as_array()
             .is_some_and(|a| a.iter().any(|a| a["publishedUri"].is_string()));
@@ -243,7 +239,7 @@ fn schedule(root: &str, runner: &Arc<Runner>) -> Result<()> {
         e.iter()
             .any(|e| e["state"] == "queued" && !excluded.iter().any(|id| e["id"] == *id))
     }) {
-        request(
+        crate::request(
             &json!({"op":"downloads_claim","wifi":transfer::wifi_connected(),"excludeIds":excluded}),
             root,
         )?
@@ -285,7 +281,7 @@ fn schedule(root: &str, runner: &Arc<Runner>) -> Result<()> {
                 let _ = event(&root, &id, "failed", json!({"error":error}));
             }
             if work.transfer.load(Ordering::Acquire) {
-                let _ = request(&json!({"op":"downloads_transfer_release","id":id}), &root);
+                let _ = crate::request(&json!({"op":"downloads_transfer_release","id":id}), &root);
             }
             if work.cancelled.load(Ordering::Acquire)
                 && work.delete_media.load(Ordering::Acquire)
@@ -318,7 +314,7 @@ fn schedule(root: &str, runner: &Arc<Runner>) -> Result<()> {
             if delete {
                 delete_files(&value)?;
             }
-            request(&json!({"op":"downloads_remove","id":id}), root)?;
+            crate::request(&json!({"op":"downloads_remove","id":id}), root)?;
         }
         runner
             .removals
@@ -333,7 +329,7 @@ fn schedule(root: &str, runner: &Arc<Runner>) -> Result<()> {
     Ok(())
 }
 fn run(root: &str, value: &Value, work: &Work) -> Result<()> {
-    let id = string(value, "id")?;
+    let id = crate::string(value, "id")?;
     let check = || {
         if work.cancelled.load(Ordering::Acquire) {
             return Err("Download cancelled.".into());
@@ -351,7 +347,7 @@ fn run(root: &str, value: &Value, work: &Work) -> Result<()> {
     let mut catalog = crate::extraction::resolve(
         root,
         "media",
-        string(value, "videoId")?,
+        crate::string(value, "videoId")?,
         "default",
         "",
         false,
@@ -370,12 +366,12 @@ fn run(root: &str, value: &Value, work: &Work) -> Result<()> {
     let keys: Value =
         serde_json::from_str(&platform()?.supported_formats(json!(formats).to_string()))
             .map_err(|_| "Media capabilities are unavailable.")?;
-    catalog = request(
+    catalog = crate::request(
         &json!({"op":"media_capabilities","catalog":catalog,"keys":keys}),
         root,
     )?;
     check()?;
-    let prepared = request(
+    let prepared = crate::request(
         &json!({"op":"downloads_prepared","id":id,"catalog":catalog}),
         root,
     )?;
@@ -384,13 +380,13 @@ fn run(root: &str, value: &Value, work: &Work) -> Result<()> {
         let transcript = crate::extraction::resolve(
             root,
             "transcript",
-            string(value, "videoId")?,
-            string(&plan["subtitle"], "id")?,
+            crate::string(value, "videoId")?,
+            crate::string(&plan["subtitle"], "id")?,
             "",
             false,
             &check,
         )?;
-        Some(request(
+        Some(crate::request(
             &json!({"op":"downloads_subtitles","videoId":value["videoId"],"trackId":transcript["trackId"]}),
             root,
         )?)
@@ -398,25 +394,25 @@ fn run(root: &str, value: &Value, work: &Work) -> Result<()> {
         None
     };
     check()?;
-    let destination = file(string(value, "file")?)?;
+    let destination = file(crate::string(value, "file")?)?;
     if destination.exists() {
         fs::remove_file(&destination).map_err(|_| "Could not replace saved media.")?;
     }
-    let mut status = request(
+    let mut status = crate::request(
         &json!({"op":"downloads_transfer_start","id":id,"catalog":catalog,"userAgent":""}),
         root,
     )?;
     work.transfer.store(true, Ordering::Release);
     loop {
         if work.cancelled.load(Ordering::Acquire) {
-            let _ = request(&json!({"op":"downloads_transfer_cancel","id":id}), root);
+            let _ = crate::request(&json!({"op":"downloads_transfer_cancel","id":id}), root);
             return Err("Download cancelled.".into());
         }
         let current = entry(root, id)?;
         if status["done"] == true && current["state"] != "paused" {
             break;
         }
-        request(
+        crate::request(
             &json!({"op":"downloads_transfer_pause","id":id,"paused":current["state"]=="paused"}),
             root,
         )?;
@@ -425,7 +421,7 @@ fn run(root: &str, value: &Value, work: &Work) -> Result<()> {
         }
         notify(root);
         thread::sleep(Duration::from_millis(500));
-        status = request(&json!({"op":"downloads_transfer_poll","id":id}), root)?;
+        status = crate::request(&json!({"op":"downloads_transfer_poll","id":id}), root)?;
     }
     if let Some(error) = status["error"].as_str() {
         return Err(error.into());
@@ -484,7 +480,7 @@ fn string_uri(value: &Value) -> Result<String> {
 
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let runner = ensure(root)?;
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "downloads_runner_start" | "downloads_runner_snapshot" => return snapshot(root, &runner),
         "downloads_runner_enqueue" => {
             let mut command = command.clone();
@@ -495,7 +491,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             return Ok(result);
         }
         "downloads_runner_pause" | "downloads_runner_cancel" | "downloads_runner_retry" => {
-            let id = string(command, "id")?;
+            let id = crate::string(command, "id")?;
             let value = entry(root, id)?;
             let jobs = runner.jobs.lock().map_err(|_| "Downloads are busy.")?;
             let work = jobs.get(id);
@@ -509,7 +505,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     drop(jobs);
                     return snapshot(root, &runner);
                 }
-                if paused && preferences(root)["wifiOnly"] == true && !transfer::wifi_connected() {
+                if paused
+                    && downloads::preferences(root)["wifiOnly"] == true
+                    && !transfer::wifi_connected()
+                {
                     return Err("This download is waiting for Wi-Fi.".into());
                 }
                 event["event"] = json!(if paused { "resume" } else { "pause" });
@@ -579,8 +578,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
         }
         "downloads_runner_uri" | "downloads_runner_export" => {
-            let value = entry(root, string(command, "id")?)?;
-            let name = command["file"].as_str().unwrap_or(string(&value, "file")?);
+            let value = entry(root, crate::string(command, "id")?)?;
+            let name = command["file"]
+                .as_str()
+                .unwrap_or(crate::string(&value, "file")?);
             if name != value["file"].as_str().unwrap_or("")
                 && !value["artifacts"]
                     .as_array()

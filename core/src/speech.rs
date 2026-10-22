@@ -1,13 +1,11 @@
 //! Device speech preparation, in-memory dictation, and recognition vocabulary.
 pub(crate) mod reading;
 
-use crate::{Result, string};
+use crate::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Mutex,
-};
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -96,15 +94,15 @@ pub(crate) fn dispatch(request: &str) -> Result<Value> {
         return Err("Dictation request is too large.".into());
     }
     let c: Value = serde_json::from_str(request).map_err(|_| "Unreadable dictation request.")?;
-    let op = string(&c, "op")?;
+    let op = crate::string(&c, "op")?;
     if op == "hints" {
-        let draft = string(&c, "draft")?;
+        let draft = crate::string(&c, "draft")?;
         if draft.encode_utf16().count() > DRAFT_UNITS {
             return Err("Message is too long.".into());
         }
         return Ok(json!(hints(std::iter::once(draft), std::iter::empty())));
     }
-    let id = string(&c, "sessionId")?;
+    let id = crate::string(&c, "sessionId")?;
     if id.is_empty()
         || id.len() > 128
         || !id
@@ -117,7 +115,7 @@ pub(crate) fn dispatch(request: &str) -> Result<Value> {
         .lock()
         .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     if op == "begin" {
-        if string(&c, "draft")?.encode_utf16().count() >= DRAFT_UNITS {
+        if crate::string(&c, "draft")?.encode_utf16().count() >= DRAFT_UNITS {
             return Err(
                 "The message is full. Send it or shorten it before adding voice input.".into(),
             );
@@ -151,12 +149,12 @@ pub(crate) fn dispatch(request: &str) -> Result<Value> {
             session.phase = Phase::Finishing;
         }
         "result" if session.phase != Phase::Preparing && !session.cancelled => {
-            let text = string(&c, "text")?;
+            let text = crate::string(&c, "text")?;
             if text.encode_utf16().count() > DRAFT_UNITS * 2 {
                 return Err("Recognized speech is too long.".into());
             }
             if c["isFinal"].as_bool().ok_or("Missing final-result flag.")? {
-                let draft = append(string(&c, "draft")?, text)?;
+                let draft = append(crate::string(&c, "draft")?, text)?;
                 session.preview.clear();
                 if !text.trim().is_empty() {
                     session.confirmed = true;

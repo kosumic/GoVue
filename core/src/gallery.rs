@@ -1,13 +1,11 @@
 //! Bounded image-gallery planning and cache validation, following LiTube.
-use crate::{Result, clean, string};
+use crate::Result;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{
-    fs,
-    io::Read,
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 const LIMIT: u64 = 20 * 1024 * 1024;
 pub(crate) fn allowed(raw: &str) -> Result<Url> {
@@ -100,7 +98,7 @@ fn prune(root: &str, protect: Option<&Path>) {
     }
 }
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "gallery_validate" => {
             let urls = command["urls"]
                 .as_array()
@@ -118,7 +116,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             )
         }
         "gallery_request" => {
-            let url = allowed(string(command, "url")?)?.to_string();
+            let url = allowed(crate::string(command, "url")?)?.to_string();
             let cache_key = key(&url);
             for ext in ["jpg", "png", "gif", "webp", "avif", "heic"] {
                 let path = directory(root).join(format!("{cache_key}.{ext}"));
@@ -136,8 +134,8 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         }
         "gallery_response" => {
             let request = &command["request"];
-            let original = allowed(string(request, "sourceUrl")?)?.to_string();
-            let url = allowed(string(request, "url")?)?;
+            let original = allowed(crate::string(request, "sourceUrl")?)?.to_string();
+            let url = allowed(crate::string(request, "url")?)?;
             let cache_key = key(&original);
             if request["key"] != cache_key {
                 return Err("Image request identity changed.".into());
@@ -148,7 +146,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 if hop >= 3 {
                     return Err("Too many image redirects.".into());
                 }
-                let location = string(&command["response"], "location")?;
+                let location = crate::string(&command["response"], "location")?;
                 let next = url.join(location).map_err(|_| "Invalid image redirect.")?;
                 allowed(next.as_str())?;
                 return Ok(
@@ -160,14 +158,14 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
             let temporary = directory(root).join(format!("{cache_key}.part"));
             let metadata = image(&temporary)?;
-            let extension = string(&metadata, "extension")?;
+            let extension = crate::string(&metadata, "extension")?;
             let destination = directory(root).join(format!("{cache_key}.{extension}"));
             fs::rename(&temporary, &destination).map_err(|_| "Could not cache image.")?;
             let result = image(&destination)?;
             prune(root, Some(&destination));
             Ok(json!({"image":result}))
         }
-        _ => Err(clean("Unknown gallery action.").into()),
+        _ => Err(crate::clean("Unknown gallery action.").into()),
     }
 }
 

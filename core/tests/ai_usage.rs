@@ -1,18 +1,13 @@
 #![cfg(test)]
 
 //! Usage regressions added after the Pixel settings/report navigation check.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 
 #[derive(Default)]
 struct Platform(Mutex<HashMap<String, String>>);
@@ -104,7 +99,7 @@ impl Drop for Temp {
     }
 }
 fn request(root: &Path, command: Value) -> Value {
-    serde_json::from_str(&ai_execute(
+    serde_json::from_str(&govue_core::ai_execute(
         command.to_string(),
         root.to_string_lossy().into_owned(),
     ))
@@ -151,7 +146,7 @@ fn send(root: &Path, id: &str, chat: Option<&str>) -> Value {
 
 #[test]
 fn usage_survives_provider_changes_normalizes_protocols_and_preserves_legacy_history() {
-    install_ai_platform(Box::<Platform>::default());
+    govue_core::install_ai_platform(Box::<Platform>::default());
     let temp = Temp::new();
     let root = &temp.0;
     let mut saved = Vec::new();

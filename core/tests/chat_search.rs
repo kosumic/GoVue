@@ -1,12 +1,9 @@
 #![cfg(test)]
 
-use govue_core::{ai_execute, execute};
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 struct Store(PathBuf);
 impl Store {
@@ -34,7 +31,7 @@ impl Store {
         }).to_string()).unwrap();
     }
     fn call(&self, command: Value) -> Value {
-        serde_json::from_str(&ai_execute(
+        serde_json::from_str(&govue_core::ai_execute(
             command.to_string(),
             self.0.to_string_lossy().into_owned(),
         ))
@@ -337,7 +334,7 @@ fn loading_a_videos_transcript_does_not_overwrite_a_custom_name() {
         "tracks":[{"id":".en","label":"English","language":"en","automatic":false}],
         "segments":[{"start":0,"duration":1,"text":"Hello"}]
     }});
-    let result: Value = serde_json::from_str(&execute(json!({"op":"accept","videoId":video,"requestId":"chat-search:fixture","origin":"https://www.youtube.com","raw":transcript.to_string()}).to_string(), store.0.to_string_lossy().into_owned())).unwrap();
+    let result: Value = serde_json::from_str(&govue_core::execute(json!({"op":"accept","videoId":video,"requestId":"chat-search:fixture","origin":"https://www.youtube.com","raw":transcript.to_string()}).to_string(), store.0.to_string_lossy().into_owned())).unwrap();
     assert_eq!(result["ok"], true, "{result}");
     let reopened = store.ok(json!({"op":"ai_chat_video_open","videoId":video,"transcript":{"videoId":video,"trackId":".en"}}));
     assert_eq!(reopened["title"], "My pronunciation practice");

@@ -1,12 +1,9 @@
 #![cfg(test)]
 
-use govue_core::execute;
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -20,7 +17,7 @@ impl Store {
         )))
     }
     fn call(&self, command: Value) -> Value {
-        serde_json::from_str(&execute(
+        serde_json::from_str(&govue_core::execute(
             command.to_string(),
             self.0.to_str().unwrap().into(),
         ))

@@ -1,6 +1,6 @@
 //! Gesture policy and short-lived double-tap accumulation. No media addresses
 //! or pointer samples are persisted.
-use crate::{Result, string, video_id};
+use crate::Result;
 use serde_json::{Value, json};
 use std::sync::Mutex;
 
@@ -64,9 +64,9 @@ struct SeekTaps {
 static TAPS: Mutex<Option<SeekTaps>> = Mutex::new(None);
 
 pub(super) fn double_tap(command: &Value) -> Result<Value> {
-    let id = string(command, "videoId")?;
-    let owner = string(command, "owner")?;
-    if !video_id(id)
+    let id = crate::string(command, "videoId")?;
+    let owner = crate::string(command, "owner")?;
+    if !crate::video_id(id)
         || owner.is_empty()
         || owner.len() > 80
         || !owner

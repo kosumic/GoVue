@@ -1,8 +1,8 @@
 #![cfg(test)]
 
-use govue_core::execute;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf};
+use std::fs;
+use std::path::PathBuf;
 
 struct Store(PathBuf);
 impl Store {
@@ -19,7 +19,7 @@ impl Store {
         Self(path)
     }
     fn call(&self, command: Value) -> Value {
-        serde_json::from_str(&execute(
+        serde_json::from_str(&govue_core::execute(
             command.to_string(),
             self.0.to_string_lossy().into_owned(),
         ))

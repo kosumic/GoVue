@@ -1,5 +1,5 @@
 //! Normalized caption structure. No upstream URLs, tokens, or response bodies.
-use crate::{MAX_BYTES, MAX_SEGMENTS, Result, Segment, caption_words, clean, folded, number};
+use crate::{MAX_BYTES, MAX_SEGMENTS, Result, Segment, caption_words};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -101,7 +101,7 @@ pub(crate) fn clean_text(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .split('\n')
-        .map(clean)
+        .map(crate::clean)
         .collect::<Vec<_>>()
         .join("\n")
         .trim()
@@ -125,10 +125,10 @@ pub(crate) fn readable_text(segment: &Segment) -> String {
 }
 
 pub(crate) fn matches(segment: &Segment, query: &str) -> bool {
-    folded(&segment.text).contains(query)
+    crate::folded(&segment.text).contains(query)
         || segment.runs.iter().any(|run| run.reading.is_some())
-            && (folded(&readable_text(segment)).contains(query)
-                || folded(
+            && (crate::folded(&readable_text(segment)).contains(query)
+                || crate::folded(
                     &segment
                         .runs
                         .iter()
@@ -144,7 +144,7 @@ pub(crate) fn matches(segment: &Segment, query: &str) -> bool {
     reason = "The filter accepts only finite integral values in the u32 range."
 )]
 fn integer(value: &Value, max: u32) -> Option<u32> {
-    number(value)
+    crate::number(value)
         .filter(|n| n.is_finite() && *n >= 0.0 && *n <= f64::from(max) && n.fract() == 0.0)
         .map(|n| n as u32)
 }
@@ -197,7 +197,7 @@ fn runs(event: &Event, metadata: &Metadata) -> Vec<Run> {
             && (3..=8).contains(&ruby(&group[1]))
             && ruby(&group[2]) == 2
         {
-            let reading = clean(&group[1].text);
+            let reading = crate::clean(&group[1].text);
             if !reading.is_empty() {
                 run.reading = Some(reading);
                 index += 3;
@@ -262,10 +262,11 @@ pub(crate) fn parse(source: &str) -> Result<(Vec<Segment>, Metadata)> {
         events: Vec::new(),
     };
     for raw in events {
-        let Some(start) = number(&raw["tStartMs"]).filter(|n| n.is_finite() && *n >= 0.0) else {
+        let Some(start) = crate::number(&raw["tStartMs"]).filter(|n| n.is_finite() && *n >= 0.0)
+        else {
             continue;
         };
-        let duration = number(&raw["dDurationMs"])
+        let duration = crate::number(&raw["dDurationMs"])
             .filter(|n| n.is_finite() && *n >= 0.0)
             .unwrap_or(0.0);
         let mut parts: Vec<Part> = raw["segs"]
@@ -276,7 +277,7 @@ pub(crate) fn parse(source: &str) -> Result<(Vec<Segment>, Metadata)> {
                 let text: String = part["utf8"].as_str()?.nfkc().collect();
                 Some(Part {
                     text,
-                    offset: number(&part["tOffsetMs"])
+                    offset: crate::number(&part["tOffsetMs"])
                         .filter(|n| n.is_finite() && *n >= 0.0)
                         .map(|n| n / 1000.0),
                     pen_id: reference(&part["pPenId"]),
@@ -290,7 +291,8 @@ pub(crate) fn parse(source: &str) -> Result<(Vec<Segment>, Metadata)> {
             let Some(value) = part.get("tOffsetMs") else {
                 return false;
             };
-            let Some(offset) = number(value).filter(|n| n.is_finite() && *n >= previous) else {
+            let Some(offset) = crate::number(value).filter(|n| n.is_finite() && *n >= previous)
+            else {
                 return true;
             };
             previous = offset;

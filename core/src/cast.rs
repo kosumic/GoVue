@@ -2,18 +2,14 @@
 mod manifest;
 mod network;
 mod protocol;
-use crate::{CastPlatform, Result, clean, string};
+use crate::{CastPlatform, Result};
 use protocol::{APP, CONNECTION, HEARTBEAT, MEDIA, RECEIVER, SENDER};
 use serde_json::{Value, json};
-use std::{
-    net::IpAddr,
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::{Duration, Instant},
-};
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 
 static PLATFORM: OnceLock<Box<dyn CastPlatform>> = OnceLock::new();
 static CURRENT: Mutex<Option<Arc<Session>>> = Mutex::new(None);
@@ -171,7 +167,7 @@ impl Session {
         if self.link {
             return Err("Control playback in the shared browser.".into());
         }
-        let action = string(command, "action")?;
+        let action = crate::string(command, "action")?;
         {
             let mut view = self
                 .view
@@ -329,7 +325,7 @@ fn start(command: &Value) -> Result<Value> {
     let p = platform()?;
     let address = p.wifi_address();
     let ip = network::private(&address).ok_or("Connect to a private Wi-Fi network to cast.")?;
-    let video_id = string(&command["catalog"], "videoId")?;
+    let video_id = crate::string(&command["catalog"], "videoId")?;
     if command["catalog"]["live"] == true {
         return Err("Casting is unavailable for this live stream.".into());
     }
@@ -340,7 +336,7 @@ fn start(command: &Value) -> Result<Value> {
     let receiver = if link {
         None
     } else {
-        let host = string(&command["device"], "host")?;
+        let host = crate::string(&command["device"], "host")?;
         let receiver = network::private(host).ok_or("Invalid Cast receiver address.")?;
         if receiver == ip {
             return Err("Choose a Cast receiver on this Wi-Fi network.".into());
@@ -364,7 +360,7 @@ fn start(command: &Value) -> Result<Value> {
         name: if link {
             "Shared player".into()
         } else {
-            clean(command["device"]["name"].as_str().unwrap_or("Cast"))
+            crate::clean(command["device"]["name"].as_str().unwrap_or("Cast"))
                 .chars()
                 .take(200)
                 .collect()
@@ -554,7 +550,7 @@ fn run(
             return Ok(());
         }
     }
-    let title = clean(command["catalog"]["title"].as_str().unwrap_or("GoVue"))
+    let title = crate::clean(command["catalog"]["title"].as_str().unwrap_or("GoVue"))
         .chars()
         .take(500)
         .collect::<String>();
@@ -578,7 +574,7 @@ fn run(
             .phase = "shared";
         return Ok(());
     }
-    let metadata = json!({"contentId":transport.media,"streamType":"BUFFERED","contentType":transport.mime,"metadata":{"metadataType":0,"title":title,"subtitle":clean(command["catalog"]["author"].as_str().unwrap_or("")).chars().take(300).collect::<String>()}});
+    let metadata = json!({"contentId":transport.media,"streamType":"BUFFERED","contentType":transport.mime,"metadata":{"metadataType":0,"title":title,"subtitle":crate::clean(command["catalog"]["author"].as_str().unwrap_or("")).chars().take(300).collect::<String>()}});
     *session
         .metadata
         .lock()

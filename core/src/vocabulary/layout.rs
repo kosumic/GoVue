@@ -1,5 +1,6 @@
 //! Map native text rows to existing caption timings without changing the words.
-use super::{Token, caption_tokens};
+use super::Token;
+use crate::vocabulary;
 use crate::{Result, Transcript};
 use std::ops::Range;
 
@@ -62,7 +63,10 @@ pub(super) fn starts(data: &Transcript, index: usize, lines: &[String]) -> Resul
         .segments
         .get(index)
         .ok_or("This caption line is no longer available.")?;
-    let (text, words) = rendered(&caption_tokens(segment, data.caption_metadata.as_ref()));
+    let (text, words) = rendered(&vocabulary::caption_tokens(
+        segment,
+        data.caption_metadata.as_ref(),
+    ));
     let rows = rows(&text, lines).ok_or("Caption layout belongs to another line.")?;
     let end = if segment.duration > 0.0 {
         segment.start + segment.duration

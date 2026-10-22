@@ -1,13 +1,12 @@
 #![cfg(test)]
 
-use govue_core::execute;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
 fn call(mut command: Value) -> Value {
     command["op"] = json!("language_choices");
     // Catalog requests are independent of transcript identity and disk storage.
-    serde_json::from_str(&execute(command.to_string(), String::new())).unwrap()
+    serde_json::from_str(&govue_core::execute(command.to_string(), String::new())).unwrap()
 }
 
 fn choices(command: Value) -> Value {

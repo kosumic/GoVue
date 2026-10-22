@@ -1,11 +1,9 @@
 //! Bounded, revisioned projections for the chat UI. Private provider state never crosses this path.
 use super::usage;
 use serde_json::{Value, json};
-use std::{
-    sync::{Arc, Mutex},
-    thread,
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 /// Coalesce a burst without losing its last change. Completion bypasses the delay.
 pub(super) struct Notifier {

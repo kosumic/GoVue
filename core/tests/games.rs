@@ -1,23 +1,15 @@
 #![cfg(test)]
 
 //! Regressions for generated cards, streamed tools, durable actions and lazy clips.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, MediaHttp, MediaRangeReply, ai_execute,
-    execute, install_ai_platform, install_media_http,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret, MediaHttp, MediaRangeReply};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    io::Read,
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 
 #[derive(Default)]
 struct Backend {
@@ -252,7 +244,7 @@ impl Drop for Temp {
     }
 }
 fn call(root: &Path, value: Value) -> Value {
-    serde_json::from_str(&ai_execute(
+    serde_json::from_str(&govue_core::ai_execute(
         value.to_string(),
         root.to_str().unwrap().into(),
     ))
@@ -333,9 +325,9 @@ impl MediaHttp for Media {
 )]
 fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     let ranges = Arc::new(Ranges::default());
-    install_media_http(Box::new(Media(ranges.clone())));
+    govue_core::install_media_http(Box::new(Media(ranges.clone())));
     for (protocol, legacy, response_mode) in [
         ("chat", false, 0),
         ("responses", false, 0), // Full terminal snapshot, alongside item events.
@@ -576,7 +568,7 @@ fn generated_games_roundtrip_all_protocols_and_keep_actions_and_audio_scoped() {
     // Caption references are frozen; lazily fetched audio survives transcript eviction.
     let video = "abcdefghijk";
     let raw = json!({"type":"transcript","requestId":"game-audio","videoId":video,"ok":true,"transcript":{"videoId":video,"title":"Clip fixture","trackId":".en","language":"English","tracks":[{"id":".en","label":"English","language":"en","automatic":false}],"segments":[{"start":12.5,"duration":2,"text":"Spoken words from the video"}]}});
-    let accepted:Value=serde_json::from_str(&execute(json!({"op":"accept","videoId":video,"requestId":"game-audio","origin":"https://www.youtube.com","raw":raw.to_string()}).to_string(),root.to_str().unwrap().into())).unwrap();
+    let accepted:Value=serde_json::from_str(&govue_core::execute(json!({"op":"accept","videoId":video,"requestId":"game-audio","origin":"https://www.youtube.com","raw":raw.to_string()}).to_string(),root.to_str().unwrap().into())).unwrap();
     assert_eq!(accepted["ok"], true);
     let mut def = definition();
     def["cueIds"] = json!(["cue-0"]);

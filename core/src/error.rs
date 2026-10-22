@@ -1,6 +1,8 @@
 //! Internal failures retain their cause; JSON exposes only the stable message.
 use serde::{Serialize, Serializer};
-use std::{error::Error as StdError, fmt, sync::Arc};
+use std::error::Error as StdError;
+use std::fmt;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub(crate) struct Error {

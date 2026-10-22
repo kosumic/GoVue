@@ -1,6 +1,7 @@
 //! Generated interfaces are documents; all durable game transitions run here.
-use super::{now, random, valid_id};
-use crate::{Result, string};
+use crate::ai::{identity, providers};
+
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -399,7 +400,7 @@ impl Game {
         }
         Ok(Self {
             version: 1,
-            id: random()?,
+            id: identity::random()?,
             call_id: call_id.into(),
             definition,
             cues,
@@ -412,7 +413,7 @@ impl Game {
     pub fn validate(&self) -> bool {
         self.version == 1
             && rules(&self.definition).is_ok()
-            && valid_id(&self.id)
+            && providers::valid_id(&self.id)
             && self.call_id.len() <= 200
             && self.state.is_object()
             && bounded(&self.state, MAX_STATE).is_ok()
@@ -431,7 +432,7 @@ impl Game {
             })
     }
     pub fn apply(&mut self, command: &Value) -> Result<bool> {
-        let event_id = string(command, "eventId")?;
+        let event_id = crate::string(command, "eventId")?;
         if !key(event_id) {
             return Err("Invalid game event identity.".into());
         }
@@ -441,7 +442,7 @@ impl Game {
         if command["revision"].as_u64() != Some(self.revision) {
             return Err("This game changed. Reload it and try again.".into());
         }
-        let name = string(command, "action")?;
+        let name = crate::string(command, "action")?;
         let input = &command["input"];
         if !input.is_object() {
             return Err("Game action input must be an object.".into());
@@ -458,7 +459,7 @@ impl Game {
                 action: "audio_requested".into(),
                 input: input.clone(),
                 notify: false,
-                at: now(),
+                at: identity::now(),
             });
             return Ok(false);
         }
@@ -493,7 +494,7 @@ impl Game {
             action: name.into(),
             input: input.clone(),
             notify: action.notify,
-            at: now(),
+            at: identity::now(),
         });
         Ok(action.notify)
     }
@@ -516,12 +517,12 @@ impl Game {
         self.revision = revision;
         self.compact();
         self.events.push(Event {
-            id: random()?,
+            id: identity::random()?,
             revision,
             action: "practice_reset".into(),
             input: json!({}),
             notify: false,
-            at: now(),
+            at: identity::now(),
         });
         Ok(())
     }

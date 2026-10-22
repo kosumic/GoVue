@@ -1,12 +1,12 @@
 //! Cast-compatible AVC/AAC DASH with explicit MP4 segment addresses.
-use crate::{
-    Result,
-    media::{container, playback},
-    transport::{self, Source},
-};
+use crate::media;
+use crate::media::playback;
+use crate::transport::Source;
+use crate::{Result, transport};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 pub struct Part {
     pub source: Arc<Source>,
@@ -119,8 +119,8 @@ pub fn build(command: &Value) -> Result<Bundle> {
             .iter()
             .filter(|s| {
                 let mime = s["mimeType"].as_str().unwrap_or("");
-                (container(s) == Some("video/mp4") && mime.contains("avc1"))
-                    || (container(s) == Some("audio/mp4") && mime.contains("mp4a"))
+                (media::container(s) == Some("video/mp4") && mime.contains("avc1"))
+                    || (media::container(s) == Some("audio/mp4") && mime.contains("mp4a"))
             })
             .collect::<Vec<_>>()
     );
@@ -176,7 +176,7 @@ pub fn build(command: &Value) -> Result<Bundle> {
             playback::range(&stream["indexRange"], source.length()).ok_or("Missing Cast index.")?;
         let bytes = transport::range_bytes(&source, index_start, index_end)
             .map_err(|_| "Could not read the Cast segment index.")?;
-        let mime = container(stream).ok_or("Invalid Cast container.")?;
+        let mime = media::container(stream).ok_or("Invalid Cast container.")?;
         let codec = playback::codecs(stream)?;
         let bandwidth = stream["bitrate"]
             .as_u64()

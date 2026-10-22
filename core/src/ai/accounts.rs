@@ -1,10 +1,12 @@
 //! Browser PKCE and RFC 8628 account connections. Tokens remain in secure storage.
-use super::{
-    FOREGROUND, Job, Provider, cancel_owner, catalog, connections, http_impl, jobs, new_job, now,
-    random, read_secret, session, verify_identity, write_secret,
-};
-use crate::{Result, string};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use super::{catalog, connections};
+use crate::Result;
+use crate::ai::commands::FOREGROUND;
+use crate::ai::jobs::Job;
+use crate::ai::providers::Provider;
+use crate::ai::{credentials, http, identity, jobs};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -137,7 +139,7 @@ fn raw(
     } else {
         String::new()
     };
-    http_impl(url.into(), method, hs, body, None, Some(job), true)
+    http::http_impl(url.into(), method, hs, body, None, Some(job), true)
 }
 fn checked(reply: Value) -> Result<Value> {
     let status = reply["status"].as_i64().unwrap_or(0);
@@ -150,7 +152,7 @@ fn checked(reply: Value) -> Result<Value> {
     Ok(reply["data"].clone())
 }
 fn token_bundle(mut data: Value, previous: &Value) -> Result<Value> {
-    let access = string(&data, "access_token")?;
+    let access = crate::string(&data, "access_token")?;
     if access.is_empty() || access.len() > 32_000 || access.chars().any(char::is_control) {
         return Err("Account returned an invalid access token.".into());
     }
@@ -177,7 +179,7 @@ fn token_bundle(mut data: Value, previous: &Value) -> Result<Value> {
             data[field] = previous[field].clone();
         }
     }
-    data["expires_at"] = json!(now() + expires);
+    data["expires_at"] = json!(identity::now() + expires);
     data["needs_reauth"] = json!(false);
     Ok(data)
 }
@@ -201,13 +203,13 @@ fn pause(job: &Arc<Job>, delay: Duration, deadline: Instant) -> Result<()> {
     }
 }
 fn save_tokens(root: &Path, p: &Provider, job: &Arc<Job>, data: Value) -> Result<Value> {
-    let lock = session(&p.id)?;
+    let lock = credentials::session(&p.id)?;
     let _g = lock
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     job.pending()?;
     connections::check_current(root, p, job)?;
-    let previous = read_secret(&p.id)?;
+    let previous = credentials::read_secret(&p.id)?;
     if let (Some(saved), Some(received)) = (previous["subject"].as_str(), data["subject"].as_str())
         && saved != received
     {
@@ -216,7 +218,7 @@ fn save_tokens(root: &Path, p: &Provider, job: &Arc<Job>, data: Value) -> Result
         );
     }
     let mut data = if p.kind == "openrouter" {
-        let key = string(&data, "key")?;
+        let key = crate::string(&data, "key")?;
         if key.is_empty() || key.len() > 8192 || key.chars().any(char::is_control) {
             return Err("OpenRouter returned an invalid key.".into());
         }
@@ -229,7 +231,7 @@ fn save_tokens(root: &Path, p: &Provider, job: &Arc<Job>, data: Value) -> Result
         data["github_token"] = data["access_token"].clone();
         data["expires_at"] = json!(0);
     }
-    write_secret(&p.id, &data)?;
+    credentials::write_secret(&p.id, &data)?;
     Ok(json!({"connected":true}))
 }
 pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> {
@@ -242,8 +244,8 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
         );
     }
     let s = spec(&p.kind)?;
-    cancel_owner(&p.id)?;
-    let job = new_job(&p.id)?;
+    jobs::cancel_owner(&p.id)?;
+    let job = jobs::new_job(&p.id)?;
     let worker = job.clone();
     if matches!(p.kind.as_str(), "kimi" | "copilot") {
         thread::spawn(move || {
@@ -254,15 +256,15 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
     }
     // Bind before opening the browser; PKCE and callback correlation stay in Rust.
     let Ok(server) = tiny_http::Server::http(("127.0.0.1", s.port)) else {
-        jobs()
+        jobs::jobs()
             .lock()
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .remove(&job.id);
         return Err("The account callback port is in use. Close another sign-in and retry.".into());
     };
-    let state = random()?;
-    let verifier = random()?;
-    let nonce = random()?;
+    let state = identity::random()?;
+    let verifier = identity::random()?;
+    let nonce = identity::random()?;
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let port = server
         .server_addr()
@@ -297,10 +299,10 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                     &worker,
                 )?)?;
                 for key in ["authorization_endpoint", "token_endpoint"] {
-                    trusted(string(&meta, key)?, "auth.x.ai")?;
+                    trusted(crate::string(&meta, key)?, "auth.x.ai")?;
                 }
-                authorize = string(&meta, "authorization_endpoint")?.into();
-                token_endpoint = string(&meta, "token_endpoint")?.into();
+                authorize = crate::string(&meta, "authorization_endpoint")?.into();
+                token_endpoint = crate::string(&meta, "token_endpoint")?.into();
             }
             let mut url =
                 Url::parse(&authorize).map_err(|_| "Invalid account authorization endpoint.")?;
@@ -404,8 +406,12 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                     &worker,
                 )?)?;
                 if p.kind == "codex" {
-                    let claims =
-                        verify_identity(string(&data, "id_token")?, s.client, "", &worker)?;
+                    let claims = credentials::verify_identity(
+                        crate::string(&data, "id_token")?,
+                        s.client,
+                        "",
+                        &worker,
+                    )?;
                     data["email"] = claims["email"].clone();
                     data["subject"] = claims["sub"].clone();
                     data["account_id"] =
@@ -413,7 +419,7 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                 }
                 if p.kind == "xai" {
                     let claims = verify_oidc(
-                        string(&data, "id_token")?,
+                        crate::string(&data, "id_token")?,
                         "https://auth.x.ai",
                         s.client,
                         &nonce,
@@ -450,7 +456,8 @@ fn verify_oidc(
     nonce: &str,
     job: &Arc<Job>,
 ) -> Result<Value> {
-    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
+    use jsonwebtoken::jwk::JwkSet;
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation};
     let meta = checked(raw(
         &format!("{issuer}/.well-known/openid-configuration"),
         None,
@@ -461,7 +468,7 @@ fn verify_oidc(
     if meta["issuer"] != issuer {
         return Err("Unexpected account issuer.".into());
     }
-    let jwks = string(&meta, "jwks_uri")?;
+    let jwks = crate::string(&meta, "jwks_uri")?;
     let issuer_url = Url::parse(issuer).map_err(|_| "Invalid account issuer.")?;
     trusted(
         jwks,
@@ -471,7 +478,7 @@ fn verify_oidc(
     )?;
     let keys: JwkSet = serde_json::from_value(checked(raw(jwks, None, false, vec![], job)?)?)
         .map_err(|_| "Invalid account signing keys.")?;
-    let head = decode_header(token).map_err(|_| "Invalid account identity.")?;
+    let head = jsonwebtoken::decode_header(token).map_err(|_| "Invalid account identity.")?;
     if !matches!(head.alg, Algorithm::RS256 | Algorithm::ES256) {
         return Err("Unsupported account identity signature.".into());
     }
@@ -482,7 +489,7 @@ fn verify_oidc(
     validation.set_audience(&[client]);
     validation.set_issuer(&[issuer]);
     validation.validate_nbf = true;
-    let claims = decode::<Value>(
+    let claims = jsonwebtoken::decode::<Value>(
         token,
         &DecodingKey::from_jwk(key).map_err(|_| "Invalid signing key.")?,
         &validation,
@@ -500,8 +507,8 @@ fn device_login(root: &Path, p: &Provider, s: &Spec, job: &Arc<Job>) -> Result<V
         body["scope"] = json!(s.scope);
     }
     let data = checked(raw(s.authorize, Some(body), true, vec![], job)?)?;
-    let device = string(&data, "device_code")?;
-    let code = string(&data, "user_code")?;
+    let device = crate::string(&data, "device_code")?;
+    let code = crate::string(&data, "user_code")?;
     let verify = data["verification_uri_complete"]
         .as_str()
         .or_else(|| data["verification_uri"].as_str())
@@ -560,12 +567,12 @@ fn device_login(root: &Path, p: &Provider, s: &Spec, job: &Arc<Job>) -> Result<V
     }
 }
 pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<String> {
-    let lock = session(&p.id)?;
+    let lock = credentials::session(&p.id)?;
     let _g = lock
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     connections::check_current(root, p, job)?;
-    let mut s = read_secret(&p.id)?;
+    let mut s = credentials::read_secret(&p.id)?;
     if !catalog::oauth(p) || p.kind == "openrouter" {
         return s["key"]
             .as_str()
@@ -577,12 +584,12 @@ pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<St
     if s["needs_reauth"] == true {
         return Err("This account needs to sign in again.".into());
     }
-    if s["expires_at"].as_u64().unwrap_or(0) <= now() + 60 {
+    if s["expires_at"].as_u64().unwrap_or(0) <= identity::now() + 60 {
         let reply = if p.kind == "copilot" {
             let mut hs = copilot_headers();
             hs.push((
                 "Authorization",
-                format!("token {}", string(&s, "github_token")?),
+                format!("token {}", crate::string(&s, "github_token")?),
             ));
             raw(
                 "https://api.github.com/copilot_internal/v2/token",
@@ -604,7 +611,7 @@ pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<St
             raw(
                 endpoint,
                 Some(
-                    json!({"client_id":spec.client,"grant_type":"refresh_token","refresh_token":string(&s,"refresh_token")?}),
+                    json!({"client_id":spec.client,"grant_type":"refresh_token","refresh_token":crate::string(&s,"refresh_token")?}),
                 ),
                 matches!(p.kind.as_str(), "kimi" | "xai"),
                 if p.kind == "anthropic" {
@@ -619,7 +626,7 @@ pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<St
             Ok(value) => value,
             Err(error) => {
                 job.pending()?;
-                if s["expires_at"].as_u64().unwrap_or(0) > now() {
+                if s["expires_at"].as_u64().unwrap_or(0) > identity::now() {
                     return s["access_token"]
                         .as_str()
                         .filter(|s| !s.is_empty())
@@ -639,10 +646,10 @@ pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<St
             if rejected {
                 s["needs_reauth"] = json!(true);
                 job.pending()?;
-                write_secret(&p.id, &s)?;
+                credentials::write_secret(&p.id, &s)?;
             }
             // Transient failures keep a still-valid access token usable.
-            if rejected || s["expires_at"].as_u64().unwrap_or(0) <= now() {
+            if rejected || s["expires_at"].as_u64().unwrap_or(0) <= identity::now() {
                 return Err("Could not refresh this account. Reconnect or try again later.".into());
             }
         } else {
@@ -652,14 +659,14 @@ pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<St
                 data["expires_in"] = json!(
                     data["expires_at"]
                         .as_u64()
-                        .unwrap_or(now() + 1200)
-                        .saturating_sub(now())
+                        .unwrap_or(identity::now() + 1200)
+                        .saturating_sub(identity::now())
                 );
                 data["github_token"] = s["github_token"].clone();
             }
             s = token_bundle(data, &s)?;
             job.pending()?;
-            write_secret(&p.id, &s)?;
+            credentials::write_secret(&p.id, &s)?;
         }
     }
     s["access_token"]

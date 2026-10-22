@@ -1,22 +1,15 @@
 #![cfg(test)]
 
 //! Native-independent boundary/routing regressions, added after Pixel streaming checks.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 
 #[derive(Default)]
 struct Backend {
@@ -135,7 +128,11 @@ impl Drop for Temp {
     }
 }
 fn call(root: &Path, c: Value) -> Value {
-    serde_json::from_str(&ai_execute(c.to_string(), root.to_str().unwrap().into())).unwrap()
+    serde_json::from_str(&govue_core::ai_execute(
+        c.to_string(),
+        root.to_str().unwrap().into(),
+    ))
+    .unwrap()
 }
 fn ok(root: &Path, c: Value) -> Value {
     let r = call(root, c);
@@ -207,7 +204,7 @@ fn saved_models_groups_configuration_and_wire_controls_work_together() {
     let root = &temp.0;
     fs::create_dir_all(root.join("ai")).unwrap();
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     fs::write(root.join("ai/providers.json"),json!({"providers":[{"id":"legacy","label":"Old account","kind":"custom","baseUrl":"https://old.example.test/v1","model":"old-model"}],"activeId":"legacy"}).to_string()).unwrap();
     let cfg = ok(root, json!({"op":"ai_config"}));
     assert_eq!(cfg["providers"][0]["enabled"], true);

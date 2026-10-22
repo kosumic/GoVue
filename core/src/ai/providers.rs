@@ -1,9 +1,12 @@
 //! Provider settings, migration, validation and credential-safe presentation.
-use super::{catalog, connections, has_plan, read_secret};
+use super::{catalog, connections};
+use crate::ai::{credentials, providers};
 use crate::{Error, Result, json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{fs, path::Path, sync::Mutex};
+use std::fs;
+use std::path::Path;
+use std::sync::Mutex;
 use url::Url;
 
 pub(super) static CONFIG_LOCK: Mutex<()> = Mutex::new(());
@@ -168,7 +171,7 @@ pub(super) fn provider(root: &Path, id: &str) -> Result<Provider> {
     let _g = CONFIG_LOCK
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-    let cfg = config(root)?;
+    let cfg = providers::config(root)?;
     if let Some(g) = cfg.groups.iter().find(|g| g.id == id) {
         return Ok(catalog::group_provider(g));
     }
@@ -181,12 +184,12 @@ pub(super) fn provider(root: &Path, id: &str) -> Result<Provider> {
     Ok(p)
 }
 pub(super) fn public_config(root: &Path) -> Result<Value> {
-    let c = config(root)?;
+    let c = providers::config(root)?;
     let mut rows = Vec::new();
     for p in &c.providers {
         let mut row = serde_json::to_value(p).map_err(|_| "Invalid provider settings.")?;
         row["connection"] = connections::preview(p);
-        let s = match read_secret(&p.id) {
+        let s = match credentials::read_secret(&p.id) {
             Ok(s) => s,
             Err(_) => {
                 row["credentialError"] = json!(
@@ -205,7 +208,7 @@ pub(super) fn public_config(root: &Path) -> Result<Value> {
         });
         row["needsReauth"] = json!(s["needs_reauth"] == true);
         row["account"] = s["email"].clone();
-        row["planEnabled"] = json!(has_plan(&s));
+        row["planEnabled"] = json!(credentials::has_plan(&s));
         rows.push(row);
     }
     let groups: Vec<_> = c
@@ -232,8 +235,9 @@ pub(super) fn public_config(root: &Path) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::config;
-    use std::{error::Error as _, fs};
+    use crate::ai::providers;
+    use std::error::Error as _;
+    use std::fs;
 
     #[test]
     fn unreadable_settings_retain_the_decoder_cause_without_exposing_it() {
@@ -241,7 +245,7 @@ mod tests {
             std::env::temp_dir().join(format!("govue-provider-diagnostics-{}", std::process::id()));
         fs::create_dir_all(root.join("ai")).unwrap();
         fs::write(root.join("ai/providers.json"), b"not json").unwrap();
-        let error = config(&root).err().unwrap();
+        let error = providers::config(&root).err().unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let cause = error

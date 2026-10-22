@@ -1,23 +1,17 @@
 //! YouTube file streams require bounded byte ranges. This loopback transport
 //! adapts those responses to the ordinary HTTP ranges used by AVPlayer/Media3.
-use crate::{
-    Result,
-    media::{container, dash, media_url, playback},
-    string,
-};
+use crate::Result;
+use crate::media;
+use crate::media::{dash, playback};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::{
-    collections::HashMap,
-    io::{self, Read, Write},
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    thread,
-    time::Duration,
-};
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
+use std::{io, thread};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 pub(crate) mod streaming;
@@ -216,7 +210,7 @@ fn range_bytes_with(
                         && !location.chars().any(char::is_control)
                 })
                 .and_then(|location| url::Url::parse(&url).ok()?.join(location).ok())
-                .and_then(|target| media_url(target.as_str()));
+                .and_then(|target| media::media_url(target.as_str()));
             let Some(next) = next else {
                 note("lastError", json!("Invalid media redirect."));
                 return Err(io::Error::other("Invalid media redirect."));
@@ -258,7 +252,7 @@ impl DownloadSource {
     pub(crate) fn new(stream: &Value, user_agent: &str, origin: &str) -> Result<Self> {
         let url = stream["url"]
             .as_str()
-            .and_then(media_url)
+            .and_then(media::media_url)
             .ok_or("Invalid download source.")?;
         let length = stream["bytes"]
             .as_u64()
@@ -284,7 +278,7 @@ impl DownloadSource {
                 .unwrap_or(user_agent)
                 .into(),
             origin: origin.into(),
-            mime: container(stream)
+            mime: media::container(stream)
                 .unwrap_or("application/octet-stream")
                 .into(),
             post: AtomicBool::new(false),
@@ -526,13 +520,13 @@ fn serve(
 }
 
 pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
-    let url = media_url(string(command, "url")?).ok_or("Untrusted media source.")?;
+    let url = media::media_url(crate::string(command, "url")?).ok_or("Untrusted media source.")?;
     let length = command["length"]
         .as_u64()
         .filter(|n| *n > 0 && *n <= 100_000_000_000)
         .ok_or("Missing media length.")?;
-    let user_agent = string(command, "userAgent")?;
-    let origin = string(command, "origin")?;
+    let user_agent = crate::string(command, "userAgent")?;
+    let origin = crate::string(command, "origin")?;
     if !matches!(
         origin,
         "https://www.youtube.com"
@@ -550,7 +544,7 @@ pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
         length,
         user_agent: user_agent.into(),
         origin: origin.into(),
-        mime: container(command).unwrap_or("video/mp4").into(),
+        mime: media::container(command).unwrap_or("video/mp4").into(),
         post: AtomicBool::new(false),
         redirected: Mutex::new(None),
     }))
@@ -620,7 +614,7 @@ pub(super) fn proxy(command: &Value) -> Result<Value> {
         "http://127.0.0.1:{}/{}.{}",
         server.port,
         token,
-        if container(command).is_some_and(|mime| mime.ends_with("/webm")) {
+        if media::container(command).is_some_and(|mime| mime.ends_with("/webm")) {
             "webm"
         } else {
             "mp4"
@@ -633,7 +627,7 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
     if catalog["live"] == true {
         let url = catalog["hlsUrl"]
             .as_str()
-            .and_then(media_url)
+            .and_then(media::media_url)
             .ok_or("No playable live manifest is available. Refresh the video.")?;
         let agent = catalog["hlsUserAgent"]
             .as_str()
@@ -711,7 +705,8 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
         let mut tracks = Vec::new();
         for (index, stream) in std::iter::once(audio).chain(variants).enumerate() {
             let key = format!("{root}-{index}");
-            let extension = if container(stream).is_some_and(|mime| mime.ends_with("/webm")) {
+            let extension = if media::container(stream).is_some_and(|mime| mime.ends_with("/webm"))
+            {
                 "webm"
             } else {
                 "mp4"
@@ -739,7 +734,9 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
             json!({"uri":format!("http://127.0.0.1:{}/{root}.mpd",server.port),"contentType":"dash","qualityHeight":requested,"qualityFps":selected["fps"].as_u64().unwrap_or(0),"startupHeight":startup_height}),
         );
     }
-    if container(audio) != Some("audio/mp4") || container(selected) != Some("video/mp4") {
+    if media::container(audio) != Some("audio/mp4")
+        || media::container(selected) != Some("video/mp4")
+    {
         return Err("This playback format requires DASH support.".into());
     }
     let mut add_track = |stream: &Value, name: &str| -> Result<String> {
@@ -764,7 +761,7 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
     let variants: Vec<_> = if requested == 0 {
         videos
             .into_iter()
-            .filter(|s| s["kind"] == "video" && container(s) == Some("video/mp4"))
+            .filter(|s| s["kind"] == "video" && media::container(s) == Some("video/mp4"))
             .collect()
     } else {
         vec![selected]
@@ -817,8 +814,8 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
 
 pub(super) fn release(command: &Value) -> Result<Value> {
     if let Some(server) = PROXY.get() {
-        let uri =
-            url::Url::parse(string(command, "uri")?).map_err(|_| "Invalid local media address.")?;
+        let uri = url::Url::parse(crate::string(command, "uri")?)
+            .map_err(|_| "Invalid local media address.")?;
         if uri.scheme() != "http"
             || uri.host_str() != Some("127.0.0.1")
             || uri.port() != Some(server.port)

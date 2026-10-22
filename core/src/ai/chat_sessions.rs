@@ -1,5 +1,6 @@
 //! Conversation/task ownership and deferred game feedback live beside saved chats.
-use crate::{Result, identity::SessionId, string};
+use crate::Result;
+use crate::identity::SessionId;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -55,13 +56,15 @@ fn cancel(session: &mut Session, root: &Path) -> Value {
     let Some(task) = session.task.take() else {
         return Value::Null;
     };
-    let result = super::dispatch(json!({"op":"ai_cancel","taskId":task}), root.into())
-        .unwrap_or(Value::Null);
-    let _ = super::dispatch(json!({"op":"ai_forget","taskId":task}), root.into());
+    let result =
+        crate::ai::commands::dispatch(json!({"op":"ai_cancel","taskId":task}), root.into())
+            .unwrap_or(Value::Null);
+    let _ = crate::ai::commands::dispatch(json!({"op":"ai_forget","taskId":task}), root.into());
     result
 }
 pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
-    let id = SessionId::parse(string(c, "sessionId")?, 150).map_err(|_| "Invalid chat session.")?;
+    let id = SessionId::parse(crate::string(c, "sessionId")?, 150)
+        .map_err(|_| "Invalid chat session.")?;
     let key = ControllerKey {
         root: root.into(),
         session: id,
@@ -78,11 +81,11 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
     let mut session = controller.lock().map_err(|_| "This chat is busy.")?;
     let version = c["version"].as_u64().ok_or("Missing chat revision.")?;
     if c["op"] == "ai_chat_session_forget" {
-        let task = string(c, "taskId")?;
+        let task = crate::string(c, "taskId")?;
         if session.task.as_deref() == Some(task) {
             session.task = None;
         }
-        return super::dispatch(json!({"op":"ai_forget","taskId":task}), root.into());
+        return crate::ai::commands::dispatch(json!({"op":"ai_forget","taskId":task}), root.into());
     }
     if c["op"] == "ai_chat_session_cancel" {
         // A delayed cancellation acknowledges its generation without cancelling
@@ -97,8 +100,10 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
         // A view may adopt an already-running saved conversation without sending.
         if session.task.is_none()
             && let Some(chat) = c["chatId"].as_str()
-            && let Ok(saved) =
-                super::dispatch(json!({"op":"ai_chat_get","chatId":chat}), root.into())
+            && let Ok(saved) = crate::ai::commands::dispatch(
+                json!({"op":"ai_chat_get","chatId":chat}),
+                root.into(),
+            )
         {
             session.task = saved["activeTask"].as_str().map(str::to_owned);
             session.chat = Some(chat.into());
@@ -119,7 +124,7 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
         )?;
     }
     let mut command = if c["op"] == "ai_chat_session_feedback" {
-        let chat = string(c, "chatId")?;
+        let chat = crate::string(c, "chatId")?;
         let pending = FEEDBACK
             .get_or_init(Default::default)
             .lock()
@@ -129,7 +134,8 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
         let Some((game, revision)) = pending else {
             return Ok(Value::Null);
         };
-        let saved = super::dispatch(json!({"op":"ai_chat_get","chatId":chat}), root.into())?;
+        let saved =
+            crate::ai::commands::dispatch(json!({"op":"ai_chat_get","chatId":chat}), root.into())?;
         if saved["activeTask"].is_string() {
             return Ok(Value::Null);
         }
@@ -150,7 +156,10 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
                 .as_str()
                 .or(session.chat.as_deref())
                 .ok_or("This chat has not started yet.")?;
-            let saved = super::dispatch(json!({"op":"ai_chat_get","chatId":chat}), root.into())?;
+            let saved = crate::ai::commands::dispatch(
+                json!({"op":"ai_chat_get","chatId":chat}),
+                root.into(),
+            )?;
             command["chatId"] = json!(chat);
             command["id"] = saved["providerId"].clone();
         }
@@ -164,7 +173,7 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
     let chat = command["chatId"].as_str().map(str::to_owned);
     let game = command["focusGameId"].as_str().map(str::to_owned);
     command["notificationSession"] = c["sessionId"].clone();
-    let result = super::dispatch(command, root.into())?;
+    let result = crate::ai::commands::dispatch(command, root.into())?;
     session.task = result["taskId"].as_str().map(str::to_owned);
     session.chat = result["conversation"]["id"].as_str().map(str::to_owned);
     drop(session);

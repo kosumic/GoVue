@@ -1,15 +1,10 @@
 #![cfg(test)]
 
-use govue_core::{
-    ExtractionHeader, ExtractionHttp, ExtractionReply, ExtractionRequest, execute,
-    install_extraction_http,
-};
+use govue_core::{ExtractionHeader, ExtractionHttp, ExtractionReply, ExtractionRequest};
 use serde_json::{Value, json};
-use std::{
-    fs,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::fs;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 #[derive(Clone, Debug)]
@@ -84,7 +79,8 @@ impl ExtractionHttp for Http {
     }
 }
 fn call(root: &str, command: Value) -> Value {
-    let result: Value = serde_json::from_str(&execute(command.to_string(), root.into())).unwrap();
+    let result: Value =
+        serde_json::from_str(&govue_core::execute(command.to_string(), root.into())).unwrap();
     assert_eq!(result["ok"], true, "{result}");
     result["value"].clone()
 }
@@ -109,7 +105,7 @@ fn extract(root: &str, id: &str, kind: &str, fresh: bool) -> Value {
 #[test]
 fn playback_uses_bounded_configuration_but_transcripts_keep_the_full_web_metadata() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    install_extraction_http(Box::new(Http(seen.clone())));
+    govue_core::install_extraction_http(Box::new(Http(seen.clone())));
     let root = std::env::temp_dir().join(format!(
         "govue-startup-{}",
         SystemTime::now()

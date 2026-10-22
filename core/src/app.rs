@@ -1,9 +1,10 @@
 //! App release policy and bundled license notices shared by both platforms.
-use crate::{Result, string};
+use crate::Result;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{borrow::Cow, sync::OnceLock};
+use std::borrow::Cow;
+use std::sync::OnceLock;
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -151,23 +152,23 @@ fn notices() -> Result<impl Iterator<Item = &'static Notice>> {
 }
 
 pub fn dispatch(command: &Value) -> Result<Value> {
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "app_licenses" => Ok(json!(notices()?.collect::<Vec<_>>())),
         "app_license" => {
-            let id = string(command, "id")?;
+            let id = crate::string(command, "id")?;
             notices()?
                 .find(|notice| notice.id == id)
                 .map(|notice| json!({"text": notice.text}))
                 .ok_or_else(|| "Unknown license notice.".into())
         }
         "app_update" => {
-            let installed = Version::parse(string(command, "installedVersion")?)
+            let installed = Version::parse(crate::string(command, "installedVersion")?)
                 .map_err(|_| "Could not read the installed app version.")?;
             let release = &command["release"];
             if release["draft"] != false || release["prerelease"] != false {
                 return Err("GitHub did not return a stable release.".into());
             }
-            let tag = string(release, "tag_name")?;
+            let tag = crate::string(release, "tag_name")?;
             let latest = Version::parse(tag.strip_prefix('v').unwrap_or(tag))
                 .map_err(|_| "Could not read the latest release version.")?;
             if !latest.pre.is_empty() {

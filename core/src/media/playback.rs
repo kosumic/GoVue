@@ -1,6 +1,7 @@
 //! Playback choices and HLS byte-range playlists for YouTube's indexed files.
 //! Playlists and signed source addresses remain in the loopback proxy's memory.
-use super::{Result, container, media_url};
+use super::Result;
+use crate::media;
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 
@@ -34,7 +35,7 @@ pub(crate) fn adaptive_videos<'a>(catalog: &'a Value, selected: &Value) -> Resul
     let mut videos = video_formats(catalog)?;
     videos.retain(|s| {
         s["kind"] == "video"
-            && container(s) == container(selected)
+            && media::container(s) == media::container(selected)
             && codecs(s).is_ok_and(|codec| codec.split('.').next() == family)
     });
     videos.dedup_by_key(|s| (s["height"].as_u64(), s["fps"].as_u64()));
@@ -62,7 +63,7 @@ fn video_formats(catalog: &Value) -> Result<Vec<&Value>> {
                 .is_some_and(|n| n > 0 && n <= 100_000_000_000)
                 && s["height"].as_u64().is_some_and(|h| h > 0 && h <= 8640)
                 && s["supported"] != false
-                && s["url"].as_str().and_then(media_url).is_some()
+                && s["url"].as_str().and_then(media::media_url).is_some()
                 && matches!(super::container(s), Some("video/mp4" | "video/webm"))
                 && ["avc1", "vp09", "vp9", "av01", "hvc1", "hev1"]
                     .iter()
@@ -109,7 +110,7 @@ pub(crate) fn audio_for<'a>(catalog: &'a Value, key: &str) -> Option<&'a Value> 
                     || (super::container(s) == Some("audio/webm") && mime.contains("opus")))
                 && s["supported"] != false
                 && indexed(s)
-                && s["url"].as_str().and_then(media_url).is_some()
+                && s["url"].as_str().and_then(media::media_url).is_some()
                 && (key.is_empty() || s["audioKey"] == key)
         })
         .max_by_key(|s| {

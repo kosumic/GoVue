@@ -1,13 +1,14 @@
 //! Short-lived player responses and guest configurations, scoped by storage root.
-use super::network::fetch_response_bounded;
-use super::{CACHE_LIFETIME, Job, ORIGIN, Session, UA, fetch, json_response, page_json};
-use crate::{Result, identity::VideoId, json};
+use crate::extraction;
+use crate::extraction::network;
+
+use super::{CACHE_LIFETIME, Job, ORIGIN, Session, UA};
+use crate::identity::VideoId;
+use crate::{Result, json};
 use serde_json::Value;
-use std::{
-    collections::VecDeque,
-    sync::{Mutex, OnceLock},
-    time::Instant,
-};
+use std::collections::VecDeque;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 pub(super) static PLAYERS: OnceLock<Mutex<VecDeque<Player>>> = OnceLock::new();
 static CONFIGURATIONS: OnceLock<Mutex<VecDeque<Configuration>>> = OnceLock::new();
@@ -31,11 +32,11 @@ struct Configuration {
     session: Session,
 }
 fn configuration_context(html: &str) -> Option<Value> {
-    page_json(html, "ytcfg.set(")
+    extraction::page_json(html, "ytcfg.set(")
         .map(|config| config["INNERTUBE_CONTEXT"].clone())
         .filter(|context| context["client"].is_object())
         .or_else(|| {
-            page_json(html, "\"INNERTUBE_CONTEXT\":")
+            extraction::page_json(html, "\"INNERTUBE_CONTEXT\":")
                 .filter(|context| context["client"].is_object())
         })
 }
@@ -74,7 +75,7 @@ fn configuration(
     let mut html = String::new();
     if !need_page {
         let _span = crate::trace::Section::begin(c"GoVue extraction: configuration prefix");
-        let reply = fetch_response_bounded(job, &address, None, false, &[], 65_536)?;
+        let reply = network::fetch_response_bounded(job, &address, None, false, &[], 65_536)?;
         if reply.status != 200 {
             return Err(
                 format!("YouTube extraction request failed (HTTP {}).", reply.status).into(),
@@ -85,7 +86,7 @@ fn configuration(
         html = String::from_utf8_lossy(&reply.body).into_owned();
     }
     if need_page || configuration_context(&html).is_none() {
-        html = fetch(job, &address, None, false, &[])?;
+        html = network::fetch(job, &address, None, false, &[])?;
     }
     let context =
         configuration_context(&html).ok_or("YouTube did not provide extraction configuration.")?;
@@ -129,7 +130,7 @@ fn native_player(job: &Job, id: &str, context: Value) -> Result<Value> {
     }
     let mut native_context = context;
     native_context["client"] = client;
-    let data = json_response(&fetch(
+    let data = extraction::json_response(&network::fetch(
         job,
         &format!("{ORIGIN}/youtubei/v1/player?prettyPrint=false"),
         Some(
@@ -187,15 +188,15 @@ pub(super) fn player(
     // Web subtitle addresses require WebPO tokens. Keep the web client's
     // caption metadata paired with that token context, independently of the
     // native client used for direct media streams.
-    let web = page_json(html, "var ytInitialPlayerResponse = ")
-        .or_else(|| page_json(html, "ytInitialPlayerResponse="))
+    let web = extraction::page_json(html, "var ytInitialPlayerResponse = ")
+        .or_else(|| extraction::page_json(html, "ytInitialPlayerResponse="))
         .filter(|web| web["videoDetails"]["videoId"] == id);
     let web_loaded = need_page || web.is_some();
     if let Some(web) = web.filter(|web| web["captions"].is_object()) {
         data["captions"] = web["captions"].clone();
     }
-    let initial = page_json(html, "var ytInitialData = ")
-        .or_else(|| page_json(html, "ytInitialData="))
+    let initial = extraction::page_json(html, "var ytInitialData = ")
+        .or_else(|| extraction::page_json(html, "ytInitialData="))
         .unwrap_or(Value::Null);
     let result = Player {
         root: root.into(),

@@ -1,6 +1,6 @@
 //! Download choices and configuration follow LiTube's confirmation sheet.
 //! Signed addresses occur only in transient plans, never in preferences.
-use crate::{Result, clean, media, string, video_id};
+use crate::{Result, media};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
@@ -91,7 +91,7 @@ pub(crate) fn history(command: &Value) -> Result<Value> {
             !s.is_empty()
                 && s.len() <= 100
                 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        }) || !entry["videoId"].as_str().is_some_and(video_id)
+        }) || !entry["videoId"].as_str().is_some_and(crate::video_id)
         {
             return Err("Invalid download identity.".into());
         }
@@ -113,7 +113,7 @@ pub(crate) fn history(command: &Value) -> Result<Value> {
         if !safe_file(&entry["file"]) {
             return Err("Invalid download file.".into());
         }
-        let mut record = json!({"id":entry["id"],"videoId":entry["videoId"],"title":clean(entry["title"].as_str().unwrap_or("Video")),"author":clean(entry["author"].as_str().unwrap_or("")),"label":clean(entry["label"].as_str().unwrap_or("")),"itag":entry["itag"].as_u64().unwrap_or(0),"state":state,"received":entry["received"].as_u64().unwrap_or(0).min(200_000_000_000),"total":entry["total"].as_u64().unwrap_or(0).min(200_000_000_000),"file":entry["file"],"mimeType":clean(entry["mimeType"].as_str().unwrap_or("video/mp4")),"watchPageDownloaded":state=="complete"&&entry["config"]["attachmentsOnly"]!=true});
+        let mut record = json!({"id":entry["id"],"videoId":entry["videoId"],"title":crate::clean(entry["title"].as_str().unwrap_or("Video")),"author":crate::clean(entry["author"].as_str().unwrap_or("")),"label":crate::clean(entry["label"].as_str().unwrap_or("")),"itag":entry["itag"].as_u64().unwrap_or(0),"state":state,"received":entry["received"].as_u64().unwrap_or(0).min(200_000_000_000),"total":entry["total"].as_u64().unwrap_or(0).min(200_000_000_000),"file":entry["file"],"mimeType":crate::clean(entry["mimeType"].as_str().unwrap_or("video/mp4")),"watchPageDownloaded":state=="complete"&&entry["config"]["attachmentsOnly"]!=true});
         if let Some(generation) = entry["publicationGeneration"].as_u64() {
             if generation > 9_007_199_254_740_991 {
                 return Err("Invalid publication generation.".into());
@@ -129,7 +129,7 @@ pub(crate) fn history(command: &Value) -> Result<Value> {
             record["error"] = json!(if error.contains("://") {
                 "Download failed. Refresh the video and try again.".to_string()
             } else {
-                clean(error).chars().take(500).collect()
+                crate::clean(error).chars().take(500).collect()
             });
         }
         if entry["config"].is_object() {
@@ -144,7 +144,7 @@ pub(crate) fn history(command: &Value) -> Result<Value> {
                 if !safe_file(&artifact["file"]) {
                     return Err("Invalid saved attachment.".into());
                 }
-                let mut saved = json!({"file":artifact["file"],"mimeType":clean(artifact["mimeType"].as_str().unwrap_or("application/octet-stream")),"label":clean(artifact["label"].as_str().unwrap_or("File"))});
+                let mut saved = json!({"file":artifact["file"],"mimeType":crate::clean(artifact["mimeType"].as_str().unwrap_or("application/octet-stream")),"label":crate::clean(artifact["label"].as_str().unwrap_or("File"))});
                 publication::sanitize(artifact, &mut saved)?;
                 safe.push(saved);
             }
@@ -157,7 +157,7 @@ pub(crate) fn history(command: &Value) -> Result<Value> {
 
 fn filename(value: &str) -> String {
     let mut output = String::new();
-    for c in clean(value).chars() {
+    for c in crate::clean(value).chars() {
         if output.len() + c.len_utf8() > 180 {
             break;
         }
@@ -284,8 +284,8 @@ fn selected<'a>(catalog: &'a Value, config: &Config) -> Result<Vec<&'a Value>> {
 }
 
 fn plan(catalog: &Value, config: &Config) -> Result<Value> {
-    let id = string(catalog, "videoId")?;
-    if !video_id(id) {
+    let id = crate::string(catalog, "videoId")?;
+    if !crate::video_id(id) {
         return Err("Invalid download video.".into());
     }
     let parts = selected(catalog, config)?;
@@ -343,15 +343,15 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     {
         return runner::dispatch(command, root);
     }
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "downloads_export_name" => {
             let entries = media::read(root, "downloads.json", json!([]));
-            let id = string(command, "id")?;
+            let id = crate::string(command, "id")?;
             let entry = entries
                 .as_array()
                 .and_then(|e| e.iter().find(|e| e["id"] == id))
                 .ok_or("Download no longer exists.")?;
-            let file = string(command, "file")?;
+            let file = crate::string(command, "file")?;
             Ok(json!(publication::name(entry, file)?))
         }
         "downloads_targets" => {
@@ -361,17 +361,17 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .ok_or("Invalid download selection.")?;
             let mut safe = Vec::new();
             for item in items {
-                if item["videoId"].as_str().is_some_and(video_id)
+                if item["videoId"].as_str().is_some_and(crate::video_id)
                     && !safe.iter().any(|s: &Value| s["videoId"] == item["videoId"])
                 {
-                    safe.push(json!({"videoId":item["videoId"],"title":clean(item["title"].as_str().unwrap_or("Video")).chars().take(1000).collect::<String>(),"author":clean(item["author"].as_str().unwrap_or("")).chars().take(500).collect::<String>()}));
+                    safe.push(json!({"videoId":item["videoId"],"title":crate::clean(item["title"].as_str().unwrap_or("Video")).chars().take(1000).collect::<String>(),"author":crate::clean(item["author"].as_str().unwrap_or("")).chars().take(500).collect::<String>()}));
                 }
             }
             if safe.is_empty() {
                 return Err("No downloadable videos were found.".into());
             }
             Ok(
-                json!({"name":clean(command["name"].as_str().unwrap_or("Playlist")).chars().take(200).collect::<String>(),"items":safe}),
+                json!({"name":crate::clean(command["name"].as_str().unwrap_or("Playlist")).chars().take(200).collect::<String>(),"items":safe}),
             )
         }
         "downloads_transfer_start"
@@ -461,8 +461,8 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         "downloads_subtitles" => {
             let data = crate::transcript::load(
                 root,
-                string(command, "videoId")?,
-                string(command, "trackId")?,
+                crate::string(command, "videoId")?,
+                crate::string(command, "trackId")?,
             )?;
             #[allow(
                 clippy::cast_possible_truncation,

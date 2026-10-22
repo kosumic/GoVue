@@ -1,7 +1,8 @@
 //! Android Downloads publication state. Content URIs are owned local artifacts,
 //! never upstream addresses. Platform adapters supply copy/verification results.
-use super::filename;
-use crate::{Result, string};
+use crate::downloads;
+
+use crate::Result;
 use serde_json::{Value, json};
 use url::Url;
 
@@ -55,7 +56,7 @@ pub(super) fn name(entry: &Value, file: &str) -> Result<String> {
         .ok_or("Unsupported saved file.")?;
     Ok(format!(
         "{}.{ext}",
-        filename(
+        downloads::filename(
             entry["name"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -97,7 +98,7 @@ pub(super) fn dispatch(entry: &mut Value, command: &Value) -> Result<Value> {
     ) {
         return Err("This download cannot be published now.".into());
     }
-    let op = string(command, "op")?;
+    let op = crate::string(command, "op")?;
     if op == "downloads_publication_plan" {
         let generation = invalidate(entry)?;
         let artifacts = entry["artifacts"]
@@ -105,7 +106,7 @@ pub(super) fn dispatch(entry: &mut Value, command: &Value) -> Result<Value> {
             .filter(|a| !a.is_empty() && a.len() <= 3)
             .ok_or("Saved download files are not available.".to_string())?;
         let plan: Vec<_> = artifacts.iter().map(|a| {
-            let file = string(a,"file")?;
+            let file = crate::string(a,"file")?;
             Ok(json!({"file":file,"name":name(entry,file)?,"mimeType":a["mimeType"],"uri":a["publishedUri"],"published":a["published"]==true,"bytes":a["publishedBytes"],"sha256":a["publishedSha256"]}))
         }).collect::<Result<_>>()?;
         return Ok(json!({"state":entry["state"],"generation":generation,"artifacts":plan}));
@@ -118,12 +119,12 @@ pub(super) fn dispatch(entry: &mut Value, command: &Value) -> Result<Value> {
     if op == "downloads_publication_check" {
         return Ok(Value::Null);
     }
-    let file = string(command, "file")?;
+    let file = crate::string(command, "file")?;
     let artifact = entry["artifacts"]
         .as_array_mut()
         .and_then(|a| a.iter_mut().find(|a| a["file"] == file))
         .ok_or("This file does not belong to the download.".to_string())?;
-    let address = string(command, "uri")?;
+    let address = crate::string(command, "uri")?;
     if !uri(address) {
         return Err("Invalid published download identity.".into());
     }

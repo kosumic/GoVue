@@ -1,6 +1,8 @@
 //! Ordered, display-safe chat activity. Provider arguments and continuations stay private.
-use super::{MAX_OUTPUT, plan, usage, valid_id};
+use super::{plan, usage};
 use crate::Result;
+use crate::ai::http::MAX_OUTPUT;
+use crate::ai::providers;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -115,14 +117,18 @@ impl Block {
                 id,
                 content,
                 status,
-            } => valid_id(id) && content.len() <= MAX_OUTPUT && *status != Status::Preparing,
+            } => {
+                providers::valid_id(id)
+                    && content.len() <= MAX_OUTPUT
+                    && *status != Status::Preparing
+            }
             Self::Plan {
                 id,
                 steps,
                 explanation,
                 status,
             } => {
-                valid_id(id)
+                providers::valid_id(id)
                     && plan::valid(steps, explanation.as_deref())
                     && *status != Status::Preparing
                     && (*status != Status::Completed
@@ -141,13 +147,13 @@ impl Block {
                 error,
                 ..
             } => {
-                valid_id(id)
+                providers::valid_id(id)
                     && !call_id.is_empty()
                     && call_id.len() <= 200
                     && name.len() <= 100
                     && *started_at <= usage::MAX_COUNT
                     && *duration_ms <= usage::MAX_COUNT
-                    && game_id.as_ref().is_none_or(|id| valid_id(id))
+                    && game_id.as_ref().is_none_or(|id| providers::valid_id(id))
                     && title.as_ref().is_none_or(|s| s.len() <= 1000)
                     && error.as_ref().is_none_or(|s| s.len() <= 2000)
             }

@@ -1,6 +1,7 @@
 //! The live page supplies caption bytes; Rust owns selection, parsing and storage.
-use super::{Job, json_response, text};
-use crate::{MAX_BYTES, Result, Track, string, video_id};
+use super::Job;
+use crate::extraction;
+use crate::{MAX_BYTES, Result, Track};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -16,7 +17,7 @@ pub(super) const CHANNEL: &str = "extraction-page";
 pub(super) const TIMEOUT: Duration = Duration::from_secs(12);
 
 pub(super) fn register(command: &Value, root: &str) -> Result<Value> {
-    let adapter = string(command, "adapterId")?;
+    let adapter = crate::string(command, "adapterId")?;
     if adapter.is_empty() || adapter.len() > 150 || adapter.chars().any(char::is_control) {
         return Err("Invalid caption page identity.".into());
     }
@@ -25,7 +26,7 @@ pub(super) fn register(command: &Value, root: &str) -> Result<Value> {
         .lock()
         .map_err(|_| "Caption page unavailable.")?;
     if let Some(video) = command["videoId"].as_str() {
-        if !video_id(video) || pages.len() >= 8 && !pages.contains_key(root) {
+        if !crate::video_id(video) || pages.len() >= 8 && !pages.contains_key(root) {
             return Err("Invalid caption page registration.".into());
         }
         pages.insert(
@@ -61,8 +62,8 @@ pub(super) fn captions(
     let raw = job.evaluate(json!({"stage":STAGE,"adapterId":adapter,"videoId":video,
         "trackId":track.id,"sourceTrackId":track.translated_from.as_deref().unwrap_or(&track.id),
         "language":track.language,"automatic":track.automatic,"label":track.label}))?;
-    let reply = json_response(&raw)?;
-    let source = string(&reply, "source")?;
+    let reply = extraction::json_response(&raw)?;
+    let source = crate::string(&reply, "source")?;
     let parsed = match reply["format"].as_str() {
         Some("timedtext") => crate::captions::parse(source)?,
         Some("panel") if track.translated_from.is_none() => panel(source, &track.label)?,
@@ -75,7 +76,7 @@ pub(super) fn captions(
 }
 
 fn panel(source: &str, label: &str) -> Result<(Vec<crate::Segment>, crate::captions::Metadata)> {
-    let data = json_response(source)?;
+    let data = extraction::json_response(source)?;
     let mut queue = vec![&data];
     let mut events = Vec::new();
     let mut selected = None;
@@ -92,7 +93,7 @@ fn panel(source: &str, label: &str) -> Result<(Vec<crate::Segment>, crate::capti
             if !start.is_finite() || start < 0.0 || !end.is_finite() || end < start {
                 return Err("Invalid transcript timestamp.".into());
             }
-            events.push(json!({"tStartMs":start,"dDurationMs":end-start,"segs":[{"utf8":text(&segment["snippet"])}]}));
+            events.push(json!({"tStartMs":start,"dDurationMs":end-start,"segs":[{"utf8":extraction::text(&segment["snippet"])}]}));
             if events.len() > crate::MAX_SEGMENTS {
                 return Err("Too many transcript segments.".into());
             }
@@ -101,7 +102,7 @@ fn panel(source: &str, label: &str) -> Result<(Vec<crate::Segment>, crate::capti
             selected = items
                 .iter()
                 .find(|item| item["selected"] == true)
-                .map(|item| text(&item["title"]))
+                .map(|item| extraction::text(&item["title"]))
                 .or(selected);
         }
         match value {
@@ -120,11 +121,11 @@ fn panel(source: &str, label: &str) -> Result<(Vec<crate::Segment>, crate::capti
 }
 
 pub(super) fn reply(command: &Value, root: &str, job: &Job) -> Result<Value> {
-    let raw = string(command, "raw")?;
+    let raw = crate::string(command, "raw")?;
     if raw.len() > MAX_BYTES {
         return Err("Caption page response is too large.".into());
     }
-    let reply = json_response(raw)?;
+    let reply = extraction::json_response(raw)?;
     let mut runtime = job
         .runtime
         .lock()
@@ -134,7 +135,7 @@ pub(super) fn reply(command: &Value, root: &str, job: &Job) -> Result<Value> {
         .as_ref()
         .filter(|task| task["stage"] == STAGE)
         .ok_or("Caption page request expired.")?;
-    let origin = string(command, "origin")?;
+    let origin = crate::string(command, "origin")?;
     let pages = PAGES
         .get_or_init(Default::default)
         .lock()
@@ -142,7 +143,7 @@ pub(super) fn reply(command: &Value, root: &str, job: &Job) -> Result<Value> {
     // Android WebMessageListener reports the origin, while iOS and older
     // Android bridges report the full document URL. The registered adapter
     // and pending task below correlate either form with the current video.
-    if !crate::trusted_origin(origin, string(task, "videoId")?)
+    if !crate::trusted_origin(origin, crate::string(task, "videoId")?)
         || reply["type"] != "captionPage"
         || reply["requestId"] != command["requestId"]
         || reply["taskId"] != task["taskId"]
@@ -156,7 +157,7 @@ pub(super) fn reply(command: &Value, root: &str, job: &Job) -> Result<Value> {
     }
     drop(pages);
     let result = if reply["ok"] == true {
-        let source = string(&reply, "source")?;
+        let source = crate::string(&reply, "source")?;
         if source.is_empty() || source.len() > MAX_BYTES {
             return Err("Invalid page caption source.".into());
         }
@@ -174,7 +175,7 @@ pub(super) fn reply(command: &Value, root: &str, job: &Job) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extraction::{JOBS, Runtime, Session, UA, dispatch, runtime_tasks};
+    use crate::extraction::{JOBS, Runtime, Session, UA};
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Condvar};
     use std::thread;
@@ -307,7 +308,7 @@ mod tests {
             let thread = thread::spawn(move || captions(&background, &store, VIDEO, &track));
             let deadline = Instant::now() + Duration::from_secs(2);
             let task = loop {
-                let tasks = runtime_tasks(&root, true).unwrap();
+                let tasks = extraction::runtime_tasks(&root, true).unwrap();
                 if let Some(task) = tasks["tasks"].as_array().unwrap().first() {
                     break task["task"].clone();
                 }
@@ -318,13 +319,14 @@ mod tests {
             assert_eq!(task["sourceTrackId"], translated_from.unwrap_or(id));
             assert_eq!(task["language"], language);
             assert!(
-                runtime_tasks(&root, false).unwrap()["tasks"]
+                extraction::runtime_tasks(&root, false).unwrap()["tasks"]
                     .as_array()
                     .unwrap()
                     .is_empty()
             );
             assert!(
-                dispatch(&json!({"op":"extract_poll","requestId":request}), &root).unwrap()["task"]
+                extraction::dispatch(&json!({"op":"extract_poll","requestId":request}), &root)
+                    .unwrap()["task"]
                     .is_null()
             );
             let (format, source) = if translated_from.is_some() {
@@ -341,7 +343,7 @@ mod tests {
             };
             let payload = json!({"type":"captionPage","requestId":request,"taskId":task["taskId"],"videoId":VIDEO,
             "trackId":task["trackId"],"ok":true,"format":format,"source":source});
-            dispatch(&json!({"op":"extract_page","requestId":request,"origin":format!("https://m.youtube.com/watch?v={VIDEO}"),"raw":payload.to_string()}),&root).unwrap();
+            extraction::dispatch(&json!({"op":"extract_page","requestId":request,"origin":format!("https://m.youtube.com/watch?v={VIDEO}"),"raw":payload.to_string()}),&root).unwrap();
             let (segments, _) = thread.join().unwrap().unwrap().unwrap();
             assert_eq!(segments.len(), 2);
             assert_eq!(segments[0].text, "Hello there");

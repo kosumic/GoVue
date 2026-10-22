@@ -1,9 +1,8 @@
 //! Saved model library, routing groups and portable, credential-free settings.
-use super::{
-    CONFIG_LOCK, Config, Provider, RESOURCE, config, public_config, random, read_secret, save,
-    session, valid_id, validate_provider, write_secret,
-};
-use crate::{Result, string};
+use crate::Result;
+use crate::ai::credentials::RESOURCE;
+use crate::ai::providers::{CONFIG_LOCK, Config, Provider};
+use crate::ai::{credentials, identity, providers};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -202,7 +201,7 @@ fn reasoning_choices(model: &Model) -> Vec<String> {
 }
 
 fn reasoning_options(cfg: &Config, c: &Value) -> Result<Value> {
-    let id = string(c, "id")?;
+    let id = crate::string(c, "id")?;
     if let Some(group) = cfg.groups.iter().find(|g| g.id == id) {
         let mut levels = Vec::new();
         let mut discovered = true;
@@ -299,7 +298,7 @@ pub(super) fn validate_models(p: &mut Provider) -> Result<()> {
 }
 fn validate_group(g: &mut Group, cfg: &Config) -> Result<()> {
     g.name = g.name.trim().into();
-    if !valid_id(&g.id)
+    if !providers::valid_id(&g.id)
         || cfg.providers.iter().any(|p| p.id == g.id)
         || g.name.is_empty()
         || g.name.len() > 100
@@ -325,7 +324,7 @@ fn validate_group(g: &mut Group, cfg: &Config) -> Result<()> {
     Ok(())
 }
 pub(super) fn options(p: &Provider) -> Result<Value> {
-    let s = read_secret(&p.id)?;
+    let s = credentials::read_secret(&p.id)?;
     Ok(s["modelOptions"][&p.model].clone())
 }
 fn validate_options(v: &Value) -> Result<()> {
@@ -392,15 +391,15 @@ pub(super) fn operation(op: &str) -> bool {
     )
 }
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
-    let op = string(&c, "op")?;
-    let lock = session(c["id"].as_str().unwrap_or("catalog"))?;
+    let op = crate::string(&c, "op")?;
+    let lock = credentials::session(c["id"].as_str().unwrap_or("catalog"))?;
     let _lock = lock
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let _g = CONFIG_LOCK
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-    let mut cfg = config(&root)?;
+    let mut cfg = providers::config(&root)?;
     match op {
         "ai_reasoning_options" => return reasoning_options(&cfg, &c),
         "ai_export" => {
@@ -424,8 +423,8 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             let mut mapping = HashMap::new();
             for p in &mut imported {
                 let old = p.id.clone();
-                p.id = random()?;
-                validate_provider(p)?;
+                p.id = identity::random()?;
+                providers::validate_provider(p)?;
                 if mapping.insert(old, p.id.clone()).is_some() {
                     return Err("Duplicate imported provider identity.".into());
                 }
@@ -433,7 +432,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             cfg.providers.extend(imported);
             migrate(&mut cfg);
             for g in &mut groups {
-                g.id = random()?;
+                g.id = identity::random()?;
                 for m in &mut g.members {
                     m.provider_id = mapping
                         .get(&m.provider_id)
@@ -451,7 +450,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             let mut group: Group =
                 serde_json::from_value(c["group"].clone()).map_err(|_| "Invalid model group.")?;
             if group.id.is_empty() {
-                group.id = random()?;
+                group.id = identity::random()?;
             }
             validate_group(&mut group, &cfg)?;
             if let Some(g) = cfg.groups.iter_mut().find(|g| g.id == group.id) {
@@ -463,7 +462,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             }
         }
         "ai_remove_group" => {
-            let id = string(&c, "id")?;
+            let id = crate::string(&c, "id")?;
             cfg.groups.retain(|g| g.id != id);
             if cfg.active_id.as_deref() == Some(id) {
                 cfg.active_id = cfg.providers.first().map(|p| p.id.clone());
@@ -504,19 +503,19 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             }
         }
         "ai_save_model" | "ai_remove_model" | "ai_model_options" => {
-            let id = string(&c, "id")?;
+            let id = crate::string(&c, "id")?;
             let p = cfg
                 .providers
                 .iter_mut()
                 .find(|p| p.id == id)
                 .ok_or("Provider was removed.")?;
             let model = if op == "ai_save_model" {
-                string(&c["model"], "id")?
+                crate::string(&c["model"], "id")?
             } else {
-                string(&c, "model")?
+                crate::string(&c, "model")?
             }
             .to_owned();
-            let mut secret = read_secret(id)?;
+            let mut secret = credentials::read_secret(id)?;
             if op == "ai_model_options" {
                 return Ok(secret["modelOptions"][&model].clone());
             }
@@ -530,7 +529,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                         secret["modelOptions"] = json!({});
                     }
                     secret["modelOptions"][&model] = options.clone();
-                    write_secret(id, &secret)?;
+                    credentials::write_secret(id, &secret)?;
                 }
                 if let Some(old) = p.models.iter_mut().find(|e| e.id == m.id) {
                     *old = m;
@@ -555,7 +554,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 if let Some(opts) = secret["modelOptions"].as_object_mut() {
                     opts.remove(&model);
                 }
-                write_secret(id, &secret)?;
+                credentials::write_secret(id, &secret)?;
                 if p.model == model {
                     p.model = p
                         .models
@@ -578,8 +577,8 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     }) {
         cfg.active_id = cfg.providers.first().map(|p| p.id.clone());
     }
-    save(&root, &cfg)?;
-    public_config(&root)
+    providers::save(&root, &cfg)?;
+    providers::public_config(&root)
 }
 
 pub(super) fn choices() -> Value {

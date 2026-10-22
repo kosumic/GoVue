@@ -1,6 +1,7 @@
 //! Saved games outlive their chats. Review queues and game transitions stay in Rust.
-use super::{games, valid_id};
-use crate::{Result, string};
+use super::games;
+use crate::Result;
+use crate::ai::providers;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -43,7 +44,7 @@ fn directory(root: &Path) -> PathBuf {
     root.join("ai/practice/games")
 }
 fn path(root: &Path, id: &str) -> Result<PathBuf> {
-    if !valid_id(id) {
+    if !providers::valid_id(id) {
         return Err("Invalid saved game identity.".into());
     }
     Ok(directory(root).join(format!("{id}.json")))
@@ -155,7 +156,7 @@ pub(super) fn apply(root: &Path, command: &Value) -> Result<Value> {
     let _guard = LIBRARY
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-    let mut game = read_game(root, string(command, "gameId")?)?
+    let mut game = read_game(root, crate::string(command, "gameId")?)?
         .ok_or("This saved game is no longer available.")?;
     let notify = game.apply(command)?;
     save_game(root, &game)?;
@@ -186,12 +187,12 @@ fn session(root: &Path) -> Result<Session> {
             .queue
             .iter()
             .chain(session.done.iter().map(|r| &r.game_id))
-            .any(|id| !valid_id(id) || !seen.insert(id))
-        || session.ratings.keys().any(|id| !valid_id(id))
+            .any(|id| !providers::valid_id(id) || !seen.insert(id))
+        || session.ratings.keys().any(|id| !providers::valid_id(id))
         || session
             .last_event_id
             .as_ref()
-            .is_some_and(|id| !valid_id(id) || id.len() > 80)
+            .is_some_and(|id| !providers::valid_id(id) || id.len() > 80)
     {
         return Err("Practice progress is invalid.".into());
     }
@@ -283,11 +284,11 @@ fn catalog(command: &Value, root: &Path, state: &Session) -> Result<Value> {
     Ok(json!({"games":rows,"total":total,"offset":offset,"nextOffset":next}))
 }
 fn rename(command: &Value, root: &Path) -> Result<Value> {
-    let title = string(command, "title")?.trim();
+    let title = crate::string(command, "title")?.trim();
     if title.is_empty() || title.chars().count() > 120 || title.chars().any(char::is_control) {
         return Err("Choose a game name with 1 to 120 characters, on one line.".into());
     }
-    let mut game = read_game(root, string(command, "gameId")?)?
+    let mut game = read_game(root, crate::string(command, "gameId")?)?
         .ok_or("This saved game is no longer available.")?;
     // Naming does not change rules or invalidate an in-flight game action.
     game.definition.title = title.into();
@@ -299,7 +300,7 @@ pub(super) fn audio(command: &Value, root: &Path) -> Result<Value> {
         let _guard = LIBRARY
             .lock()
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-        let game = read_game(root, string(command, "gameId")?)?
+        let game = read_game(root, crate::string(command, "gameId")?)?
             .ok_or("This saved game is no longer available.")?;
         let source = game.source.ok_or("This activity has no original video.")?;
         let cue = game
@@ -326,10 +327,10 @@ pub(super) fn dispatch(command: &Value, root: &Path) -> Result<Value> {
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let mut state = session(root)?;
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "ai_practice_catalog" => catalog(command, root, &state),
         "ai_practice_get" => {
-            let game = read_game(root, string(command, "gameId")?)?
+            let game = read_game(root, crate::string(command, "gameId")?)?
                 .ok_or("This saved game is no longer available.")?;
             let mut result = game.context();
             result["definition"] = json!(game.definition);
@@ -380,8 +381,8 @@ pub(super) fn dispatch(command: &Value, root: &Path) -> Result<Value> {
             snapshot(root, &state)
         }
         "ai_practice_review" | "ai_practice_undo" => {
-            let event_id = string(command, "eventId")?;
-            if !valid_id(event_id) || event_id.len() > 80 {
+            let event_id = crate::string(command, "eventId")?;
+            if !providers::valid_id(event_id) || event_id.len() > 80 {
                 return Err("Invalid practice event.".into());
             }
             if state.last_event_id.as_deref() == Some(event_id) {
@@ -399,7 +400,7 @@ pub(super) fn dispatch(command: &Value, root: &Path) -> Result<Value> {
                 }
                 state.queue.insert(0, review.game_id);
             } else {
-                let id = string(command, "gameId")?;
+                let id = crate::string(command, "gameId")?;
                 if state.queue.first().map(String::as_str) != Some(id) {
                     return Err("This card is no longer current.".into());
                 }
@@ -418,7 +419,7 @@ pub(super) fn dispatch(command: &Value, root: &Path) -> Result<Value> {
             snapshot(root, &state)
         }
         "ai_practice_reset" => {
-            let id = string(command, "gameId")?;
+            let id = crate::string(command, "gameId")?;
             let mut game = read_game(root, id)?.ok_or("This game is no longer available.")?;
             game.reset(
                 command["revision"]
@@ -429,7 +430,7 @@ pub(super) fn dispatch(command: &Value, root: &Path) -> Result<Value> {
             Ok(json!({"game":game}))
         }
         "ai_practice_export" => {
-            let game = read_game(root, string(command, "gameId")?)?
+            let game = read_game(root, crate::string(command, "gameId")?)?
                 .ok_or("This game is no longer available.")?;
             let text=serde_json::to_string_pretty(&json!({"format":"lingoplay-game","version":1,"definition":game.definition,"source":game.source,"cues":game.cues}))
                 .map_err(|_|"Could not copy this game.")?;

@@ -2,19 +2,14 @@
 
 use govue_core::{
     DownloadHttp, DownloadPlatform, DownloadRequest, ExtractionHttp, ExtractionReply,
-    ExtractionRequest, MediaRangeReply, execute, install_download_http, install_download_platform,
-    install_extraction_http,
+    ExtractionRequest, MediaRangeReply,
 };
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::PathBuf,
-    sync::{
-        Arc, Condvar, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant},
-};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 use url::Url;
 #[derive(Default)]
 struct Network {
@@ -111,7 +106,8 @@ impl DownloadPlatform for Platform {
     fn activity(&self, _count: u32, _title: String, _received: u64, _total: u64) {}
 }
 fn call(root: &str, command: Value) -> Value {
-    let response: Value = serde_json::from_str(&execute(command.to_string(), root.into())).unwrap();
+    let response: Value =
+        serde_json::from_str(&govue_core::execute(command.to_string(), root.into())).unwrap();
     assert_eq!(response["ok"], true, "{response}");
     response["value"].clone()
 }
@@ -132,12 +128,12 @@ fn native_runner_advances_downloads_without_javascript_and_preserves_requested_f
     fs::create_dir_all(&root).unwrap();
     let network = Arc::new(Network::default());
     *network.blocked.lock().unwrap() = true;
-    install_download_platform(Box::new(Platform {
+    govue_core::install_download_platform(Box::new(Platform {
         root: root.clone(),
         network: network.clone(),
     }));
-    install_download_http(Box::new(Http(network.clone())));
-    install_extraction_http(Box::new(Extraction));
+    govue_core::install_download_http(Box::new(Http(network.clone())));
+    govue_core::install_extraction_http(Box::new(Extraction));
     let root = root.to_str().unwrap();
     call(root, json!({"op":"downloads_runner_start"}));
     wait(root, |s| s["ready"] == true);

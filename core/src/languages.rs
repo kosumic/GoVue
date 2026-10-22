@@ -1,7 +1,10 @@
-use super::{Result, clean, folded};
+use super::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashSet, fs, io::ErrorKind, path::Path};
+use std::collections::HashSet;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
 
 const MAX_LANGUAGES: usize = 50;
 const MAX_STORAGE_BYTES: u64 = 64_000;
@@ -40,14 +43,14 @@ impl LanguageSettings {
             }
             let mut names = HashSet::new();
             for entry in languages {
-                entry.language = clean(&entry.language);
+                entry.language = crate::clean(&entry.language);
                 if entry.language.is_empty()
                     || entry.language.chars().count() > 80
                     || entry.language.chars().any(char::is_control)
                 {
                     return Err("Enter a language name between 1 and 80 characters.".into());
                 }
-                if !names.insert(folded(&entry.language)) {
+                if !names.insert(crate::folded(&entry.language)) {
                     return Err(
                         "This language is already in this list. Edit its level instead.".into(),
                     );

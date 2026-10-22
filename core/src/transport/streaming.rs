@@ -1,14 +1,15 @@
 //! Incremental HTTPS bodies use bounded byte reads and opaque response handles.
 //! Signed addresses remain in native memory, never in persistent storage.
-use super::{CHUNK, Source, media_url, note, range_bytes};
+use super::{CHUNK, Source};
 use crate::MediaStreamHttp;
+use crate::media;
+use crate::transport;
 use serde_json::json;
-use std::{
-    io::{self, Read},
-    sync::{OnceLock, atomic::Ordering},
-    thread,
-    time::Duration,
-};
+use std::io::Read;
+use std::sync::OnceLock;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::{io, thread};
 
 static HTTP: OnceLock<Box<dyn MediaStreamHttp>> = OnceLock::new();
 
@@ -68,7 +69,9 @@ pub(super) fn open(source: &Source, start: u64, end: u64) -> io::Result<Box<dyn 
         return Err(io::Error::other("Invalid media range."));
     }
     let Some(backend) = HTTP.get() else {
-        return Ok(Box::new(io::Cursor::new(range_bytes(source, start, end)?)));
+        return Ok(Box::new(io::Cursor::new(transport::range_bytes(
+            source, start, end,
+        )?)));
     };
     let mut url = source
         .redirected
@@ -80,7 +83,7 @@ pub(super) fn open(source: &Source, start: u64, end: u64) -> io::Result<Box<dyn 
     let mut redirects = 0;
     let mut attempt = 0;
     while attempt < 3 {
-        note("upstreamStart", json!(start));
+        transport::note("upstreamStart", json!(start));
         let reply = backend.open_range(
             url.clone(),
             source.user_agent.clone(),
@@ -107,7 +110,7 @@ pub(super) fn open(source: &Source, start: u64, end: u64) -> io::Result<Box<dyn 
                         && !v.chars().any(char::is_control)
                 })
                 .and_then(|v| url::Url::parse(&url).ok()?.join(v).ok())
-                .and_then(|v| media_url(v.as_str()))
+                .and_then(|v| media::media_url(v.as_str()))
                 .ok_or_else(|| io::Error::other("Invalid media redirect."))?;
             if matches!(reply.status, 301..=303) {
                 post = false;
@@ -125,10 +128,10 @@ pub(super) fn open(source: &Source, start: u64, end: u64) -> io::Result<Box<dyn 
                     io::Error::other("Media transport state is unavailable. Restart GoVue.")
                 })? = Some(url);
             }
-            note("lastError", serde_json::Value::Null);
+            transport::note("lastError", serde_json::Value::Null);
             return Ok(Box::new(body));
         }
-        note("lastError", json!(format!("Media HTTP {}.", reply.status)));
+        transport::note("lastError", json!(format!("Media HTTP {}.", reply.status)));
         if reply.status == 403 {
             post = true;
         }

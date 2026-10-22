@@ -1,6 +1,5 @@
 #![cfg(test)]
 
-use govue_core::execute;
 use serde_json::{Value, json};
 use std::fs;
 
@@ -19,7 +18,7 @@ fn mini_players_stay_in_bounds_and_dock_on_release_without_storing_drag_frames()
         command["width"] = json!(430);
         command["height"] = json!(900);
         command["bottomInset"] = json!(24);
-        serde_json::from_str::<Value>(&execute(
+        serde_json::from_str::<Value>(&govue_core::execute(
             command.to_string(),
             directory.to_string_lossy().into_owned(),
         ))

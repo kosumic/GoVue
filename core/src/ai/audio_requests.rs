@@ -1,5 +1,5 @@
 //! Caption audio extraction/retry policy and shared in-flight preparation.
-use crate::{Result, string};
+use crate::Result;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -30,12 +30,12 @@ fn check(job: &Preparation) -> Result<()> {
 }
 fn resolve(command: &Value, root: &Path, job: &Preparation) -> Result<Value> {
     check(job)?;
-    let source = super::dispatch(command.clone(), root.into())?;
+    let source = crate::ai::commands::dispatch(command.clone(), root.into())?;
     if source["needsMedia"] != true {
         return Ok(source);
     }
     check(job)?;
-    let video = string(&source, "videoId")?;
+    let video = crate::string(&source, "videoId")?;
     let store = root.to_str().ok_or("Invalid audio storage.")?;
     let mut command = command.clone();
     for fresh in [false, true] {
@@ -45,7 +45,7 @@ fn resolve(command: &Value, root: &Path, job: &Preparation) -> Result<Value> {
             })?;
         check(job)?;
         command["catalog"] = catalog;
-        let result = super::dispatch(command.clone(), root.into());
+        let result = crate::ai::commands::dispatch(command.clone(), root.into());
         match result {
             Ok(value) => return Ok(value),
             Err(error) if fresh => return Err(error),
@@ -55,7 +55,7 @@ fn resolve(command: &Value, root: &Path, job: &Preparation) -> Result<Value> {
     Err("Caption audio could not be prepared.".into())
 }
 pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
-    let id = string(c, "requestId")?;
+    let id = crate::string(c, "requestId")?;
     if id.is_empty()
         || id.len() > 150
         || !id
@@ -165,7 +165,7 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
         if let Ok(value) = result
             && let Some(token) = value["token"].as_str()
         {
-            let _ = super::dispatch(
+            let _ = crate::ai::commands::dispatch(
                 json!({"op":"ai_game_audio_release","token":token}),
                 root.into(),
             );

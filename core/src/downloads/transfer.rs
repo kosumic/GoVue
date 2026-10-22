@@ -1,19 +1,16 @@
 //! Bounded parallel downloads. HTTPS remains the platform MediaHttp adapter;
 //! range planning, retries, pause/cancel and file assembly remain in Rust.
-use crate::{Result, media, string, transport::DownloadSource};
+use crate::transport::DownloadSource;
+use crate::{Result, media};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs::{self, File},
-    io::{self, Seek, SeekFrom, Write},
-    path::Path,
-    sync::{
-        Arc, Condvar, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
-    thread,
-    time::Duration,
-};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Seek, SeekFrom, Write};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::Duration;
+use std::{fs, io, thread};
 
 const CHUNK: u64 = 1_048_576;
 struct Transfer {
@@ -129,7 +126,7 @@ pub(super) fn reset(root: &str) -> Result<()> {
     Ok(())
 }
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
-    let id = string(command, "id")?;
+    let id = crate::string(command, "id")?;
     if id.is_empty()
         || id.len() > 100
         || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
@@ -141,7 +138,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| "Transfers are busy.")?;
-    if string(command, "op")? == "downloads_transfer_start" {
+    if crate::string(command, "op")? == "downloads_transfer_start" {
         if transfers.contains_key(&key) || transfers.len() >= 16 {
             return Err(
                 "This transfer is already running or the download limit was reached.".into(),
@@ -166,7 +163,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 DownloadSource::new(
                     part,
                     command["userAgent"].as_str().unwrap_or(""),
-                    string(&command["catalog"], "origin")?,
+                    crate::string(&command["catalog"], "origin")?,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -246,7 +243,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .get(&key)
         .cloned()
         .ok_or("This transfer is no longer running.")?;
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "downloads_transfer_pause" => {
             *transfer.paused.lock().map_err(|_| "Download stopped.")? = command["paused"] == true;
             transfer.wake.notify_all();
@@ -264,7 +261,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .map_err(|_| "Download stopped.")?
         .clone();
     let value = json!({"done":done,"error":error,"networkWaiting":!done && transfer.network_waiting(),"received":transfer.received.load(Ordering::Relaxed),"total":transfer.total,"files":if done&&error.is_none(){transfer.files.iter().map(|p|format!("file://{p}")).collect::<Vec<_>>()}else{vec![]},"coverFile":if done&&error.is_none(){transfer.cover.as_ref().map(|p|format!("file://{p}"))}else{None}});
-    if string(command, "op")? == "downloads_transfer_release" {
+    if crate::string(command, "op")? == "downloads_transfer_release" {
         transfers.remove(&key);
         drop(transfers);
         cleanup(transfer);

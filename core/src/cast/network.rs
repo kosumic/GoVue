@@ -1,16 +1,12 @@
 //! Separate, revocable LAN listener. Never changes the loopback player proxy.
 use super::manifest::Bundle;
 use crate::{Result, transport};
-use std::{
-    io::{Read, Write},
-    net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    thread,
-    time::{Duration, Instant},
-};
+use std::io::{Read, Write};
+use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub struct Transport {
     pub base: String,

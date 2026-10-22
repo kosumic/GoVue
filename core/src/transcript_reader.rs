@@ -1,5 +1,6 @@
-use crate::transcript::load;
-use crate::{Result, Transcript, folded, string, timestamp};
+use crate::transcript;
+
+use crate::{Result, Transcript};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -125,7 +126,7 @@ pub(super) fn dispatch(
             }
             selected.push(id);
         }
-        let toggle = string(command, "toggleId")?;
+        let toggle = crate::string(command, "toggleId")?;
         let track = primary
             .tracks
             .iter()
@@ -149,7 +150,7 @@ pub(super) fn dispatch(
             if id == primary.track_id || !primary.tracks.iter().any(|t| t.id == id) {
                 return Err("Invalid comparison language.".into());
             }
-            Some(load(root, &primary.video_id, id)?)
+            Some(transcript::load(root, &primary.video_id, id)?)
         }
         None => None,
     };
@@ -163,7 +164,7 @@ pub(super) fn dispatch(
                 let segment = &source.segments[line.index];
                 lines.push(format!(
                     "{}  [{}] {}",
-                    timestamp(segment.start),
+                    crate::timestamp(segment.start),
                     source.language,
                     crate::captions::readable_text(segment)
                 ));
@@ -180,7 +181,7 @@ pub(super) fn dispatch(
     if query.len() > 10_000 {
         return Err("Search query is too long.".into());
     }
-    let query = folded(query);
+    let query = crate::folded(query);
     let total = rows.len();
     if !query.is_empty() {
         rows.retain(|row| {

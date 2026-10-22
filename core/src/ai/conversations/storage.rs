@@ -1,19 +1,20 @@
-//! Saved chat validation, atomic writes, listing and interrupted-turn recovery.
-use super::{Conversation, MAX_CHAT, MAX_CHATS};
-use crate::ai::{MAX_OUTPUT, activity, catalog, games, jobs, practice, usage, valid_id};
+//! Saved chat validation, atomic writes and interrupted-turn recovery.
+use super::index;
+use super::index::Metadata;
+use super::model::{Conversation, MAX_CHAT, MAX_CHATS};
+use crate::ai::http::MAX_OUTPUT;
+use crate::ai::{activity, catalog, games, jobs, practice, providers, usage};
 use crate::{Error, Result};
-use std::{
-    fs,
-    io::{Read, Write},
-    path::{Path, PathBuf},
-    sync::atomic::Ordering,
-};
+use std::fs;
+use std::io::{Read as _, Write as _};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 
-mod index;
-pub(super) use index::{Metadata, list};
+pub(super) static CHATS: Mutex<()> = Mutex::new(());
 
 pub(super) fn path(root: &Path, id: &str) -> Result<PathBuf> {
-    if !valid_id(id) {
+    if !providers::valid_id(id) {
         return Err("Invalid conversation identity.".into());
     }
     Ok(root.join("ai/chats").join(format!("{id}.json")))
@@ -38,9 +39,12 @@ pub(super) fn read(root: &Path, id: &str) -> Result<Conversation> {
     })?;
     if chat.id != id
         || chat.branched_from.as_ref().is_some_and(|branch| {
-            !valid_id(&branch.chat_id) || branch.chat_id == chat.id || !valid_id(&branch.message_id)
+            !providers::valid_id(&branch.chat_id)
+                || branch.chat_id == chat.id
+                || !providers::valid_id(&branch.message_id)
         })
-        || !(valid_id(&chat.provider_id) || chat.provider_id.is_empty() && chat.messages.is_empty())
+        || !(providers::valid_id(&chat.provider_id)
+            || chat.provider_id.is_empty() && chat.messages.is_empty())
         || chat
             .video_id
             .as_ref()
@@ -56,10 +60,9 @@ pub(super) fn read(root: &Path, id: &str) -> Result<Conversation> {
             .as_ref()
             .is_some_and(|v| !catalog::valid_reasoning(v))
         || chat.pending_messages.len() > 8
-        || chat
-            .pending_messages
-            .iter()
-            .any(|m| !valid_id(&m.id) || m.content.trim().is_empty() || m.content.len() > 16000)
+        || chat.pending_messages.iter().any(|m| {
+            !providers::valid_id(&m.id) || m.content.trim().is_empty() || m.content.len() > 16000
+        })
         || chat
             .pending_messages
             .iter()
@@ -69,10 +72,10 @@ pub(super) fn read(root: &Path, id: &str) -> Result<Conversation> {
         || chat.messages.len() > 200
         || !chat.messages.len().is_multiple_of(2)
         || chat.messages.iter().enumerate().any(|(i, m)| {
-            !valid_id(&m.id)
+            !providers::valid_id(&m.id)
                 || m.usage_chat_id
                     .as_ref()
-                    .is_some_and(|id| m.role != "assistant" || !valid_id(id))
+                    .is_some_and(|id| m.role != "assistant" || !providers::valid_id(id))
                 || m.role != if i % 2 == 0 { "user" } else { "assistant" }
                 || !matches!(
                     m.status.as_str(),
@@ -94,7 +97,7 @@ pub(super) fn read(root: &Path, id: &str) -> Result<Conversation> {
                 || m.model.len() > 200
                 || m.provider_label.len() > 100
                 || !catalog::valid_reasoning(&m.reasoning_effort)
-                || (!m.provider_id.is_empty() && !valid_id(&m.provider_id))
+                || (!m.provider_id.is_empty() && !providers::valid_id(&m.provider_id))
                 || m.model_name.chars().count() > 200
                 || m.completed_at > usage::MAX_COUNT
                 || m.context_window.is_some_and(|n| n > usage::MAX_COUNT)
@@ -159,17 +162,17 @@ pub(super) fn delete(root: &Path, id: &str) -> Result<()> {
     })
 }
 
-fn storage_error(cause: std::io::Error) -> Error {
+pub(super) fn storage_error(cause: std::io::Error) -> Error {
     Error::caused_by("Could not save chat history.", "commit chat storage", cause)
 }
 
-fn sync_directory(dir: &Path) -> Result<()> {
+pub(super) fn sync_directory(dir: &Path) -> Result<()> {
     fs::File::open(dir)
         .and_then(|file| file.sync_all())
         .map_err(storage_error)
 }
 
-fn atomic_write(target: &Path, bytes: &[u8]) -> Result<()> {
+pub(super) fn atomic_write(target: &Path, bytes: &[u8]) -> Result<()> {
     let dir = target.parent().ok_or("Invalid chat storage path.")?;
     fs::create_dir_all(dir).map_err(storage_error)?;
     let temp = target.with_file_name(format!(
@@ -186,7 +189,7 @@ fn atomic_write(target: &Path, bytes: &[u8]) -> Result<()> {
     sync_directory(dir)
 }
 pub(super) fn running(id: &str) -> Result<bool> {
-    let all = jobs()
+    let all = jobs::jobs()
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let job = all.get(id).cloned();
@@ -206,7 +209,7 @@ pub(super) fn recover(root: &Path, chat: &mut Conversation) -> Result<()> {
     if let Some(id) = chat.active_task.as_deref()
         && !running(id)?
     {
-        let partial = jobs()
+        let partial = jobs::jobs()
             .lock()
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .get(id)
@@ -241,7 +244,7 @@ pub(super) fn recover(root: &Path, chat: &mut Conversation) -> Result<()> {
     }
     Ok(())
 }
-fn ids(root: &Path) -> Result<Vec<String>> {
+pub(super) fn ids(root: &Path) -> Result<Vec<String>> {
     let dir = root.join("ai/chats");
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -263,7 +266,7 @@ fn ids(root: &Path) -> Result<Vec<String>> {
         if let Some(id) = p
             .file_stem()
             .and_then(|s| s.to_str())
-            .filter(|id| valid_id(id))
+            .filter(|id| providers::valid_id(id))
         {
             ids.push(id.to_owned());
         }

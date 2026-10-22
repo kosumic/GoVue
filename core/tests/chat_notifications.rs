@@ -1,20 +1,12 @@
 #![cfg(test)]
 
 //! Completion alerts follow durable replies and the currently attended chat.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ChatNotificationPlatform, ai_execute,
-    install_ai_platform, install_chat_notification_platform, state_execute,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret, ChatNotificationPlatform};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-        mpsc,
-    },
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 #[derive(Default)]
 struct Backend {
@@ -76,12 +68,13 @@ impl ChatNotificationPlatform for Alerts {
 }
 fn call(root: &str, command: Value) -> Value {
     let result: Value =
-        serde_json::from_str(&ai_execute(command.to_string(), root.into())).unwrap();
+        serde_json::from_str(&govue_core::ai_execute(command.to_string(), root.into())).unwrap();
     assert_eq!(result["ok"], true, "{result}");
     result["value"].clone()
 }
 fn attention(command: Value) {
-    let result: Value = serde_json::from_str(&state_execute(command.to_string())).unwrap();
+    let result: Value =
+        serde_json::from_str(&govue_core::state_execute(command.to_string())).unwrap();
     assert_eq!(result["ok"], true, "{result}");
 }
 fn wait(root: &str, task: &Value) {
@@ -111,9 +104,9 @@ fn successful_away_replies_notify_once_and_visible_failed_stopped_deleted_replie
     std::fs::create_dir_all(&directory).unwrap();
     let root = directory.to_str().unwrap();
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     let (send, events) = mpsc::channel();
-    install_chat_notification_platform(Box::new(Alerts {
+    govue_core::install_chat_notification_platform(Box::new(Alerts {
         root: root.into(),
         events: send,
     }));
@@ -203,7 +196,7 @@ fn successful_away_replies_notify_once_and_visible_failed_stopped_deleted_replie
     release.send(true).unwrap();
     wait(root, &deleted["taskId"]);
     assert!(events.try_recv().is_err());
-    let invalid: Value = serde_json::from_str(&state_execute(
+    let invalid: Value = serde_json::from_str(&govue_core::state_execute(
         json!({"op":"chat_notification_visibility","chatId":"../private"}).to_string(),
     ))
     .unwrap();

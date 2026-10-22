@@ -1,22 +1,14 @@
 #![cfg(test)]
 
 //! Live plans, provider phases, and recovery use the same persisted activity tape.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU8, AtomicUsize, Ordering},
-        mpsc,
-    },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 
 #[derive(Default)]
 struct Backend {
@@ -254,7 +246,7 @@ impl Drop for Temp {
     }
 }
 fn ok(root: &Path, command: Value) -> Value {
-    let reply: Value = serde_json::from_str(&ai_execute(
+    let reply: Value = serde_json::from_str(&govue_core::ai_execute(
         command.to_string(),
         root.to_str().unwrap().into(),
     ))
@@ -306,7 +298,7 @@ fn checklist(reply: &Value) -> &Value {
 #[test]
 fn plans_stream_persist_recover_and_remain_bounded_across_providers() {
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     let temp = Temp::new();
     let root = &temp.0;
     let mut responses = Value::Null;

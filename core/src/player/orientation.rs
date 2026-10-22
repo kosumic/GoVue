@@ -1,10 +1,8 @@
 //! LiTube's physical-rotation rules. Transient surface state never reaches disk.
-use crate::{Result, string};
+use crate::Result;
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    sync::{Mutex, OnceLock},
-};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Default)]
 struct Surface {
@@ -20,7 +18,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .lock()
         .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     let surface = surfaces.entry(root.into()).or_default();
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "player_surface_reset" => *surface = Surface::default(),
         "player_fullscreen" => {
             let enabled = command["enabled"]

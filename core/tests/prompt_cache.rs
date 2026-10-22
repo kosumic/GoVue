@@ -1,18 +1,13 @@
 #![cfg(test)]
 
 //! Multi-turn wire histories and provider-reported cache usage.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-    sync::{Arc, Mutex},
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 
 #[derive(Default)]
 struct Backend {
@@ -184,7 +179,7 @@ impl AiPlatform for Platform {
     }
 }
 fn ok(root: &Path, command: Value) -> Value {
-    let result: Value = serde_json::from_str(&ai_execute(
+    let result: Value = serde_json::from_str(&govue_core::ai_execute(
         command.to_string(),
         root.to_string_lossy().into_owned(),
     ))
@@ -213,7 +208,7 @@ fn transcript(root: &Path, text: &str) {
         "videoId":"abcdefghijk","title":"Practice reference","trackId":".en","language":"English",
         "tracks":[{"id":".en","label":"English","language":"en","automatic":false}],"segments":[{"start":1,"duration":2,"text":text}]
     }});
-    let result: Value = serde_json::from_str(&execute(json!({"op":"accept","videoId":"abcdefghijk","requestId":"cache:fixture","origin":"https://www.youtube.com","raw":raw.to_string()}).to_string(),root.to_string_lossy().into_owned())).unwrap();
+    let result: Value = serde_json::from_str(&govue_core::execute(json!({"op":"accept","videoId":"abcdefghijk","requestId":"cache:fixture","origin":"https://www.youtube.com","raw":raw.to_string()}).to_string(),root.to_string_lossy().into_owned())).unwrap();
     assert_eq!(result["ok"], true, "{result}");
 }
 #[test]
@@ -223,7 +218,7 @@ fn transcript(root: &Path, text: &str) {
 )]
 fn requests_preserve_prefixes_tools_and_unknown_cache_counts() {
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     let directory = std::env::temp_dir().join(format!(
         "govue-prompt-cache-{}-{}",
         std::process::id(),

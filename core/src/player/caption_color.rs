@@ -1,5 +1,5 @@
 //! Shared caption color conversion for the LiTube HSV editor.
-use crate::{Result, string};
+use crate::Result;
 use serde_json::{Value, json};
 
 #[allow(
@@ -26,7 +26,7 @@ fn rgb(h: f64, s: f64, v: f64) -> String {
 )]
 pub(super) fn color(command: &Value) -> Result<Value> {
     let (h, s, v) = if command["hex"].is_string() {
-        let text = string(command, "hex")?.trim();
+        let text = crate::string(command, "hex")?.trim();
         let raw = text.strip_prefix('#').unwrap_or(text);
         if !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err("Enter a hexadecimal color.".into());

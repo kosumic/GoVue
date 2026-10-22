@@ -1,22 +1,14 @@
 #![cfg(test)]
 
 //! The UI receives an ordered, durable activity tape, never provider continuation data.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU8, Ordering},
-        mpsc,
-    },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 
 #[derive(Default)]
 struct Backend {
@@ -271,7 +263,7 @@ impl Drop for Temp {
     }
 }
 fn call(root: &Path, command: Value) -> Value {
-    serde_json::from_str(&ai_execute(
+    serde_json::from_str(&govue_core::ai_execute(
         command.to_string(),
         root.to_str().unwrap().into(),
     ))
@@ -443,7 +435,7 @@ fn queued_steering(root: &Path, backend: &Backend) {
 #[test]
 fn ordered_activity_streams_and_persists_across_protocols_failures_and_cancellation() {
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     let temp = Temp::new();
     let root = &temp.0;
     let mut last = Value::Null;

@@ -1,19 +1,12 @@
 #![cfg(test)]
 
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-        mpsc,
-    },
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
+use std::fs;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 #[derive(Default)]
 struct Backend {
     secrets: Mutex<HashMap<String, String>>,
@@ -53,7 +46,7 @@ impl AiPlatform for Platform {
     }
 }
 fn reply(root: &str, command: Value) -> Value {
-    serde_json::from_str(&ai_execute(command.to_string(), root.into())).unwrap()
+    serde_json::from_str(&govue_core::ai_execute(command.to_string(), root.into())).unwrap()
 }
 fn call(root: &str, command: Value) -> Value {
     let reply = reply(root, command);
@@ -73,7 +66,7 @@ fn sessions_serialize_queueing_and_cancel_only_the_owned_generation() {
     fs::create_dir_all(&root).unwrap();
     let root = root.to_str().unwrap();
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     let config = call(
         root,
         json!({"op":"ai_save","provider":{"id":"","kind":"custom","label":"Fixture","protocol":"responses","baseUrl":"https://fixture.test/v1","model":"fixture","models":[{"id":"fixture","name":"Fixture"}]},"key":"fixture-only"}),

@@ -1,6 +1,7 @@
 //! Authoritative transfer state. Platform adapters execute the returned effects.
-use super::{Config, history, plan, preferences};
-use crate::{Result, media, string};
+use super::Config;
+use crate::downloads;
+use crate::{Result, media};
 use serde_json::{Value, json};
 use std::sync::Mutex;
 
@@ -12,11 +13,12 @@ static WRITES: Mutex<()> = Mutex::new(());
 )]
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let _guard = WRITES.lock().map_err(|_| "Download storage is busy.")?;
-    let mut entries = history(&json!({"entries":media::read(root,"downloads.json",json!([]))}))?
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let op = string(command, "op")?;
+    let mut entries =
+        downloads::history(&json!({"entries":media::read(root,"downloads.json",json!([]))}))?
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+    let op = crate::string(command, "op")?;
     let mut claimed = Vec::new();
     let mut prepared = Value::Null;
     let mut removed = Vec::new();
@@ -57,7 +59,8 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
         }
         "downloads_claim" => {
-            let can_run = preferences(root)["wifiOnly"] != true || command["wifi"] == true;
+            let can_run =
+                downloads::preferences(root)["wifiOnly"] != true || command["wifi"] == true;
             if can_run {
                 let active = entries
                     .iter()
@@ -148,7 +151,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             });
         }
         _ => {
-            let id = string(command, "id")?;
+            let id = crate::string(command, "id")?;
             let index = entries
                 .iter()
                 .position(|e| e["id"] == id)
@@ -173,7 +176,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         return Err("The resolved video changed.".into());
                     }
                     let config = Config::parse(&entry["config"])?;
-                    prepared = plan(&command["catalog"], &config)?;
+                    prepared = downloads::plan(&command["catalog"], &config)?;
                     entry["state"] = json!("downloading");
                     entry["total"] = prepared["bytes"].clone();
                     entry["received"] = json!(0);
@@ -215,7 +218,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     entry["artifacts"] = json!(artifacts);
                 }
                 "downloads_event" => {
-                    let event = string(command, "event")?;
+                    let event = crate::string(command, "event")?;
                     if matches!(event, "pause" | "resume" | "retry" | "cancel") {
                         super::publication::invalidate(entry)?;
                     }
@@ -314,7 +317,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     if op == "downloads_claim" && claimed.is_empty() {
         return Ok(json!({"entries":entries,"claimed":[],"plan":null}));
     }
-    let safe = history(&json!({"entries":entries}))?;
+    let safe = downloads::history(&json!({"entries":entries}))?;
     if safe.to_string().len() > crate::MAX_BYTES {
         return Err("Download history is full. Remove old entries before adding more.".into());
     }

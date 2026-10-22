@@ -1,11 +1,11 @@
 //! Cast discovery presentation. Device advertisements are untrusted LAN input;
 //! no discovery data or session addresses are persisted.
-use crate::{Result, clean, string};
+use crate::Result;
 use serde_json::{Value, json};
 use std::net::IpAddr;
 
 pub(super) fn devices(command: &Value) -> Result<Value> {
-    let raw = string(command, "raw")?;
+    let raw = crate::string(command, "raw")?;
     if raw.len() > 131_072 {
         return Err("Too many cast receivers.".into());
     }
@@ -38,7 +38,7 @@ pub(super) fn devices(command: &Value) -> Result<Value> {
         if devices.iter().any(|d: &Value| d["id"] == id) {
             continue;
         }
-        let name = clean(device["name"].as_str().unwrap_or("Cast"))
+        let name = crate::clean(device["name"].as_str().unwrap_or("Cast"))
             .chars()
             .take(200)
             .collect::<String>();

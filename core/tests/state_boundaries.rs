@@ -1,10 +1,9 @@
 #![cfg(test)]
 
-use govue_core::state_execute;
 use serde_json::{Value, json};
 
 fn reply(command: Value) -> Value {
-    serde_json::from_str(&state_execute(command.to_string())).unwrap()
+    serde_json::from_str(&govue_core::state_execute(command.to_string())).unwrap()
 }
 fn call(command: Value) -> Value {
     let response = reply(command);
@@ -63,7 +62,7 @@ fn browser_input_and_identity_reject_unsafe_addresses() {
         assert!(call(json!({"op":"browser_identity","url":url}))["videoId"].is_null());
     }
     assert_eq!(
-        serde_json::from_str::<Value>(&state_execute("x".repeat(100_001))).unwrap()["ok"],
+        serde_json::from_str::<Value>(&govue_core::state_execute("x".repeat(100_001))).unwrap()["ok"],
         false
     );
 }

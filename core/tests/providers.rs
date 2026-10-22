@@ -2,21 +2,14 @@
 
 //! Boundary regressions, independent of account entitlement and live device checks.
 //! The committed RSA fixture signs synthetic test identities only.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 use url::Url;
 
 #[derive(Default)]
@@ -174,7 +167,7 @@ fn identity(nonce: &str, mode: &str) -> String {
     token
 }
 fn call(root: &Path, command: Value) -> Value {
-    serde_json::from_str(&ai_execute(
+    serde_json::from_str(&govue_core::ai_execute(
         command.to_string(),
         root.to_str().unwrap().into(),
     ))
@@ -273,7 +266,7 @@ fn providers_preserve_oauth_boundaries_credentials_and_stream_completion() {
     fs::create_dir_all(&root.0).unwrap();
     let root = &root.0;
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(FakePlatform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(FakePlatform(backend.clone())));
 
     for bad in [
         "http://example.test/v1",

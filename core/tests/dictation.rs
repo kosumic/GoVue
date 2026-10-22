@@ -1,19 +1,16 @@
 #![cfg(test)]
 
-use govue_core::{ai_execute, dictation_execute, execute};
 use serde_json::{Value, json};
-use std::{
-    collections::HashSet,
-    fs,
-    path::PathBuf,
-    sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static SESSIONS: Mutex<()> = Mutex::new(());
 
 fn call(command: Value) -> Value {
-    serde_json::from_str(&dictation_execute(command.to_string())).unwrap()
+    serde_json::from_str(&govue_core::dictation_execute(command.to_string())).unwrap()
 }
 fn ok(command: Value) -> Value {
     let reply = call(command);
@@ -156,13 +153,13 @@ impl Store {
             "tracks":[{"id":".en", "label":"English", "language":"en", "automatic":false}],
             "segments":[{"start":0,"duration":1,"text":text}]});
         let raw = json!({"type":"transcript", "requestId":"voice", "videoId":"abcdefghijk", "ok":true, "transcript":transcript});
-        let result: Value = serde_json::from_str(&execute(json!({"op":"accept", "videoId":"abcdefghijk", "origin":"https://www.youtube.com", "requestId":"voice", "raw":raw.to_string()}).to_string(), self.0.to_string_lossy().into_owned())).unwrap();
+        let result: Value = serde_json::from_str(&govue_core::execute(json!({"op":"accept", "videoId":"abcdefghijk", "origin":"https://www.youtube.com", "requestId":"voice", "raw":raw.to_string()}).to_string(), self.0.to_string_lossy().into_owned())).unwrap();
         assert_eq!(result["ok"], true, "{result}");
     }
     fn hints(&self, fields: Value) -> Value {
         let mut command = fields;
         command["op"] = json!("ai_chat_speech_hints");
-        let reply: Value = serde_json::from_str(&ai_execute(
+        let reply: Value = serde_json::from_str(&govue_core::ai_execute(
             command.to_string(),
             self.0.to_string_lossy().into_owned(),
         ))

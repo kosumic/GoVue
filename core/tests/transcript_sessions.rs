@@ -1,14 +1,10 @@
 #![cfg(test)]
 
-use govue_core::{
-    ExtractionHttp, ExtractionReply, ExtractionRequest, execute, install_extraction_http,
-};
+use govue_core::{ExtractionHttp, ExtractionReply, ExtractionRequest};
 use serde_json::{Value, json};
-use std::{
-    fs,
-    sync::{Arc, Condvar, Mutex},
-    time::{Duration, Instant},
-};
+use std::fs;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 use url::Url;
 
 #[derive(Default)]
@@ -58,7 +54,7 @@ impl ExtractionHttp for Http {
     }
 }
 fn reply(root: &str, command: Value) -> Value {
-    serde_json::from_str(&execute(command.to_string(), root.into())).unwrap()
+    serde_json::from_str(&govue_core::execute(command.to_string(), root.into())).unwrap()
 }
 fn call(root: &str, command: Value) -> Value {
     let result = reply(root, command);
@@ -85,7 +81,7 @@ fn readers_retain_primary_cancel_stale_work_and_restore_normalized_cache() {
     fs::create_dir_all(&root).unwrap();
     let root = root.to_str().unwrap();
     let gate = Arc::new(Gate::default());
-    install_extraction_http(Box::new(Http(gate.clone())));
+    govue_core::install_extraction_http(Box::new(Http(gate.clone())));
     let primary = json!({"videoId":"abcdefghijk","title":"Seed","language":"English","trackId":".en",
         "tracks":[{"id":".en","language":"en","label":"English","automatic":false},{"id":".ja","language":"ja","label":"Japanese","automatic":false}],
         "segments":[{"start":1,"duration":2,"text":"Primary line"}]});

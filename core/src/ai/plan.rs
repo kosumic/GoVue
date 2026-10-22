@@ -1,6 +1,6 @@
 //! A bounded, model-maintained checklist, independent of provider framing.
-use super::Job;
-use crate::{Result, string};
+use crate::Result;
+use crate::ai::jobs::Job;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -41,7 +41,7 @@ pub(super) fn valid(steps: &[Step], explanation: Option<&str>) -> bool {
 }
 
 pub(super) fn update(job: &Arc<Job>, call: &Value) -> Result<Value> {
-    let raw = string(call, "arguments")?;
+    let raw = crate::string(call, "arguments")?;
     if raw.len() > 6000 {
         return Err("The plan is too large. Use at most eight short steps.".into());
     }

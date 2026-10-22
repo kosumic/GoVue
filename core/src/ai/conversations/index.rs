@@ -1,16 +1,17 @@
 //! Rebuildable metadata index. Callers hold CHATS throughout each transaction.
-use super::{atomic_write, ids, read, storage_error, sync_directory};
-use crate::{
-    Result,
-    ai::conversations::{BranchRef, Conversation, MAX_CHATS},
-};
+use super::model::{BranchRef, Conversation, MAX_CHATS};
+use super::storage;
+use crate::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, io::Read, path::Path};
+use std::collections::HashSet;
+use std::fs;
+use std::io::Read as _;
+use std::path::Path;
 
-const VERSION: u32 = 1;
-const MAX_INDEX: usize = 1_000_000;
-const INDEX: &str = "ai/chat-index.json";
-const DIRTY: &str = "ai/chat-index.dirty";
+pub(super) const VERSION: u32 = 1;
+pub(super) const MAX_INDEX: usize = 1_000_000;
+pub(super) const INDEX: &str = "ai/chat-index.json";
+pub(super) const DIRTY: &str = "ai/chat-index.dirty";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -58,12 +59,12 @@ impl From<&Conversation> for Metadata {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Index {
+pub(super) struct Index {
     version: u32,
     chats: Vec<Metadata>,
 }
 
-fn encode(chats: Vec<Metadata>) -> Result<Vec<u8>> {
+pub(super) fn encode(chats: Vec<Metadata>) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec(&Index {
         version: VERSION,
         chats,
@@ -75,7 +76,7 @@ fn encode(chats: Vec<Metadata>) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn cached(root: &Path) -> Option<Vec<Metadata>> {
+pub(super) fn cached(root: &Path) -> Option<Vec<Metadata>> {
     if root.join(DIRTY).try_exists().ok()? {
         return None;
     }
@@ -95,18 +96,18 @@ fn cached(root: &Path) -> Option<Vec<Metadata>> {
         || index
             .chats
             .iter()
-            .any(|chat| !crate::ai::valid_id(&chat.id) || !seen.insert(&chat.id))
+            .any(|chat| !crate::ai::providers::valid_id(&chat.id) || !seen.insert(&chat.id))
     {
         return None;
     }
     Some(index.chats)
 }
 
-fn clean(root: &Path) -> Result<()> {
+pub(super) fn clean(root: &Path) -> Result<()> {
     match fs::remove_file(root.join(DIRTY)) {
-        Ok(()) => sync_directory(&root.join("ai")),
+        Ok(()) => storage::sync_directory(&root.join("ai")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(cause) => Err(storage_error(cause)),
+        Err(cause) => Err(storage::storage_error(cause)),
     }
 }
 
@@ -117,12 +118,12 @@ pub(in crate::ai::conversations) fn list(root: &Path) -> Result<Vec<Metadata>> {
         // One-time migration or interrupted commit: inspect at most one bounded
         // record at a time, without retaining messages or recovering active jobs.
         let mut chats = Vec::new();
-        for id in ids(root)? {
-            if let Ok(chat) = read(root, &id) {
+        for id in storage::ids(root)? {
+            if let Ok(chat) = storage::read(root, &id) {
                 chats.push(Metadata::from(&chat));
             }
         }
-        atomic_write(&root.join(INDEX), &encode(chats.clone())?)?;
+        storage::atomic_write(&root.join(INDEX), &encode(chats.clone())?)?;
         clean(root)?;
         chats
     };
@@ -130,7 +131,7 @@ pub(in crate::ai::conversations) fn list(root: &Path) -> Result<Vec<Metadata>> {
     Ok(rows)
 }
 
-pub(super) fn update(
+pub(in crate::ai) fn update(
     root: &Path,
     id: &str,
     metadata: Option<Metadata>,
@@ -143,8 +144,8 @@ pub(super) fn update(
     // Persist invalidation before the record changes. If any later step fails,
     // the next index access rebuilds from committed records rather than serving
     // stale metadata. The mutex hides the intermediate state from other callers.
-    atomic_write(&root.join(DIRTY), b"1")?;
+    storage::atomic_write(&root.join(DIRTY), b"1")?;
     mutate()?;
-    atomic_write(&root.join(INDEX), &bytes)?;
+    storage::atomic_write(&root.join(INDEX), &bytes)?;
     clean(root)
 }

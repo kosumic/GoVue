@@ -1,11 +1,10 @@
 #![cfg(test)]
 
-use govue_core::execute;
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn call(root: &str, command: Value) -> Value {
-    serde_json::from_str(&execute(command.to_string(), root.into())).unwrap()
+    serde_json::from_str(&govue_core::execute(command.to_string(), root.into())).unwrap()
 }
 fn ok(root: &str, command: Value) -> Value {
     let result = call(root, command);

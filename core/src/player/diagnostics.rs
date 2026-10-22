@@ -1,7 +1,8 @@
 //! Transient renderer samples. No addresses or raw error messages are accepted.
-use crate::{Result, video_id};
+use crate::Result;
 use serde_json::{Value, json};
-use std::{collections::VecDeque, sync::Mutex};
+use std::collections::VecDeque;
+use std::sync::Mutex;
 
 #[derive(Default)]
 struct Monitor {
@@ -39,7 +40,7 @@ fn text(value: &Value, key: &str) -> Option<String> {
 pub(super) fn sample(command: &Value) -> Result<Value> {
     let id = command["videoId"]
         .as_str()
-        .filter(|s| video_id(s))
+        .filter(|s| crate::video_id(s))
         .ok_or("Invalid diagnostic video identity.")?;
     let raw = &command["sample"];
     let at = raw["sampledAt"]

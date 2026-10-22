@@ -1,17 +1,14 @@
 //! Bounded normalized documents in memory and in the native sandbox.
-use super::{Transcript, normalize};
-use crate::{
-    Error, MAX_BYTES, Result, caption_tracks,
-    identity::{TrackId, VideoId},
-};
+use super::Transcript;
+use crate::identity::{TrackId, VideoId};
+use crate::transcript;
+use crate::{Error, MAX_BYTES, Result, caption_tracks};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::VecDeque,
-    fs,
-    io::Read as _,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
-};
+use std::collections::VecDeque;
+use std::fs;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 const CACHE_BYTES: u64 = 24_000_000;
 // At most three documents remain in memory. Disk storage is bounded separately.
@@ -172,7 +169,7 @@ pub(crate) fn load(root: &str, id: &str, track: &str) -> Result<Arc<Transcript>>
     if data.video_id != id || data.track_id != track {
         return Err("Cached transcript identity changed.".into());
     }
-    normalize(&mut data)?;
+    transcript::normalize(&mut data)?;
     let data = Arc::new(data);
     remember_shared(root, Arc::clone(&data))?;
     Ok(data)
@@ -283,7 +280,7 @@ impl Snapshot {
             };
             if data.video_id != id
                 || track.is_some_and(|track| data.track_id != track)
-                || normalize(&mut data).is_err()
+                || transcript::normalize(&mut data).is_err()
                 || track.is_none() && !caption_tracks::matches_audio(&data, audio_key)
             {
                 continue;
@@ -309,7 +306,9 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::{Transcript, load, remember_shared, save, snapshot};
-    use std::{error::Error as _, fs, io, sync::Arc};
+    use std::error::Error as _;
+    use std::sync::Arc;
+    use std::{fs, io};
 
     #[test]
     fn snapshots_survive_replacement_without_republishing_over_newer_documents() {

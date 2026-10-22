@@ -1,11 +1,9 @@
 //! Port of LiTube's SponsorSkipController (GPL-3.0).
-use crate::{Result, string, video_id};
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    sync::{Mutex, OnceLock},
-};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 struct Segment {
@@ -30,8 +28,8 @@ static SESSIONS: OnceLock<Mutex<HashMap<String, Session>>> = OnceLock::new();
     reason = "Zero-length highlights require exact endpoint equality; nonnegative countdowns are bounded by the validated video duration."
 )]
 pub(crate) fn control(command: &Value, root: &str) -> Result<Value> {
-    let video = string(command, "videoId")?;
-    if !video_id(video) {
+    let video = crate::string(command, "videoId")?;
+    if !crate::video_id(video) {
         return Err("Invalid SponsorBlock video.".into());
     }
     let mut sessions = SESSIONS
@@ -39,7 +37,7 @@ pub(crate) fn control(command: &Value, root: &str) -> Result<Value> {
         .lock()
         .map_err(|_| "SponsorBlock state is busy.")?;
     let session = sessions.entry(root.into()).or_default();
-    let action = string(command, "action")?;
+    let action = crate::string(command, "action")?;
     if session.video != video {
         if action != "segments" {
             return Ok(

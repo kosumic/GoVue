@@ -1,4 +1,5 @@
-use std::io::{self, BufRead};
+use std::io;
+use std::io::BufRead;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = std::env::args()

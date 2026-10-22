@@ -1,9 +1,9 @@
 //! Connection settings shared by discovery, inference and both native platforms.
-use super::{
-    CONFIG_LOCK, Job, Provider, cancel_owner, catalog, config, provider, public_config, random,
-    read_secret, session, validate_provider, write_secret,
-};
+use super::catalog;
 use crate::Result;
+use crate::ai::jobs::Job;
+use crate::ai::providers::{CONFIG_LOCK, Provider};
+use crate::ai::{credentials, identity, jobs, providers};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -71,7 +71,7 @@ pub(super) fn preview(p: &Provider) -> Value {
     if checked.id.is_empty() {
         checked.id = "preview".into();
     }
-    let result = validate_provider(&mut checked).and_then(|_| effective_base(&checked));
+    let result = providers::validate_provider(&mut checked).and_then(|_| effective_base(&checked));
     json!({
         "canEditEndpoint": !catalog::oauth(p),
         "canAppendV1": can_append_v1(p),
@@ -93,7 +93,7 @@ pub(super) fn changed(a: &Provider, b: &Provider) -> bool {
 // combine its old endpoint snapshot with credentials from a newer connection.
 pub(super) fn check_current(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<()> {
     job.pending()?;
-    let current = provider(root, &p.id)?;
+    let current = providers::provider(root, &p.id)?;
     if !current.enabled || changed(&current, p) {
         return Err("Connection settings changed. Start the request again.".into());
     }
@@ -104,9 +104,9 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
     let mut p: Provider =
         serde_json::from_value(c["provider"].clone()).map_err(|_| "Invalid provider settings.")?;
     if p.id.is_empty() {
-        p.id = random()?;
+        p.id = identity::random()?;
     }
-    validate_provider(&mut p)?;
+    providers::validate_provider(&mut p)?;
     let key = c["key"].as_str();
     if key.is_some_and(|key| {
         catalog::oauth(&p)
@@ -121,23 +121,27 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
         let _g = CONFIG_LOCK
             .lock()
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-        if let Some(old) = config(root)?.providers.iter().find(|v| v.id == p.id) {
+        if let Some(old) = providers::config(root)?
+            .providers
+            .iter()
+            .find(|v| v.id == p.id)
+        {
             if old.kind != p.kind {
                 return Err("Add a separate connection to change its provider type.".into());
             }
             if changed(old, &p) || (old.enabled && !p.enabled) || key.is_some() {
-                cancel_owner(&p.id)?;
+                jobs::cancel_owner(&p.id)?;
             }
         }
     }
-    let lock = session(&p.id)?;
+    let lock = credentials::session(&p.id)?;
     let _session = lock
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let _g = CONFIG_LOCK
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-    let mut cfg = config(root)?;
+    let mut cfg = providers::config(root)?;
     let old = cfg.providers.iter().find(|v| v.id == p.id).cloned();
     let auth_changed = old
         .as_ref()
@@ -150,13 +154,13 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
             p.models.clone_from(&old.models);
         }
         if changed(old, &p) || (old.enabled && !p.enabled) || key.is_some() {
-            cancel_owner(&p.id)?;
+            jobs::cancel_owner(&p.id)?;
         }
     } else if cfg.providers.len() >= 32 {
         return Err("At most 32 providers can be saved.".into());
     }
     let credentials = if auth_changed || key.is_some() {
-        let previous = read_secret(&p.id)?;
+        let previous = credentials::read_secret(&p.id)?;
         let mut next = if auth_changed {
             json!({"modelOptions":previous["modelOptions"]})
         } else {
@@ -179,11 +183,11 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
         cfg.active_id = Some(p.id.clone());
     }
     if let Some((_, next)) = &credentials {
-        write_secret(&p.id, next)?;
+        credentials::write_secret(&p.id, next)?;
     }
-    if let Err(error) = super::save(root, &cfg) {
+    if let Err(error) = providers::save(root, &cfg) {
         if let Some((previous, _)) = &credentials
-            && write_secret(&p.id, previous).is_err()
+            && credentials::write_secret(&p.id, previous).is_err()
         {
             return Err(crate::Error::caused_by(
                 format!("{error} Credentials could not be restored; reconnect this provider."),
@@ -193,5 +197,5 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
         }
         return Err(error);
     }
-    public_config(root)
+    providers::public_config(root)
 }

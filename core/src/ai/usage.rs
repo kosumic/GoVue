@@ -1,6 +1,6 @@
 //! Provider-reported token accounting. Input totals include cached tokens once.
-use super::Config;
 use crate::Result;
+use crate::ai::providers::Config;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 

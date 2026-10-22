@@ -1,15 +1,15 @@
-use super::{Result, Segment, Transcript, caption_words::is_word, folded, string, video_id};
-use crate::transcript::{load, with_transcript};
+use super::{Result, Segment, Transcript};
+use crate::caption_words;
+use crate::transcript;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::HashSet,
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashSet;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_segmentation::UnicodeSegmentation;
 
 mod layout;
@@ -41,7 +41,7 @@ fn tokens(text: &str) -> Vec<Token<'_>> {
     text.split_word_bounds()
         .map(|text| Token {
             text,
-            word: is_word(text),
+            word: caption_words::is_word(text),
             start: None,
             end: None,
             bold: None,
@@ -89,7 +89,7 @@ fn caption_tokens<'a>(
     let mut ranges = ranges.iter().peekable();
     for (token, (offset, text)) in result.iter_mut().filter(|t| t.word).zip(
         raw.split_word_bound_indices()
-            .filter(|(_, word)| is_word(word)),
+            .filter(|(_, word)| caption_words::is_word(word)),
     ) {
         if token.text != text {
             break;
@@ -143,7 +143,11 @@ struct SavedWord {
 fn identity(language: &str, word: &str) -> String {
     format!(
         "{:x}",
-        Sha256::digest(format!("{}\0{}", folded(language), folded(word)))
+        Sha256::digest(format!(
+            "{}\0{}",
+            crate::folded(language),
+            crate::folded(word)
+        ))
     )
 }
 
@@ -165,7 +169,7 @@ fn validate(words: &[SavedWord]) -> Result<()> {
             || entry.language.len() > 500
             || entry.title.len() > 10_000
             || entry.context.len() > 50_000
-            || !video_id(&entry.video_id)
+            || !crate::video_id(&entry.video_id)
             || !entry.start.is_finite()
             || entry.start < 0.0
             || entry.id != identity(&entry.language, &entry.word)
@@ -276,7 +280,7 @@ fn selection(data: &Transcript, command: &Value, validate_text: bool) -> Result<
     if text.chars().count() > 256 || text.chars().any(char::is_control) {
         return Err("Select a shorter phrase (up to 256 characters).".into());
     }
-    if validate_text && text != string(command, "word")? {
+    if validate_text && text != crate::string(command, "word")? {
         return Err("This caption changed. Select the words again.".into());
     }
     Ok(Selection {
@@ -301,10 +305,10 @@ fn source_language(data: &Transcript) -> Result<(&'static str, &'static str)> {
 }
 
 pub(super) fn word_context(command: &Value, root: &str) -> Result<Value> {
-    let data = load(
+    let data = transcript::load(
         root,
-        string(command, "videoId")?,
-        string(command, "trackId")?,
+        crate::string(command, "videoId")?,
+        crate::string(command, "trackId")?,
     )?;
     let token = selection(&data, command, true)?;
     let (code, name) = source_language(&data)?;
@@ -322,10 +326,10 @@ pub(super) struct WordAudioTiming {
 }
 
 pub(super) fn word_audio(command: &Value, root: &str) -> Result<Option<WordAudioTiming>> {
-    let data = load(
+    let data = transcript::load(
         root,
-        string(command, "videoId")?,
-        string(command, "trackId")?,
+        crate::string(command, "videoId")?,
+        crate::string(command, "trackId")?,
     )?;
     let token = selection(&data, command, true)?;
     let valid = |(start, end): &(f64, f64)| {
@@ -356,12 +360,12 @@ pub(super) fn word_audio(command: &Value, root: &str) -> Result<Option<WordAudio
 }
 
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "vocabulary_selection" => {
-            let data = load(
+            let data = transcript::load(
                 root,
-                string(command, "videoId")?,
-                string(command, "trackId")?,
+                crate::string(command, "videoId")?,
+                crate::string(command, "trackId")?,
             )?;
             let selected = selection(&data, command, false)?;
             Ok(
@@ -371,10 +375,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             )
         }
         "vocabulary_word_audio" => Ok(json!(word_audio(command, root)?)),
-        "vocabulary_details" => with_transcript(
+        "vocabulary_details" => transcript::with_transcript(
             root,
-            string(command, "videoId")?,
-            string(command, "trackId")?,
+            crate::string(command, "videoId")?,
+            crate::string(command, "trackId")?,
             |data| {
                 json!(
                     format!(
@@ -386,10 +390,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 )
             },
         ),
-        "vocabulary_caption_layout" => with_transcript(
+        "vocabulary_caption_layout" => transcript::with_transcript(
             root,
-            string(command, "videoId")?,
-            string(command, "trackId")?,
+            crate::string(command, "videoId")?,
+            crate::string(command, "trackId")?,
             |data| {
                 let lines: Vec<String> = serde_json::from_value(command["lines"].clone())
                     .map_err(|_| "Invalid caption layout.")?;
@@ -400,10 +404,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 )?))
             },
         )?,
-        "vocabulary_caption" => with_transcript(
+        "vocabulary_caption" => transcript::with_transcript(
             root,
-            string(command, "videoId")?,
-            string(command, "trackId")?,
+            crate::string(command, "videoId")?,
+            crate::string(command, "trackId")?,
             |data| {
                 let segment = data
                     .segments
@@ -415,7 +419,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             },
         )?,
         "vocabulary_tokenize" => {
-            let text = string(command, "text")?;
+            let text = crate::string(command, "text")?;
             if text.len() > 50_000 {
                 return Err("Caption line is too long.".into());
             }
@@ -426,7 +430,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             if query.len() > 10_000 {
                 return Err("Search query is too long.".into());
             }
-            let query = folded(query);
+            let query = crate::folded(query);
             let words = read(root)?;
             Ok(json!(
                 words
@@ -435,16 +439,16 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         query.is_empty()
                             || [&entry.word, &entry.context, &entry.title, &entry.language]
                                 .iter()
-                                .any(|text| folded(text).contains(&query))
+                                .any(|text| crate::folded(text).contains(&query))
                     })
                     .collect::<Vec<_>>()
             ))
         }
         "vocabulary_translation" => {
-            let data = load(
+            let data = transcript::load(
                 root,
-                string(command, "videoId")?,
-                string(command, "trackId")?,
+                crate::string(command, "videoId")?,
+                crate::string(command, "trackId")?,
             )?;
             let token = selection(&data, command, true)?;
             let (source_code, _) = source_language(&data)?;
@@ -464,11 +468,11 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             Ok(json!(plans))
         }
         "vocabulary_save" => {
-            let video = string(command, "videoId")?;
-            if !video_id(video) {
+            let video = crate::string(command, "videoId")?;
+            if !crate::video_id(video) {
                 return Err("Invalid video identity.".into());
             }
-            let data = load(root, video, string(command, "trackId")?)?;
+            let data = transcript::load(root, video, crate::string(command, "trackId")?)?;
             let segment = data
                 .segments
                 .get(index(command, "segmentIndex")?)
@@ -501,7 +505,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             Ok(json!({"entry":words[0],"saved":true}))
         }
         "vocabulary_remove" => {
-            let id = string(command, "id")?;
+            let id = crate::string(command, "id")?;
             let mut words = read(root)?;
             words.retain(|entry| entry.id != id);
             write(root, &words)?;

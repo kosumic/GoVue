@@ -1,11 +1,9 @@
 //! Navigation stacks keep the watch document alive while another page is shown.
-use crate::{Result, string};
+use crate::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    sync::{Mutex, OnceLock},
-};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use url::Url;
 
 fn youtube(raw: &str) -> Option<Url> {
@@ -101,10 +99,10 @@ fn input(raw: &str) -> Result<String> {
     Ok(url.into())
 }
 pub(crate) fn boundary(command: &Value) -> Result<Value> {
-    match string(command, "op")? {
-        "browser_input" => Ok(json!(input(string(command, "input")?)?)),
+    match crate::string(command, "op")? {
+        "browser_input" => Ok(json!(input(crate::string(command, "input")?)?)),
         "browser_identity" => {
-            let url = youtube(string(command, "url")?);
+            let url = youtube(crate::string(command, "url")?);
             Ok(json!({"youtube":url.is_some(),"videoId":url.as_ref().and_then(video)}))
         }
         "browser_layout" => {
@@ -149,10 +147,10 @@ pub(crate) fn boundary(command: &Value) -> Result<Value> {
         }
         "browser_position" => {
             let message = &command["message"];
-            let id = string(command, "videoId")?;
-            let request = string(command, "requestId")?;
+            let id = crate::string(command, "videoId")?;
+            let request = crate::string(command, "requestId")?;
             if !crate::video_id(id)
-                || !crate::trusted_origin(string(command, "origin")?, id)
+                || !crate::trusted_origin(crate::string(command, "origin")?, id)
                 || message["videoId"] != id
                 || message["requestId"] != request
             {
@@ -407,7 +405,7 @@ fn shared_url(text: &str) -> Result<Value> {
 }
 fn open_address(browser: &Browser, command: &Value) -> Result<(String, String)> {
     let Some(value) = command.get("videoId") else {
-        return address(string(command, "url")?);
+        return address(crate::string(command, "url")?);
     };
     let id = value
         .as_str()
@@ -439,13 +437,13 @@ fn open_address(browser: &Browser, command: &Value) -> Result<(String, String)> 
 }
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     if command["op"] == "browser_shared_url" {
-        return shared_url(string(command, "text")?);
+        return shared_url(crate::string(command, "text")?);
     }
     if command["op"] == "browser_message_origin" {
         return Ok(json!(page_origin(command)));
     }
     if command["op"] == "browser_user_agent" {
-        let agent = string(command, "agent")?;
+        let agent = crate::string(command, "agent")?;
         if agent.len() > 1000 || agent.chars().any(char::is_control) {
             return Err("Invalid browser identity.".into());
         }
@@ -474,7 +472,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             .map(|tab| tab.url.clone()),
     );
     let mut target = Value::Null;
-    let op = string(command, "op")?;
+    let op = crate::string(command, "op")?;
     match op {
         "browser_state" => {}
         "browser_open" => {
@@ -550,7 +548,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .as_u64()
                 .filter(|g| *g > 0 && *g <= 9_007_199_254_740_991)
                 .ok_or("Invalid browser document.")?;
-            let (url, _) = address(string(command, "url")?)?;
+            let (url, _) = address(crate::string(command, "url")?)?;
             if let Some(tab) = browser.tabs.iter_mut().find(|t| t.id == id)
                 && generation > tab.generation
             {
@@ -561,7 +559,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         }
         "browser_transient" => {
             let id = command["id"].as_u64().ok_or("Missing browser tab.")?;
-            let kind = string(command, "kind")?;
+            let kind = crate::string(command, "kind")?;
             if !matches!(kind, "none" | "search" | "media_menu") {
                 return Err("Invalid page overlay.".into());
             }
@@ -588,7 +586,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         }
         "browser_update" => {
             let id = command["id"].as_u64().ok_or("Missing browser tab.")?;
-            let (url, kind) = address(string(command, "url")?)?;
+            let (url, kind) = address(crate::string(command, "url")?)?;
             let duplicate = browser.tabs.iter().any(|t| t.id != id && t.kind == kind);
             if let Some(tab) = browser.tabs.iter_mut().find(|t| t.id == id) {
                 tab.url = url;

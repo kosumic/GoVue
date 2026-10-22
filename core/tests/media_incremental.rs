@@ -1,13 +1,11 @@
 #![cfg(test)]
 
-use govue_core::{MediaStreamHttp, MediaStreamReply, execute, install_media_stream_http};
+use govue_core::{MediaStreamHttp, MediaStreamReply};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    io::Read,
-    sync::{Arc, Condvar, Mutex, mpsc},
-    time::Duration,
-};
+use std::collections::HashMap;
+use std::io::Read;
+use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::Duration;
 
 struct Stream {
     next: u64,
@@ -113,7 +111,8 @@ impl MediaStreamHttp for Http {
 }
 
 fn call(command: Value) -> Value {
-    let reply: Value = serde_json::from_str(&execute(command.to_string(), String::new())).unwrap();
+    let reply: Value =
+        serde_json::from_str(&govue_core::execute(command.to_string(), String::new())).unwrap();
     assert_eq!(reply["ok"], true, "{reply}");
     reply["value"].clone()
 }
@@ -138,7 +137,7 @@ fn read(uri: &str) -> std::io::Result<Vec<u8>> {
 fn streams_the_first_range_incrementally_and_closes_rejected_or_incomplete_bodies() {
     let control = Arc::new(Control::default());
     let _release = Release(control.clone());
-    install_media_stream_http(Box::new(Http(control.clone())));
+    govue_core::install_media_stream_http(Box::new(Http(control.clone())));
     let length = 2 * 1_048_576 + 123;
     let uri = source("blocked", length);
     let (prefix_tx, prefix_rx) = mpsc::channel();

@@ -1,13 +1,11 @@
-use super::{MAX_BYTES, Result, clean, string, trusted_origin, video_id};
+use super::{MAX_BYTES, Result};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::VecDeque,
-    fs,
-    path::Path,
-    sync::{Mutex, OnceLock},
-    time::{Duration, Instant},
-};
+use std::collections::VecDeque;
+use std::fs;
+use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use url::Url;
 pub(crate) mod dash;
 mod live;
@@ -127,9 +125,12 @@ pub(crate) fn container(stream: &Value) -> Option<&str> {
 }
 
 pub(crate) fn catalog(command: &Value) -> Result<Value> {
-    let id = string(command, "videoId")?;
-    let raw = string(command, "raw")?;
-    if !video_id(id) || raw.len() > MAX_BYTES || !trusted_origin(string(command, "origin")?, id) {
+    let id = crate::string(command, "videoId")?;
+    let raw = crate::string(command, "raw")?;
+    if !crate::video_id(id)
+        || raw.len() > MAX_BYTES
+        || !crate::trusted_origin(crate::string(command, "origin")?, id)
+    {
         return Err("Untrusted media response.".into());
     }
     let data: Value = serde_json::from_str(raw).map_err(|_| "Unreadable media response.")?;
@@ -213,7 +214,7 @@ pub(crate) fn catalog(command: &Value) -> Result<Value> {
             "fps":format["fps"].as_u64().unwrap_or(0).min(240),"audioKey":audio_id,
             "audioSampleRate":format["audioSampleRate"].as_u64().or_else(||format["audioSampleRate"].as_str()?.parse().ok()).unwrap_or(0).min(384_000),
             "audioChannels":format["audioChannels"].as_u64().unwrap_or(0).min(32),
-            "audioLabel":clean(format["audioTrack"]["displayName"].as_str().unwrap_or("Default")),
+            "audioLabel":crate::clean(format["audioTrack"]["displayName"].as_str().unwrap_or("Default")),
             "audioDefault":format["audioTrack"]["audioIsDefault"]==true,
             "audioOriginal":format["audioTrack"]["isOriginal"]==true || format["audioTrack"]["displayName"].as_str().is_some_and(|n|n.to_lowercase().contains("original")),
             "height":height,"width":format["width"].as_u64().unwrap_or(0).min(15_360),
@@ -240,13 +241,13 @@ pub(crate) fn catalog(command: &Value) -> Result<Value> {
     }
     let chapters = chapter_list(&media["chapters"]);
     Ok(
-        json!({"videoId":id,"origin":Url::parse(string(command,"origin")?).map_err(|_|"Invalid media origin.")?.origin().ascii_serialization(),"title":clean(media["title"].as_str().unwrap_or("YouTube video")),
-        "author":clean(media["author"].as_str().unwrap_or("")),"duration":media["duration"].as_f64().filter(|n|*n>0.0&&*n<=604_800.0).unwrap_or_else(||f64::from(formats.iter().filter_map(|f|f["approxDurationMs"].as_u64().or_else(||f["approxDurationMs"].as_str()?.parse().ok())).filter(|n|*n>0&&*n<=604_800_000).filter_map(|n|u32::try_from(n).ok()).max().unwrap_or(0))/1000.0),
+        json!({"videoId":id,"origin":Url::parse(crate::string(command,"origin")?).map_err(|_|"Invalid media origin.")?.origin().ascii_serialization(),"title":crate::clean(media["title"].as_str().unwrap_or("YouTube video")),
+        "author":crate::clean(media["author"].as_str().unwrap_or("")),"duration":media["duration"].as_f64().filter(|n|*n>0.0&&*n<=604_800.0).unwrap_or_else(||f64::from(formats.iter().filter_map(|f|f["approxDurationMs"].as_u64().or_else(||f["approxDurationMs"].as_str()?.parse().ok())).filter(|n|*n>0&&*n<=604_800_000).filter_map(|n|u32::try_from(n).ok()).max().unwrap_or(0))/1000.0),
         "position":media["position"].as_f64().unwrap_or(0.0).max(0.0),"live":media["live"]==true,
         "streams":streams,"hlsUrl":hls,"hlsUserAgent":media["hlsUserAgent"].as_str().filter(|s|s.len()<=1000&&!s.chars().any(char::is_control)).unwrap_or(""),"audioTracks":audio_tracks,
         "subtitles":media["subtitles"].as_array().map(|items|items.iter().take(300).filter_map(|t|{
             let id=t["id"].as_str().filter(|s|s.len()<=512)?;
-            let mut track=json!({"id":id,"label":clean(t["label"].as_str().unwrap_or("Captions")),"language":clean(t["language"].as_str().unwrap_or("")),"automatic":t["automatic"]==true});
+            let mut track=json!({"id":id,"label":crate::clean(t["label"].as_str().unwrap_or("Captions")),"language":crate::clean(t["language"].as_str().unwrap_or("")),"automatic":t["automatic"]==true});
             if t["translatable"]==true {track["translatable"]=json!(true);}
             if let Some(source)=t["translatedFrom"].as_str().filter(|s|s.len()<=512) {track["translatedFrom"]=json!(source);}
             if let Some(ids)=t["audioTrackIds"].as_array() {track["audioTrackIds"]=json!(ids.iter().take(200).filter_map(|id|id.as_str().filter(|s|s.len()<=512)).collect::<Vec<_>>());}
@@ -261,7 +262,7 @@ pub(super) fn chapter_list(raw: &Value) -> Vec<Value> {
         let parsed=||{let fields=chapter["timestamp"].as_str()?.split(':').map(str::parse::<u32>).collect::<std::result::Result<Vec<_>,_>>().ok()?;if !(2..=3).contains(&fields.len())||fields.iter().skip(1).any(|n|*n>=60){return None;}Some(fields.iter().fold(0.0,|total,n|total*60.0+f64::from(*n)))};
         let start=chapter["start"].as_f64().or_else(parsed).filter(|n|n.is_finite()&&*n>=0.0&&*n<604_800.0)?;
         let preview = chapter["previewUrl"].as_str().and_then(|raw| crate::gallery::allowed(raw).ok()).map(|url| url.to_string());
-        Some(json!({"start":start,"title":clean(chapter["title"].as_str().unwrap_or("Segments")),"previewUrl":preview}))
+        Some(json!({"start":start,"title":crate::clean(chapter["title"].as_str().unwrap_or("Segments")),"previewUrl":preview}))
     }).collect::<Vec<_>>()).unwrap_or_default();
     chapters.sort_by(|a, b| {
         a["start"]
@@ -287,7 +288,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     {
         return crate::downloads::dispatch(command, root);
     }
-    match string(command, "op")? {
+    match crate::string(command, "op")? {
         "downloads_config"
         | "downloads_options"
         | "downloads_plan"
@@ -329,26 +330,26 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             Ok(result)
         }
         "media_message_origin" => {
-            let id = string(command, "videoId")?;
+            let id = crate::string(command, "videoId")?;
             Ok(json!(
-                video_id(id) && trusted_origin(string(command, "origin")?, id)
+                crate::video_id(id) && crate::trusted_origin(crate::string(command, "origin")?, id)
             ))
         }
         "media_catalog_cached" => {
-            let id = string(command, "videoId")?;
-            if !video_id(id) {
+            let id = crate::string(command, "videoId")?;
+            if !crate::video_id(id) {
                 return Err("Invalid video identity.".into());
             }
             Ok(cached_catalog(root, id).unwrap_or(Value::Null))
         }
         "media_chapters" => {
-            let id = string(command, "videoId")?;
-            let request = string(command, "requestId")?;
-            let raw = string(command, "raw")?;
-            if !video_id(id)
+            let id = crate::string(command, "videoId")?;
+            let request = crate::string(command, "requestId")?;
+            let raw = crate::string(command, "raw")?;
+            if !crate::video_id(id)
                 || request.len() > 200
                 || raw.len() > 2_000_000
-                || !trusted_origin(string(command, "origin")?, id)
+                || !crate::trusted_origin(crate::string(command, "origin")?, id)
             {
                 return Err("Invalid chapter response.".into());
             }
@@ -362,8 +363,8 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             Ok(json!(chapter_list(&data["chapters"])))
         }
         "media_title_request" => {
-            let id = string(command, "videoId")?;
-            if !video_id(id) {
+            let id = crate::string(command, "videoId")?;
+            if !crate::video_id(id) {
                 return Err("Invalid video identity.".into());
             }
             let mut url = Url::parse("https://www.youtube.com/oembed")
@@ -374,16 +375,16 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             Ok(json!(url.to_string()))
         }
         "media_title_accept" => {
-            if !video_id(string(command, "videoId")?) {
+            if !crate::video_id(crate::string(command, "videoId")?) {
                 return Err("Invalid video identity.".into());
             }
-            let raw = string(command, "raw")?;
+            let raw = crate::string(command, "raw")?;
             if raw.len() > 65536 {
                 return Err("Video metadata is too large.".into());
             }
             let data: Value =
                 serde_json::from_str(raw).map_err(|_| "Unreadable video metadata.")?;
-            let title = clean(string(&data, "title")?)
+            let title = crate::clean(crate::string(&data, "title")?)
                 .chars()
                 .take(1000)
                 .collect::<String>();
@@ -426,8 +427,8 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         "media_settings_import" => crate::player::preferences::import(&command["data"], root),
         "sponsor_control" => crate::player::sponsor::control(command, root),
         "sponsor_request" => {
-            let id = string(command, "videoId")?;
-            if !video_id(id) {
+            let id = crate::string(command, "videoId")?;
+            if !crate::video_id(id) {
                 return Err("Invalid SponsorBlock video.".into());
             }
             let prefix = format!("{:x}", Sha256::digest(id.as_bytes()));
@@ -442,9 +443,9 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             Ok(json!(url.to_string()))
         }
         "sponsor_parse" => {
-            let id = string(command, "videoId")?;
-            let raw = string(command, "raw")?;
-            if !video_id(id) || raw.len() > 2_000_000 {
+            let id = crate::string(command, "videoId")?;
+            let raw = crate::string(command, "raw")?;
+            if !crate::video_id(id) || raw.len() > 2_000_000 {
                 return Err("Invalid SponsorBlock response.".into());
             }
             let data: Value =
@@ -541,7 +542,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 || entries.iter().any(|e| {
                     !e["id"].as_str().is_some_and(|s| {
                         s.len() <= 100 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                    }) || !e["videoId"].as_str().is_some_and(video_id)
+                    }) || !e["videoId"].as_str().is_some_and(crate::video_id)
                         || e.to_string().len() > 15_000
                         || e.get("url").is_some()
                         || e.get("parts").is_some()

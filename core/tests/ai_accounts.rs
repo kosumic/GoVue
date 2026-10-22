@@ -1,22 +1,15 @@
 #![cfg(test)]
 
 //! Account protocol tests use synthetic keys/tokens; they do not establish plan access.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 use url::Url;
 #[derive(Default)]
 struct Backend {
@@ -200,7 +193,11 @@ impl Drop for Temp {
     }
 }
 fn call(root: &Path, c: Value) -> Value {
-    serde_json::from_str(&ai_execute(c.to_string(), root.to_str().unwrap().into())).unwrap()
+    serde_json::from_str(&govue_core::ai_execute(
+        c.to_string(),
+        root.to_str().unwrap().into(),
+    ))
+    .unwrap()
 }
 fn ok(root: &Path, c: Value) -> Value {
     let r = call(root, c);
@@ -304,7 +301,7 @@ fn account_flows_verify_callbacks_refresh_and_keep_credential_boundaries() {
     let root = &temp.0;
     fs::create_dir_all(root).unwrap();
     let backend = Arc::new(Backend::default());
-    install_ai_platform(Box::new(Platform(backend.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(backend.clone())));
     ok(root, json!({"op":"ai_foreground","active":true}));
     for kind in ["codex", "anthropic", "openrouter", "xai"] {
         let id = add(root, kind);

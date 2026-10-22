@@ -1,21 +1,14 @@
 #![cfg(test)]
 
 //! Connection regressions after Android discovery/inference checks on a local endpoint.
-use govue_core::{
-    AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
-};
+use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fs, thread};
 
 #[derive(Default)]
 struct Backend {
@@ -97,7 +90,11 @@ impl Drop for Temp {
     }
 }
 fn call(root: &Path, c: Value) -> Value {
-    serde_json::from_str(&ai_execute(c.to_string(), root.to_str().unwrap().into())).unwrap()
+    serde_json::from_str(&govue_core::ai_execute(
+        c.to_string(),
+        root.to_str().unwrap().into(),
+    ))
+    .unwrap()
 }
 fn ok(root: &Path, c: Value) -> Value {
     let r = call(root, c);
@@ -169,7 +166,7 @@ fn connection_edits_preserve_identity_and_apply_to_all_request_paths() {
         root: root.clone(),
         ..Backend::default()
     });
-    install_ai_platform(Box::new(Platform(b.clone())));
+    govue_core::install_ai_platform(Box::new(Platform(b.clone())));
     // Missing fields preserve an old URL exactly rather than appending /v1.
     fs::write(root.join("ai/providers.json"),json!({"providers":[{"id":"legacy","label":"Legacy","kind":"custom","baseUrl":"https://legacy.example.test/gateway","model":"one"}],"activeId":"legacy"}).to_string()).unwrap();
     let cfg = ok(root, json!({"op":"ai_config"}));

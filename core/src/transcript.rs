@@ -1,7 +1,7 @@
 //! Normalized transcript documents and their shared JSON operations.
 use crate::{
-    MAX_BYTES, MAX_SEGMENTS, Result, caption_tracks, caption_words, captions, clean, folded, json,
-    string, timestamp, trace, transcript_playback, transcript_reader, trusted_origin, video_id,
+    MAX_BYTES, MAX_SEGMENTS, Result, caption_tracks, caption_words, captions, json, trace,
+    transcript_playback, transcript_reader,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -55,7 +55,7 @@ pub(crate) struct Transcript {
 }
 
 pub(crate) fn normalize(data: &mut Transcript) -> Result<()> {
-    if !video_id(&data.video_id)
+    if !crate::video_id(&data.video_id)
         || data.title.len() > 10_000
         || data.language.len() > 500
         || data.track_id.len() > 1_000
@@ -120,21 +120,21 @@ pub(crate) fn normalize(data: &mut Transcript) -> Result<()> {
     if data.segments.is_empty() {
         return Err("This video has no caption text available.".into());
     }
-    data.title = clean(&data.title);
+    data.title = crate::clean(&data.title);
     Ok(())
 }
 
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
-    let op = string(command, "op")?;
-    let id = string(command, "videoId")?;
-    if !video_id(id) {
+    let op = crate::string(command, "op")?;
+    let id = crate::string(command, "videoId")?;
+    if !crate::video_id(id) {
         return Err("Invalid video identity.".into());
     }
     if op == "accept" {
-        let origin = string(command, "origin")?;
-        let request_id = string(command, "requestId")?;
-        let raw = string(command, "raw")?;
-        if raw.len() > MAX_BYTES || request_id.len() > 200 || !trusted_origin(origin, id) {
+        let origin = crate::string(command, "origin")?;
+        let request_id = crate::string(command, "requestId")?;
+        let raw = crate::string(command, "raw")?;
+        if raw.len() > MAX_BYTES || request_id.len() > 200 || !crate::trusted_origin(origin, id) {
             return Err("Untrusted transcript response.".into());
         }
         let reply: Value = {
@@ -148,7 +148,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             return Err("Transcript response belongs to another request.".into());
         }
         if reply["ok"] == false {
-            let error = string(&reply, "error")?
+            let error = crate::string(&reply, "error")?
                 .chars()
                 .take(500)
                 .collect::<String>();
@@ -188,7 +188,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             json!({"type":"transcript","requestId":request_id,"videoId":id,"ok":true,"transcript":data.as_ref(),"cacheSaved":cache_saved}),
         );
     }
-    let track = string(command, "trackId")?;
+    let track = crate::string(command, "trackId")?;
     if op == "transcript_playback" {
         return with_transcript(root, id, track, |data| {
             transcript_playback::step(data, command)
@@ -203,11 +203,11 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         "load" => Ok(serde_json::to_value(data.as_ref())
             .map_err(|_| "Could not encode cached transcript.")?),
         "search" => {
-            let query = string(command, "query")?;
+            let query = crate::string(command, "query")?;
             if query.len() > 10_000 {
                 return Err("Search query is too long.".into());
             }
-            let query = folded(query);
+            let query = crate::folded(query);
             let indices: Vec<usize> = data
                 .segments
                 .iter()
@@ -222,7 +222,13 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             let lines: Vec<_> = data
                 .segments
                 .iter()
-                .map(|s| format!("{}  {}", timestamp(s.start), captions::readable_text(s)))
+                .map(|s| {
+                    format!(
+                        "{}  {}",
+                        crate::timestamp(s.start),
+                        captions::readable_text(s)
+                    )
+                })
                 .collect();
             Ok(json!(format!(
                 "{}\nhttps://www.youtube.com/watch?v={}\n\n{}",
@@ -238,8 +244,8 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
 /// Retain a consistent cache version, then decode and serialize without blocking
 /// unrelated storage operations. Explicit tracks keep the legacy null-on-miss policy.
 pub(crate) fn restore(command: &Value, root: &str) -> Result<Value> {
-    let id = string(command, "videoId")?;
-    if !video_id(id) {
+    let id = crate::string(command, "videoId")?;
+    if !crate::video_id(id) {
         return Err("Invalid video identity.".into());
     }
     let track = command["trackId"].as_str();

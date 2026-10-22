@@ -1,6 +1,6 @@
 //! PiP controls share the queue and persisted player preferences. The temporary
 //! audio-only mode is process memory only; platform adapters own window changes.
-use crate::{Result, video_id};
+use crate::Result;
 use serde_json::{Value, json};
 use std::sync::Mutex;
 
@@ -16,7 +16,7 @@ static MODE: Mutex<Mode> = Mutex::new(Mode {
 
 pub(super) fn control(command: &Value, root: &str) -> Result<Value> {
     let id = command["videoId"].as_str().unwrap_or("");
-    let active = command["active"] == true && video_id(id);
+    let active = command["active"] == true && crate::video_id(id);
     let settings = super::preferences::settings(&json!({}), root)?;
     let queue = super::snapshot(&super::load(root), id, None);
     let cast = crate::cast::dispatch(&json!({"op":"cast_status"}))?;

@@ -1,10 +1,9 @@
 #![cfg(test)]
 
-use govue_core::execute;
 use serde_json::{Value, json};
 
 fn call(text: &str, limit: Value) -> Value {
-    serde_json::from_str(&execute(
+    serde_json::from_str(&govue_core::execute(
         json!({"op":"response_speech", "text":text, "maxLength":limit}).to_string(),
         String::new(),
     ))

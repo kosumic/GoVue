@@ -1,11 +1,15 @@
-use super::{AiResponse, Job, ResponseState, Sse, activity, ai_execute, jobs, random, updates};
-use crate::poison;
+use super::{activity, updates};
+use crate::ai::http::{AiResponse, ResponseState};
+use crate::ai::jobs::Job;
+use crate::ai::sse::Sse;
+use crate::ai::{commands, identity, jobs};
+
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicI32};
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub(super) fn job() -> Arc<Job> {
-    let id = random().unwrap();
+    let id = identity::random().unwrap();
     Arc::new(Job {
         notifications: updates::Notifier::new(&id),
         id,
@@ -35,7 +39,7 @@ fn response(job: Option<Arc<Job>>) -> AiResponse {
 #[test]
 fn poisoned_response_stops_native_callbacks() {
     let response = response(None);
-    poison(&response.state);
+    crate::poison(&response.state);
     response.start(200);
     response.failed();
     assert!(response.is_cancelled());
@@ -46,21 +50,24 @@ fn poisoned_response_stops_native_callbacks() {
 #[test]
 fn poisoned_job_state_is_rejected_by_polling_and_finalization() {
     let job = job();
-    jobs().lock().unwrap().insert(job.id.clone(), job.clone());
-    poison(&job.state);
+    jobs::jobs()
+        .lock()
+        .unwrap()
+        .insert(job.id.clone(), job.clone());
+    crate::poison(&job.state);
     assert!(job.pending().is_err());
     assert!(job.publish_activity().is_err());
     let replies: Vec<Value> = ["ai_poll", "ai_chat_poll", "ai_cancel", "ai_forget"]
         .into_iter()
         .map(|op| {
-            serde_json::from_str(&ai_execute(
+            serde_json::from_str(&commands::ai_execute(
                 json!({"op":op,"taskId":job.id}).to_string(),
                 String::new(),
             ))
             .unwrap()
         })
         .collect();
-    jobs().lock().unwrap().remove(&job.id);
+    jobs::jobs().lock().unwrap().remove(&job.id);
     for reply in replies {
         assert_eq!(
             reply,
@@ -74,7 +81,7 @@ fn poisoned_job_state_is_rejected_by_polling_and_finalization() {
 #[test]
 fn poisoned_activity_stops_output_and_finishes_with_an_error() {
     let job = job();
-    poison(&job.activity);
+    crate::poison(&job.activity);
     let response = response(Some(job.clone()));
     assert!(response.is_cancelled());
     assert!(!response.push(b"provider output".to_vec()));
@@ -95,7 +102,8 @@ fn poisoned_activity_stops_output_and_finishes_with_an_error() {
 
 #[test]
 fn progress_notifications_coalesce_and_terminal_states_publish_after_unlocking() {
-    use std::{sync::mpsc, time::Duration};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     struct Events {
         jobs: Vec<Arc<Job>>,

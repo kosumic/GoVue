@@ -4,16 +4,11 @@
     reason = "Keep each temporary filesystem fixture alive through its entire test scenario."
 )]
 
-use govue_core::execute;
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::PathBuf,
-    sync::{
-        Mutex, MutexGuard,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 const VIDEO: &str = "abcdefghijk";
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -40,7 +35,7 @@ impl Store {
         }
     }
     fn call(&self, command: Value) -> Value {
-        serde_json::from_str(&execute(
+        serde_json::from_str(&govue_core::execute(
             command.to_string(),
             self.path.to_str().unwrap().into(),
         ))
@@ -537,7 +532,7 @@ fn full_storage_does_not_prevent_search_or_export_of_current_transcript() {
     let blocked = store.path.join("file-not-directory");
     fs::write(&blocked, "occupied").unwrap();
     let call = |command: Value| -> Value {
-        serde_json::from_str(&execute(
+        serde_json::from_str(&govue_core::execute(
             command.to_string(),
             blocked.to_str().unwrap().into(),
         ))

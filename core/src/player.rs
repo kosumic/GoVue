@@ -1,7 +1,8 @@
 //! Shared player state. UI concepts follow LiTube; all persisted records omit
 //! signed media/caption URLs and browser session data.
-use crate::transcript::with_transcript;
-use crate::{Result, clean, media, string, video_id};
+use crate::transcript;
+
+use crate::{Result, media};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Mutex;
@@ -49,14 +50,14 @@ struct Library {
 }
 
 fn item(value: &Value) -> Result<Item> {
-    let id = string(value, "videoId")?;
-    if !video_id(id) {
+    let id = crate::string(value, "videoId")?;
+    if !crate::video_id(id) {
         return Err("Invalid video identity.".into());
     }
     Ok(Item {
         video_id: id.into(),
-        title: clean(value["title"].as_str().unwrap_or("Video")),
-        author: clean(value["author"].as_str().unwrap_or("")),
+        title: crate::clean(value["title"].as_str().unwrap_or("Video")),
+        author: crate::clean(value["author"].as_str().unwrap_or("")),
         position: value["position"]
             .as_f64()
             .filter(|n| n.is_finite() && *n >= 0.0 && *n <= 604_800.0)
@@ -77,8 +78,8 @@ fn load(root: &str) -> Library {
     let mut library: Library =
         serde_json::from_value(media::read(root, "player-library.json", json!({})))
             .unwrap_or_default();
-    library.queue.retain(|i| video_id(&i.video_id));
-    library.history.retain(|i| video_id(&i.video_id));
+    library.queue.retain(|i| crate::video_id(&i.video_id));
+    library.history.retain(|i| crate::video_id(&i.video_id));
     library.queue.truncate(500);
     library.history.truncate(200);
     library.loop_mode %= 4;
@@ -171,7 +172,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let _lock = WRITES
         .lock()
         .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
-    let op = string(command, "op")?;
+    let op = crate::string(command, "op")?;
     let current = command["videoId"].as_str().unwrap_or("");
     let mut library = load(root);
     let mut next: Option<Item> = None;
@@ -208,41 +209,46 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .as_f64()
                 .filter(|n| n.is_finite() && *n >= 0.0)
                 .ok_or("Invalid caption position.")?;
-            return with_transcript(root, current, string(command, "trackId")?, |data| {
-                let after = data.segments.partition_point(|s| s.start <= position);
-                let index = after.checked_sub(1).filter(|&i| {
-                    let s = &data.segments[i];
-                    let end = if s.duration > 0.0 {
-                        s.start + s.duration
-                    } else {
-                        data.segments.get(i + 1).map_or(f64::INFINITY, |n| n.start)
-                    };
-                    position < end
-                });
-                if op == "player_caption_frame" {
-                    return index.map_or_else(
-                        || json!({"text":"","sourceText":"","segmentIndex":-1}),
-                        |index| {
-                            let segment = &data.segments[index];
-                            let next = data
-                                .segments
-                                .get(index + 1)
-                                .map_or(f64::INFINITY, |s| s.start);
-                            let end = if segment.duration > 0.0 {
-                                next.min(segment.start + segment.duration)
-                            } else {
-                                next
-                            };
-                            caption::frame(segment, index, position, end, &command["layout"])
-                        },
-                    );
-                }
-                json!(index.map_or("", |index| data.segments[index].text.as_str()))
-            });
+            return transcript::with_transcript(
+                root,
+                current,
+                crate::string(command, "trackId")?,
+                |data| {
+                    let after = data.segments.partition_point(|s| s.start <= position);
+                    let index = after.checked_sub(1).filter(|&i| {
+                        let s = &data.segments[i];
+                        let end = if s.duration > 0.0 {
+                            s.start + s.duration
+                        } else {
+                            data.segments.get(i + 1).map_or(f64::INFINITY, |n| n.start)
+                        };
+                        position < end
+                    });
+                    if op == "player_caption_frame" {
+                        return index.map_or_else(
+                            || json!({"text":"","sourceText":"","segmentIndex":-1}),
+                            |index| {
+                                let segment = &data.segments[index];
+                                let next = data
+                                    .segments
+                                    .get(index + 1)
+                                    .map_or(f64::INFINITY, |s| s.start);
+                                let end = if segment.duration > 0.0 {
+                                    next.min(segment.start + segment.duration)
+                                } else {
+                                    next
+                                };
+                                caption::frame(segment, index, position, end, &command["layout"])
+                            },
+                        );
+                    }
+                    json!(index.map_or("", |index| data.segments[index].text.as_str()))
+                },
+            );
         }
         "player_state" => {}
         "player_context" => {
-            if !video_id(current) {
+            if !crate::video_id(current) {
                 return Err("Invalid page playback identity.".into());
             }
             library.page = PageContext {
@@ -284,7 +290,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
         }
         "player_remove" => {
-            let id = string(command, "id")?;
+            let id = crate::string(command, "id")?;
             library.queue.retain(|i| i.video_id != id);
         }
         "player_clear" => {

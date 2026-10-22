@@ -1,13 +1,11 @@
 #![cfg(test)]
 
-use govue_core::{MediaHttp, MediaRangeReply, execute, install_media_http};
+use govue_core::{MediaHttp, MediaRangeReply};
 use serde_json::{Value, json};
-use std::{
-    fs,
-    io::Read,
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::fs;
+use std::io::Read;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 
 #[derive(Clone, Debug)]
@@ -114,7 +112,7 @@ fn read(uri: &str, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
 #[test]
 fn redirects_follow_validated_edges_preserve_ranges_and_reuse_the_working_target() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    install_media_http(Box::new(Http(seen.clone())));
+    govue_core::install_media_http(Box::new(Http(seen.clone())));
     let root = std::env::temp_dir().join(format!(
         "govue-redirects-{}",
         SystemTime::now()
@@ -123,9 +121,11 @@ fn redirects_follow_validated_edges_preserve_ranges_and_reuse_the_working_target
             .as_nanos()
     ));
     let call = |command: Value| -> Value {
-        let reply: Value =
-            serde_json::from_str(&execute(command.to_string(), root.to_string_lossy().into()))
-                .unwrap();
+        let reply: Value = serde_json::from_str(&govue_core::execute(
+            command.to_string(),
+            root.to_string_lossy().into(),
+        ))
+        .unwrap();
         assert_eq!(reply["ok"], true, "{reply}");
         reply["value"].clone()
     };

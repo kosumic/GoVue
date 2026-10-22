@@ -1,5 +1,5 @@
 //! Caption/audio associations and explicit, source-scoped translation choices.
-use crate::{Result, Track, Transcript, clean};
+use crate::{Result, Track, Transcript};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -34,9 +34,9 @@ pub(crate) struct Metadata {
 
 fn text(value: &Value) -> String {
     if let Some(text) = value.as_str().or_else(|| value["simpleText"].as_str()) {
-        return clean(text);
+        return crate::clean(text);
     }
-    clean(
+    crate::clean(
         &value["runs"]
             .as_array()
             .into_iter()

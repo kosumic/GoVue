@@ -1,15 +1,11 @@
 #![cfg(test)]
 
-use govue_core::{
-    ExtractionHttp, ExtractionReply, ExtractionRequest, execute, install_extraction_http,
-};
+use govue_core::{ExtractionHttp, ExtractionReply, ExtractionRequest};
 use serde_json::{Value, json};
-use std::{
-    collections::HashSet,
-    fs,
-    sync::{Arc, Condvar, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashSet;
+use std::fs;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 const SEARCH: &str = "https://m.youtube.com/results?search_query=fixture";
@@ -101,7 +97,8 @@ impl ExtractionHttp for Http {
     }
 }
 fn call(root: &str, command: Value) -> Value {
-    let result: Value = serde_json::from_str(&execute(command.to_string(), root.into())).unwrap();
+    let result: Value =
+        serde_json::from_str(&govue_core::execute(command.to_string(), root.into())).unwrap();
     assert_eq!(result["ok"], true, "{result}");
     result["value"].clone()
 }
@@ -205,7 +202,7 @@ fn launch_preparation(control: &Control) {
 #[test]
 fn selected_preparation_is_shared_bounded_and_correlated_with_navigation() {
     let control = Arc::new(Control::default());
-    install_extraction_http(Box::new(Http(control.clone())));
+    govue_core::install_extraction_http(Box::new(Http(control.clone())));
     launch_preparation(&control);
     let root = root("handoff");
     let first = "abcdefghijk";

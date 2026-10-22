@@ -5,11 +5,9 @@ use super::{
 };
 use crate::Result;
 use serde_json::Value;
-use std::{
-    io::Read,
-    sync::OnceLock,
-    time::{Duration, Instant},
-};
+use std::io::Read;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use url::Url;
 
 pub(super) static HTTP: OnceLock<Box<dyn ExtractionHttp>> = OnceLock::new();

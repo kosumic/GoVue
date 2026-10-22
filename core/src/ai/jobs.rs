@@ -1,15 +1,12 @@
 //! AI worker ownership, cancellation, capacity and terminal activity.
-use super::{activity, random, replay, updates};
+use super::{activity, replay, updates};
+use crate::ai::identity;
 use crate::{Result, json};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicI32, Ordering},
-    },
-};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 static JOBS: OnceLock<Mutex<HashMap<String, Arc<Job>>>> = OnceLock::new();
 
@@ -122,7 +119,7 @@ pub(super) fn new_job(owner: &str) -> Result<Arc<Job>> {
     for id in finished {
         all.remove(&id);
     }
-    let id = random()?;
+    let id = identity::random()?;
     let job = Arc::new(Job {
         notifications: updates::Notifier::new(&id),
         id,

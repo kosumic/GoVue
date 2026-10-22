@@ -1,6 +1,7 @@
 //! Synthetic VOD DASH manifests. Only opaque loopback-relative file names cross
 //! into the manifest; signed upstream addresses remain in the transport registry.
-use super::{Result, container, playback};
+use super::{Result, playback};
+use crate::media;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -16,7 +17,7 @@ pub(crate) fn manifest(duration: f64, tracks: &[(&Value, String)]) -> Result<Str
     }
     let mut groups: BTreeMap<(&str, &str), Vec<(&Value, &str)>> = BTreeMap::new();
     for (stream, uri) in tracks {
-        let mime = container(stream).ok_or("Invalid playback container.")?;
+        let mime = media::container(stream).ok_or("Invalid playback container.")?;
         let codec = playback::codecs(stream)?;
         if !playback::indexed(stream)
             || uri.len() > 160
