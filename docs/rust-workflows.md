@@ -55,6 +55,16 @@ game progress updates the Rust streaming projection, so later polls include the
 authoritative revisions. React applies revisioned deltas and guards its own
 rendering callbacks against a dismissed or changed view.
 
+`core/src/ai/notifications.rs` decides whether a saved, successful reply needs an
+alert, correlates a newly created chat before its worker starts, and suppresses
+alerts for the foreground conversation. Native lifecycle callbacks update
+foreground state even when JavaScript is suspended. Kotlin and Swift present
+generic local notifications with opaque chat IDs; revisioned effects prevent an
+old presentation from overtaking dismissal. Native launch queues retain taps
+until React can open the conversation, including after a cold launch. Closing
+chat keeps the response running; Stop and changing conversation/video still
+cancel the owned request.
+
 ## Verification
 
 Verified on 2026-10-20 using an Android arm64 debug build and an iPhone 17 Pro

@@ -29,7 +29,7 @@ import {
   Play,
   Share2,
 } from './src/player/icons';
-import { coreRequest } from './modules/govue-core';
+import { coreRequest, observeChatNotificationLaunches, takeChatNotificationLaunches } from './modules/govue-core';
 import { BrowserTab, type TabHandle } from './src/browser/BrowserTab';
 import { isYouTubeUrl, youtubeVideoId } from './src/browser/address';
 import { browserUrlPolicy, isWebUrl, openExternalUrl } from './src/browser/urlPolicy';
@@ -121,6 +121,25 @@ function Browser() {
   const [page, setPage] = useState<Page>(null);
   const [aiVisible, setAiVisible] = useState(false);
   const [aiVideoId, setAiVideoId] = useState<string | null>(null);
+  const [chatNotificationTarget, setChatNotificationTarget] = useState<{ chatId: string; sequence: number } | null>(null);
+  useEffect(() => {
+    let active = true;
+    let sequence = 0;
+    let pending = Promise.resolve();
+    const take = () => {
+      pending = pending.then(async () => {
+        const targets = await takeChatNotificationLaunches();
+        const chatId = targets.at(-1);
+        if (!active || !chatId) return;
+        setChatNotificationTarget({ chatId, sequence: ++sequence });
+        setAiVideoId(null); setPage(null); setGallery(null); setSheet(null); setCard(null); setAiVisible(true);
+      }).catch(() => {});
+    };
+    const subscription = observeChatNotificationLaunches(take);
+    const foreground = AppState.addEventListener('change', state => { if (state === 'active') take(); });
+    take();
+    return () => { active = false; subscription?.remove(); foreground.remove(); };
+  }, []);
   const [sheet, setSheet] = useState<'library' | null>(null);
   const [card, setCard] = useState<QueueItem | null>(null);
   const [gallery, setGallery] = useState<{
@@ -567,6 +586,7 @@ function Browser() {
         return;
       }
       if (message.action === 'chat') {
+        setChatNotificationTarget(null);
         setAiVideoId(youtubeVideoId(message.documentUrl));
         setAiVisible(true);
         return;
@@ -787,7 +807,8 @@ function Browser() {
                 keyboardVerticalOffset={session.fullscreen ? 0 : insets.top}
                 onBeforeGameAudio={media.pause}
                 visible={aiVisible}
-                onClose={() => setAiVisible(false)}
+                notificationTarget={chatNotificationTarget}
+                onClose={() => { setAiVisible(false); setChatNotificationTarget(null); }}
                 transcript={session.transcript.data}
                 videoId={aiVideoId}
                 onOpenVideo={(videoId, start) => {
@@ -795,6 +816,7 @@ function Browser() {
                   if (start !== undefined && media.playback?.videoId === videoId) run(() => media.seekTo(start));
                   session.setMini(false);
                   session.setLocked(false);
+                  setChatNotificationTarget(null);
                   setAiVisible(false);
                 }}
               />
@@ -817,6 +839,7 @@ function Browser() {
                     }
                     onDownload={(id) => openDownload(id)}
                     onAi={() => {
+                      setChatNotificationTarget(null);
                       setAiVideoId(media.playback?.videoId ?? null);
                       setAiVisible(true);
                     }}
@@ -827,6 +850,7 @@ function Browser() {
                       })
                     }
                     onRestore={() => {
+                      setChatNotificationTarget(null);
                       setAiVisible(false);
                       session.setMini(false);
                       if (media.playback?.offline) {

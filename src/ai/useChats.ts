@@ -190,6 +190,7 @@ export function useChats(visible: boolean, contextId: string) {
     }).catch(error => { if (mounted.current && version === epoch.current) setError(error.message); });
   }, [visible, busy, settingsBusy, ready, feedbackVersion]);
   async function open(id: string) {
+    if (current.current?.id === id) return current.current;
     stop(); const version = epoch.current;
     setError(''); setLoading(true);
     try {
@@ -240,12 +241,18 @@ export function useChats(visible: boolean, contextId: string) {
     finally { settingsPending.current = false; if (mounted.current) setSettingsBusy(false); }
   }
   async function openVideo(videoId: string, title?: string, transcript?: ChatTranscript, chatId?: string) {
-    stop(); const version = epoch.current;
+    const same = current.current?.videoId === videoId && (!chatId || current.current.id === chatId);
+    if (!same) stop();
+    const version = epoch.current;
     setError(''); setLoading(true);
     try {
       const chat = await aiRequest<Conversation>({ op: 'ai_chat_video_open', videoId, ...(chatId ? { chatId } : {}), ...(title ? { title } : {}), ...(transcript ? { transcript: { videoId: transcript.videoId, trackId: transcript.trackId } } : {}) });
       if (!mounted.current || version !== epoch.current) return;
-      update(chat);
+      update(same && task.current && chat.activeTask === task.current ? { ...chat, messages: current.current?.messages ?? chat.messages } : chat);
+      if (chat.activeTask && task.current !== chat.activeTask) {
+        task.current = chat.activeTask; sending.current = true; setBusy(true);
+        void watch({ taskId: chat.activeTask, conversation: chat }, version);
+      }
       void refresh().catch(() => {});
       return chat;
     } catch (e) {
@@ -283,15 +290,16 @@ export function useChats(visible: boolean, contextId: string) {
   useEffect(() => {
     let active = true;
     setReady(false);
-    if (!visible) stop();
-    else {
+    if (visible) {
       const version = epoch.current;
       void refresh().then(async () => {
         if (!active) return;
         if (current.current && version === epoch.current) {
           const revision = reasoningRevision.current;
           const chat = await aiRequest<Conversation>({ op: 'ai_chat_get', chatId: current.current.id });
-          if (active && version === epoch.current) update({ ...chat, reasoningEffort: revision === reasoningRevision.current ? chat.reasoningEffort : current.current?.reasoningEffort });
+          if (active && version === epoch.current) update({ ...chat,
+            ...(task.current && chat.activeTask === task.current ? { messages: current.current?.messages ?? chat.messages } : {}),
+            reasoningEffort: revision === reasoningRevision.current ? chat.reasoningEffort : current.current?.reasoningEffort });
         }
         if (active) setReady(true);
       }).catch(e => { if (active) { setError(e.message); setReady(true); } });
@@ -302,6 +310,6 @@ export function useChats(visible: boolean, contextId: string) {
     if (previousContext.current === contextId) return;
     previousContext.current = contextId; stop();
   }, [contextId]);
-  return { conversation, history, busy, loading, ready, error, settingsBusy, gameAction, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, branch, openVideo, selectModel, remove, change, newChat, refresh, refreshGames };
+  return { sessionId, conversation, history, busy, loading, ready, error, settingsBusy, gameAction, reasoningEffort: conversation ? conversation.reasoningEffort ?? null : draftReasoning, setReasoning, send, stop, open, branch, openVideo, selectModel, remove, change, newChat, refresh, refreshGames };
 }
 export type ChatController = ReturnType<typeof useChats>;

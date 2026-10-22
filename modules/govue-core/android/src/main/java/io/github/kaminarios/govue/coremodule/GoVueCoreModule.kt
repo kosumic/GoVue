@@ -159,6 +159,13 @@ class GoVueCoreModule : Module() {
   private var physicalOrientation: PhysicalOrientation? = null
   private var castDiscovery: CastDiscovery? = null
   private var pipControls: PipControls? = null
+  private var chatNotifications: NativeChatNotifications? = null
+  private fun captureChatNotification(intent: android.content.Intent?) {
+    NativeChatNotifications.capture(intent)
+  }
+  private fun chatForeground(active: Boolean) {
+    io.github.kaminarios.govue.core.stateExecute("{\"op\":\"chat_notification_foreground\",\"active\":$active}")
+  }
   @androidx.annotation.RequiresApi(26)
   private fun ensurePipControls(): PipControls? {
     if (Build.VERSION.SDK_INT < 26) return null
@@ -175,6 +182,7 @@ class GoVueCoreModule : Module() {
       // activity must not consume the one opportunity to read the launch intent.
       val activity = appContext.currentActivity ?: return false
       initialBrowserLaunchTaken = true
+      captureChatNotification(activity.intent)
       val before = browserLaunches.size
       captureBrowserLaunch(activity.intent)
       return browserLaunches.size > before
@@ -207,7 +215,21 @@ class GoVueCoreModule : Module() {
   private val imageClient=OkHttpClient.Builder().connectTimeout(15,TimeUnit.SECONDS).readTimeout(15,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
   override fun definition() = ModuleDefinition {
     Name("GoVueCore")
-    Events("browserLaunch", "deviceOrientation", "pipAction", "coreUpdate")
+    Events("browserLaunch", "deviceOrientation", "pipAction", "coreUpdate", "chatNotification")
+    AsyncFunction("prepareChatNotifications") { promise: Promise ->
+      chatNotifications?.prepare()
+      if (Build.VERSION.SDK_INT >= 33) {
+        expo.modules.interfaces.permissions.Permissions.askForPermissionsWithPermissionsManager(
+          appContext.permissions, promise, android.Manifest.permission.POST_NOTIFICATIONS)
+      } else promise.resolve(null)
+    }.runOnQueue(Queues.MAIN)
+    AsyncFunction("takeChatNotificationLaunches") {
+      captureInitialBrowserLaunch()
+      synchronized(browserLaunches) {
+        val target = NativeChatNotifications.takeLaunch()
+        if (target == null) emptyList<String>() else listOf(target)
+      }
+    }
     View(CaptionSelectionView::class) {
       Events("onSelectionChange", "onContentSizeChange")
       Prop("text") { view, value: String -> view.captionText = value }
@@ -236,11 +258,13 @@ class GoVueCoreModule : Module() {
       Unit
     }
     OnActivityEntersForeground { main.post {
+      chatForeground(true)
       physicalOrientation?.foreground(true)
       if (Build.VERSION.SDK_INT >= 26) pipControls?.foreground()
       if (captureInitialBrowserLaunch()) sendEvent("browserLaunch", emptyMap<String, Any>())
+      if (NativeChatNotifications.hasLaunch()) sendEvent("chatNotification", emptyMap<String, Any>())
     } }
-    OnActivityEntersBackground { main.post { physicalOrientation?.foreground(false); castDiscovery?.snapshot(false) } }
+    OnActivityEntersBackground { main.post { chatForeground(false); physicalOrientation?.foreground(false); castDiscovery?.snapshot(false) } }
     OnDestroy {
       main.post { physicalOrientation?.close(); physicalOrientation = null; castDiscovery?.close(); castDiscovery = null; if (Build.VERSION.SDK_INT >= 26) pipControls?.close(); pipControls = null }
     }
@@ -256,9 +280,11 @@ class GoVueCoreModule : Module() {
     OnNewIntent { intent ->
       synchronized(browserLaunches) {
         initialBrowserLaunchTaken = true
+        captureChatNotification(intent)
         captureBrowserLaunch(intent)
       }
       sendEvent("browserLaunch", emptyMap<String, Any>())
+      sendEvent("chatNotification", emptyMap<String, Any>())
     }
     AsyncFunction("takeBrowserLaunches") {
       captureInitialBrowserLaunch()
@@ -335,6 +361,8 @@ class GoVueCoreModule : Module() {
       }
     }
     OnCreate {
+      chatNotifications = NativeChatNotifications(requireNotNull(appContext.reactContext).applicationContext)
+      io.github.kaminarios.govue.core.installChatNotificationPlatform(requireNotNull(chatNotifications))
       io.github.kaminarios.govue.core.installDownloadPlatform(NativeDownloadPlatform(requireNotNull(appContext.reactContext).applicationContext))
       io.github.kaminarios.govue.core.installCoreEvents(object : io.github.kaminarios.govue.core.CoreEvents {
         override fun changed(channel: String) { main.post { sendEvent("coreUpdate", mapOf("channel" to channel)) } }

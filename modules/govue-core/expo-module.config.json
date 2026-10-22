@@ -1,5 +1,5 @@
 {
   "platforms": ["apple", "android"],
-  "apple": { "modules": ["GoVueCoreModule"] },
+  "apple": { "modules": ["GoVueCoreModule"], "appDelegateSubscribers": ["ChatNotificationAppDelegate"] },
   "android": { "modules": ["io.github.kaminarios.govue.coremodule.GoVueCoreModule"] }
 }

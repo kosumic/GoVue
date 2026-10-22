@@ -10,9 +10,16 @@ public final class GoVueCoreModule: Module {
   private var preparingExport = false
   private let galleryLock = NSLock()
   private var galleryActive = 0
+  private var chatNotificationObserver: NSObjectProtocol?
   public func definition() -> ModuleDefinition {
     Name("GoVueCore")
-    Events("coreUpdate")
+    Events("coreUpdate", "chatNotification")
+    AsyncFunction("prepareChatNotifications") { (promise: Promise) in
+      NativeChatNotifications.shared.prepare(promise)
+    }
+    AsyncFunction("takeChatNotificationLaunches") { () -> [String] in
+      NativeChatNotifications.shared.takeLaunches()
+    }
     View(CaptionSelectionView.self) {
       Events("onSelectionChange", "onContentSizeChange")
       Prop("text") { (view: CaptionSelectionView, value: String) in view.captionText = value }
@@ -114,6 +121,10 @@ public final class GoVueCoreModule: Module {
       return String(data: try JSONSerialization.data(withJSONObject: keys), encoding: .utf8)!
     }
     OnCreate {
+      installChatNotificationPlatform(platform: NativeChatNotifications.shared)
+      chatNotificationObserver = NotificationCenter.default.addObserver(forName: NativeChatNotifications.opened, object: nil, queue: .main) { [weak self] _ in
+        self?.sendEvent("chatNotification", [:])
+      }
       installDownloadPlatform(platform: NativeDownloadPlatform())
       installCoreEvents(events: NativeCoreEvents { [weak self] channel in self?.sendEvent("coreUpdate", ["channel": channel]) })
       let mediaHttp = NativeMediaHttp()
@@ -122,6 +133,10 @@ public final class GoVueCoreModule: Module {
       installMediaStreamHttp(backend: mediaHttp)
       installExtractionHttp(backend: NativeExtractionHttp())
       installAiPlatform(platform: NativeAiPlatform())
+    }
+    OnDestroy {
+      if let observer = chatNotificationObserver { NotificationCenter.default.removeObserver(observer) }
+      chatNotificationObserver = nil
     }
     Function("browserUrlPolicy") { (url: String) -> String in browserUrlPolicy(url: url) }
     Function("state") { (request: String) -> String in stateExecute(request: request) }

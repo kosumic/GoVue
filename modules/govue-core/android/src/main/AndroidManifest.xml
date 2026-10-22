@@ -8,7 +8,9 @@
   <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
   <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.VIBRATE" />
   <application>
+    <activity android:name="io.github.kaminarios.govue.coremodule.ChatNotificationActivity" android:exported="false" android:noHistory="true" android:excludeFromRecents="true" android:theme="@android:style/Theme.NoDisplay" />
     <service android:name="io.github.kaminarios.govue.coremodule.DownloadActivityService" android:exported="false" android:foregroundServiceType="dataSync" />
     <service android:name="io.github.kaminarios.govue.coremodule.cast.CastActivityService" android:exported="false" android:foregroundServiceType="connectedDevice" />
   </application>

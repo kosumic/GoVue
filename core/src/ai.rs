@@ -25,6 +25,7 @@ mod connections;
 mod conversations;
 mod games;
 mod jobs;
+mod notifications;
 mod plan;
 mod practice;
 mod providers;
@@ -38,6 +39,9 @@ mod usage;
 mod word_assistance;
 
 use jobs::{Job, cancel_owner, jobs, new_job};
+pub(crate) use notifications::foreground as chat_notification_foreground;
+pub(crate) use notifications::visible as chat_notification_visibility;
+pub use notifications::{ChatNotificationPlatform, install_chat_notification_platform};
 use providers::{
     CONFIG_LOCK, Config, Provider, config, provider, public_config, save, valid_id,
     validate_provider,

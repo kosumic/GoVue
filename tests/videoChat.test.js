@@ -11,12 +11,14 @@ const first = 'abcdefghijk', second = '0123456789a';
 const transcript = videoId => ({ videoId, title: `Video ${videoId}`, trackId: '.en', language: 'English', tracks: [], segments: [{ start: 1, duration: 3, text: 'These captions are the chat context.' }] });
 
 async function harness(videoId, restore = async id => transcript(id)) {
-  const calls = [], opened = [], saved = new Map(), audioCalls = [], backHandlers = new Set();
+  const calls = [], attention = [], opened = [], saved = new Map(), audioCalls = [], backHandlers = new Set();
   let closed = 0;
   let chatProps;
   const provider = { id: 'fixture', label: 'Fixture', model: 'first', connected: true, enabled: true, models: [] };
   const ai = { providers: [provider], groups: [], activeId: provider.id, ready: true, busy: '', clear() {}, stop() {}, async select(id, model) { if (model) provider.model = model; return true; } };
   const core = {
+    stateRequest: command => { attention.push(command); return null; },
+    prepareChatNotifications: async () => {},
     observeCoreUpdates: () => ({ remove() {} }),
     async coreRequest(command) {
       if (command.op === 'transcript_session_load') return { version: command.version, documents: [{ data: command.initial, cached: true }], loading: false, error: null };
@@ -76,12 +78,31 @@ async function harness(videoId, restore = async id => transcript(id)) {
   const props = { visible: true, videoId, transcript: null, onClose() { closed++; }, onOpenVideo: id => opened.push(id) };
   let root;
   await act(async () => { root = create(createElement(module.exports.AiSheet, props)); });
-  return { calls, saved, opened, audioCalls, props: () => chatProps,
+  return { calls, attention, saved, opened, audioCalls, props: () => chatProps,
     closed: () => closed, backHandlers,
     back: () => act(() => { for (const handler of [...backHandlers].reverse()) if (handler()) break; }),
     render: changes => act(async () => { root.update(createElement(module.exports.AiSheet, { ...props, ...changes })); }),
     unmount: () => act(() => root.unmount()), root };
 }
+
+test('a notification opens its saved video chat and ignores the previous video context', async t => {
+  let finishOld;
+  const env = await harness(first, id => id === first ? new Promise(resolve => { finishOld = resolve; }) : Promise.resolve(transcript(id)));
+  t.after(env.unmount);
+  const target = { ...env.saved.get(`video_${first}`), id: 'notified_chat', videoId: second,
+    transcript: { videoId: second, trackId: '.en', title: `Video ${second}`, language: 'English' },
+    messages: [{ id: 'reply', role: 'assistant', content: 'Saved notification reply', status: 'completed' }] };
+  env.saved.set(target.id, target);
+  await env.render({ notificationTarget: { chatId: target.id, sequence: 1 } });
+  await act(async () => { finishOld(transcript(first)); });
+  assert.equal(env.props().chat.conversation.id, target.id);
+  assert.equal(env.props().attachment.videoId, second);
+  assert.equal(env.props().contextReady, true);
+  assert.equal(env.props().chat.conversation.messages[0].content, 'Saved notification reply');
+  assert.equal(env.attention.at(-1).chatId, target.id);
+  await env.render({ visible: false });
+  assert.equal(env.attention.at(-1).chatId, null, 'hidden chat releases attention for completion alerts');
+});
 
 test('chat shares the player window and Android Back closes chat panels before leaving chat', async t => {
   const env = await harness(first);

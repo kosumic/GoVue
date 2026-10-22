@@ -15,6 +15,7 @@ const conversation = (reasoningEffort = 'low', content = '', status = 'streaming
 
 async function harness() {
   const calls = [];
+  const cancellations = [];
   let cancellation = null;
   let controller;
   const result = await build({ entryPoints: ['src/ai/useChats.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
@@ -23,7 +24,7 @@ async function harness() {
     } }],
   });
   const core = { aiRequest(command) {
-    if (command.op === 'ai_chat_session_cancel') return Promise.resolve(cancellation);
+    if (command.op === 'ai_chat_session_cancel') { cancellations.push(command); return Promise.resolve(cancellation); }
     if (command.op === 'ai_chat_session_feedback') return Promise.resolve(null);
     if (command.op === 'ai_chat_session_forget') return Promise.resolve({});
     if (command.op === 'ai_chat_session_send') command = { ...command.command, op: 'ai_chat_send' };
@@ -35,15 +36,36 @@ async function harness() {
   } };
   const module = { exports: {} };
   Function('require', 'module', 'exports', result.outputFiles[0].text)(name => name === 'test-core' ? core : require(name), module, module.exports);
-  function Chat() { controller = module.exports.useChats(true, ''); return null; }
+  function Chat({ visible = true }) { controller = module.exports.useChats(visible, ''); return null; }
   let root;
   await act(async () => { root = create(createElement(Chat)); });
-  return { calls, cancelWith: value => { cancellation = value; }, chat: () => controller, pending: op => calls.find(entry => entry.command.op === op && !entry.answered),
+  return { calls, cancellations, render: visible => act(async () => root.update(createElement(Chat, { visible }))), cancelWith: value => { cancellation = value; }, chat: () => controller, pending: op => calls.find(entry => entry.command.op === op && !entry.answered),
     reply: (op, value) => act(async () => { const entry = calls.find(entry => entry.command.op === op && !entry.answered); assert.ok(entry, op); entry.resolve(value); }),
     unmount: () => act(async () => root.unmount()) };
 }
 
 const nextPoll = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 180)); });
+
+test('closing and reopening a chat preserves its active reply for native completion notifications', async t => {
+  const env = await harness(); t.after(env.unmount);
+  await act(() => { void env.chat().send('fixture', 'Hello', null); });
+  await env.reply('ai_chat_send', { taskId: 'task', conversation: conversation() });
+  const cancellations = env.cancellations.length;
+  await env.render(false);
+  assert.equal(env.chat().busy, true);
+  assert.equal(env.cancellations.length, cancellations, 'hiding the sheet must not cancel Rust generation');
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 1, state: { status: 'running', replyId: 'reply', text: 'Still generating' } });
+  await env.render(true);
+  await env.reply('ai_chat_get', conversation());
+  await act(async () => { await env.chat().open('chat'); });
+  assert.equal(env.cancellations.length, cancellations, 'reopening the same chat must preserve its task');
+  assert.equal(env.chat().conversation.messages[1].content, 'Still generating');
+  await nextPoll();
+  await env.reply('ai_chat_poll', { kind: 'snapshot', revision: 2, state: { status: 'completed', replyId: 'reply', text: 'Saved reply' } });
+  await env.reply('ai_chat_get', conversation('low', 'Saved reply', 'completed'));
+  assert.equal(env.chat().busy, false);
+  assert.equal(env.chat().conversation.messages[1].content, 'Saved reply');
+});
 
 test('branch creation switches to the saved copy once and ignores completion after navigation', async t => {
   const env = await harness(); t.after(env.unmount);

@@ -427,6 +427,23 @@ fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Resu
     }
     let mut chat = read(root, id)?;
     if chat.active_task.as_deref() != Some(&job.id) {
+        // Terminal steering already commits a successful reply while holding the
+        // queue lock. Recognize only that exact reply; a newer turn or deletion
+        // must never be mistaken for this worker's completion.
+        if chat.active_task.is_none() && result.is_ok() && !job.cancelled.load(Ordering::Relaxed) {
+            let state = job
+                .state
+                .lock()
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
+            let committed = chat
+                .messages
+                .last()
+                .is_some_and(|reply| reply.status == "completed" && state["replyId"] == reply.id);
+            drop(state);
+            if committed {
+                return Ok(json!({"conversation":presentation(&chat)?}));
+            }
+        }
         return Ok(Value::Null);
     }
     capture_reply(&mut chat, job, result)?;
@@ -1130,9 +1147,11 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
     }
     let worker = job.clone();
     let id = chat.id.clone();
+    super::notifications::started(c["notificationSession"].as_str(), &id);
     thread::spawn(move || {
         let result = super::chat(&root, &p, &wire, &worker);
         let saved = finish(&root, &id, &worker, &result);
+        super::notifications::completed(&saved);
         worker.finish(match result {
             Ok(_) => saved,
             Err(e) => saved.and(Err(e)),

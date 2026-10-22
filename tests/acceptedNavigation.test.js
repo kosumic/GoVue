@@ -21,7 +21,7 @@ test('accepted navigation selects native playback before page callbacks and igno
     return createElement('BrowserTab', props);
   });
   const component = new Proxy({}, { get: (_target, name) => props => createElement(name, props) });
-  const native = new Proxy({ Platform: { OS: 'android' }, AppState: { currentState: 'active' },
+  const native = new Proxy({ Platform: { OS: 'android' }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) },
     Animated: { View: 'AnimatedView' }, StyleSheet: { create: value => value, absoluteFill: {}, hairlineWidth: 1 },
     useColorScheme: () => 'dark', BackHandler: { addEventListener: () => ({ remove() {} }) },
     Alert: { alert: message => assert.fail(message) },
@@ -33,7 +33,7 @@ test('accepted navigation selects native playback before page callbacks and igno
     'expo-status-bar': { StatusBar: 'StatusBar' }, 'react-native-webview': { default: 'WebView' },
     'expo-screen-orientation': { unlockAsync: async () => {}, lockAsync: async () => {}, OrientationLock: {} },
     'expo-navigation-bar': { NavigationBar: { setStyle() {}, setHidden() {} } },
-    './modules/govue-core': { browserRequest: command => ({ youtube: true, videoId: new URL(command.url).searchParams.get('v') }), coreRequest: async command => {
+    './modules/govue-core': { observeChatNotificationLaunches: () => ({ remove() {} }), takeChatNotificationLaunches: async () => [], browserRequest: command => ({ youtube: true, videoId: new URL(command.url).searchParams.get('v') }), coreRequest: async command => {
       writes.push(command);
       if (command.op === 'browser_open') state = { ...state, revision: state.revision + 1,
         tabs: [{ id: 1, url: command.url, kind: 'watch' }], target: { id: 1, url: command.url, load: true } };

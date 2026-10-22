@@ -163,6 +163,7 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
         .and_then(|c| c.remove("feedbackRevision"));
     let chat = command["chatId"].as_str().map(str::to_owned);
     let game = command["focusGameId"].as_str().map(str::to_owned);
+    command["notificationSession"] = c["sessionId"].clone();
     let result = super::dispatch(command, root.into())?;
     session.task = result["taskId"].as_str().map(str::to_owned);
     session.chat = result["conversation"]["id"].as_str().map(str::to_owned);

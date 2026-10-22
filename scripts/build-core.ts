@@ -20,12 +20,15 @@ for (const language of ['kotlin', 'swift']) {
   mkdirSync(output, { recursive: true });
   run(join(root, 'target/release/govue-bindgen'), ['generate', '--library', join(root, 'target/release', lib), '--language', language, '--out-dir', output, '--no-format']);
   if (language === 'swift') {
-    // The C ABI is private to this Expo module. Consumers of its Swift module
-    // should not need the Rust FFI module in their own compiler search paths.
+    // Bindings and the C ABI are private to this Expo module. UniFFI's public
+    // converter helpers expose RustBuffer, which cannot escape an
+    // implementation-only import. Keep generated declarations module-internal.
     const swift = join(output, 'GoVueRust.swift');
     const source = readFileSync(swift, 'utf8');
     if (!source.includes('\nimport GoVueRustFFI\n')) throw Error('Unexpected UniFFI Swift import; check the pinned generator.');
-    writeFileSync(swift, source.replace('\nimport GoVueRustFFI\n', '\n@_implementationOnly import GoVueRustFFI\n'));
+    writeFileSync(swift, source
+      .replace('\nimport GoVueRustFFI\n', '\n@_implementationOnly import GoVueRustFFI\n')
+      .replace(/^(\s*)(?:public|open) /gm, '$1'));
   }
 }
 

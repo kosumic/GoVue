@@ -17,13 +17,14 @@ import { GamePractice } from './GamePractice';
 import { extractTranscript, restoreTranscript } from '../core/transcripts';
 import { TranscriptPanel } from './TranscriptPanel';
 import { ChatTranscriptReader } from './ChatTranscript';
+import { stateRequest, prepareChatNotifications } from '../../modules/govue-core';
 
 function Button({ title, onPress, disabled = false }: { title: string; onPress: () => void; disabled?: boolean }) {
   const styles = useThemeStyles(makeStyles);
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, disabled && styles.disabled]}><Text style={styles.buttonText}>{title}</Text></Pressable>;
 }
 
-export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, browserControl, onBeforeGameAudio, keyboardVerticalOffset }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; onOpenVideo?: (videoId: string, start?: number) => void; browserControl?: ReactNode; onBeforeGameAudio?: () => Promise<void> | void; keyboardVerticalOffset: number }) {
+export function AiSheet({ visible, onClose, transcript, videoId, notificationTarget, onOpenVideo, browserControl, onBeforeGameAudio, keyboardVerticalOffset }: { visible: boolean; onClose: () => void; transcript: Transcript | null; videoId: string | null; notificationTarget?: { chatId: string; sequence: number } | null; onOpenVideo?: (videoId: string, start?: number) => void; browserControl?: ReactNode; onBeforeGameAudio?: () => Promise<void> | void; keyboardVerticalOffset: number }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const [chatVideoId, setChatVideoId] = useState(videoId);
@@ -41,6 +42,33 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   const [historyVisible, setHistoryVisible] = useState(false);
   const [usageVisible, setUsageVisible] = useState(false);
   const [find, setFind] = useState<{ chatId: string; query: string } | null>(null);
+  const handledNotification = useRef<typeof notificationTarget>(null);
+  const [openingNotification, setOpeningNotification] = useState(false);
+  const notificationPending = openingNotification || !!notificationTarget && handledNotification.current !== notificationTarget;
+  useEffect(() => {
+    if (visible) void prepareChatNotifications().catch(() => {});
+  }, [visible]);
+  const chatAttention = visible && page === 'chat' && !historyVisible && !usageVisible && !transcriptVisible && !contextLoading && !notificationPending;
+  const visibleChatId = chatAttention ? chats.conversation?.id ?? null : null;
+  useEffect(() => {
+    stateRequest({ op: 'chat_notification_visibility', chatId: visibleChatId, sessionId: chatAttention ? chats.sessionId : null });
+  }, [visibleChatId, chatAttention, chats.sessionId]);
+  useEffect(() => () => { stateRequest({ op: 'chat_notification_visibility', chatId: null }); }, []);
+  useEffect(() => {
+    if (!visible || !notificationTarget || handledNotification.current === notificationTarget) return;
+    handledNotification.current = notificationTarget;
+    contextAbort.current?.abort();
+    setOpeningNotification(true); setContextLoading(false);
+    setHistoryVisible(false); setUsageVisible(false); setTranscriptVisible(false); setFind(null);
+    setPrompt(''); showPage('chat');
+    void chats.open(notificationTarget.chatId).then(chat => {
+      if (handledNotification.current !== notificationTarget || !chat) return;
+      setChatVideoId(chat.videoId ?? chat.transcript?.videoId ?? null);
+      setContextChatId(chat.id); setAttachment(chat.transcript);
+    }).finally(() => {
+      if (handledNotification.current === notificationTarget) setOpeningNotification(false);
+    });
+  }, [visible, notificationTarget]);
   useEffect(() => {
     if (!visible) return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -67,14 +95,15 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
   useEffect(() => { if (chats.conversation) setAttachment(chats.conversation.transcript); }, [chats.conversation?.id, chats.conversation?.transcript]);
   useEffect(() => {
     if (visible) {
+      if (notificationTarget) return;
       const id = videoId ?? chats.conversation?.videoId ?? null;
       setChatVideoId(id);
       setContextChatId(id && chats.conversation?.videoId === id ? chats.conversation.id : null);
     } else setPage('chat');
-  }, [visible, videoId]);
+  }, [visible, videoId, notificationTarget]);
   useEffect(() => {
     setContextTranscript(null);
-    if (!visible || !chatVideoId) { setContextLoading(false); setContextError(''); return; }
+    if (!visible || !chatVideoId || notificationPending) { setContextLoading(false); setContextError(''); return; }
     const controller = new AbortController();
     contextAbort.current = controller;
     setContextLoading(true); setContextError(''); setAttachment(null); setPrompt('');
@@ -95,7 +124,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, onOpenVideo, br
       if (!controller.signal.aborted) { setContextError(error instanceof Error ? error.message : 'Could not load this video’s transcript.'); setContextLoading(false); }
     });
     return () => { controller.abort(); if (contextAbort.current === controller) contextAbort.current = null; };
-  }, [visible, chatVideoId, contextChatId, contextRetry]);
+  }, [visible, chatVideoId, contextChatId, contextRetry, notificationPending]);
 
   function close() { Keyboard.dismiss(); onClose(); }
   function closeFind() { Keyboard.dismiss(); setFind(null); }

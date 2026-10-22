@@ -107,6 +107,18 @@ messages are delivered then. Messages queued together are combined in order.
 Stop remains available beside Send. Stopping or a failed request keeps undelivered
 messages visible; tap one to send it when the assistant is idle.
 
+Closing chat keeps the current reply running. Allow notifications when opening
+chat to receive a **Chat reply ready** alert if it finishes while you are away
+from that conversation, including while using another part of GoVue. Tap the
+notification to open the saved chat; opening that conversation dismisses its
+alert. A reply that finishes while you are viewing it stays quiet. Stopped,
+failed, and deleted requests do not create completion alerts.
+
+Notifications use generic text, without conversation titles or reply previews.
+Android exposes a separate **Chat replies** notification channel for sound and
+vibration controls. Replies still depend on OS process/background limits; there
+is no remote push service to finish work after the app is terminated.
+
 For playable learning activities, ask the assistant to create a game. Game
 interfaces can use selected captions and original audio, with progress saved by
 Rust. See [interactive chat games](interactive-games.md) for the runtime contract

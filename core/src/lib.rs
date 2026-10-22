@@ -63,7 +63,12 @@ pub fn state_execute(request: String) -> String {
         serde_json::from_str(&request)
             .map_err(|_| "Unreadable browser request.".into())
             .and_then(|command: Value| {
-                if command["op"]
+                if command["op"] == "chat_notification_visibility" {
+                    ai::chat_notification_visibility(&command)
+                } else if command["op"] == "chat_notification_foreground" {
+                    ai::chat_notification_foreground(command["active"] == true);
+                    Ok(Value::Null)
+                } else if command["op"]
                     .as_str()
                     .is_some_and(|op| op.starts_with("player_session_"))
                 {
@@ -79,7 +84,8 @@ pub fn state_execute(request: String) -> String {
     }
 }
 pub use ai::{
-    AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, ai_execute, install_ai_platform,
+    AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, ChatNotificationPlatform,
+    ai_execute, install_ai_platform, install_chat_notification_platform,
 };
 pub use extraction::{
     ExtractionHeader, ExtractionHttp, ExtractionReply, ExtractionRequest, install_extraction_http,

@@ -10,6 +10,8 @@ const native = requireNativeModule<{
   getSystemVolume?(): Promise<number>;
   getBrowserUserAgent?(): Promise<string>;
   takeBrowserLaunches?(): Promise<string[]>;
+  prepareChatNotifications?(): Promise<unknown>;
+  takeChatNotificationLaunches?(): Promise<string[]>;
   observeDeviceOrientation?(enabled: boolean): Promise<void>;
   addListener?(
     event: string,
@@ -79,6 +81,12 @@ export const takeBrowserLaunches = () =>
   native.takeBrowserLaunches?.() ?? Promise.resolve([]);
 export const observeBrowserLaunches = (listener: () => void) =>
   native.addListener?.('browserLaunch', listener);
+export const prepareChatNotifications = () =>
+  native.prepareChatNotifications?.() ?? Promise.resolve();
+export const takeChatNotificationLaunches = () =>
+  native.takeChatNotificationLaunches?.() ?? Promise.resolve([]);
+export const observeChatNotificationLaunches = (listener: () => void) =>
+  native.addListener?.('chatNotification', listener);
 export const setOrientationObservation = (enabled: boolean) =>
   native.observeDeviceOrientation?.(enabled) ?? Promise.resolve();
 export const observePhysicalOrientation = (
