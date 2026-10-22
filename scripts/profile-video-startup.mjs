@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 const execAsync=promisify(execFile);
 const [name,pkg,video,mode='cold',durationArg='20']=process.argv.slice(2);
-if(!/^[a-z0-9-]+$/.test(name??'')||!['io.github.kaminarios.lingoplay','com.google.android.youtube','com.brave.browser'].includes(pkg)||!/^[\w-]{11}$/.test(video??'')||!['cold','warm'].includes(mode)) throw Error('Invalid public benchmark case');
+if(!/^[a-z0-9-]+$/.test(name??'')||!['io.github.kaminarios.govue','com.google.android.youtube','com.brave.browser'].includes(pkg)||!/^[\w-]{11}$/.test(video??'')||!['cold','warm'].includes(mode)) throw Error('Invalid public benchmark case');
 const offset=Number(process.env.GOVUE_START??0);if(!Number.isInteger(offset)||offset<0||offset>36000)throw Error('Invalid start offset');
 if(process.env.GOVUE_VARIANT&&!/^[a-z0-9-]+$/.test(process.env.GOVUE_VARIANT))throw Error('Invalid variant.');
 if(process.env.GOVUE_EXPECT_CACHE&&!['hit','miss','any'].includes(process.env.GOVUE_EXPECT_CACHE))throw Error('Invalid expected cache state.');
@@ -49,7 +49,7 @@ const where=`s.ts>=${startMs}*1000000`;
 const sql=`with frames as(select s.name,min(s.ts) as first ${base} where s.name glob 'CCodecBufferChannel::renderOutputBuffer*' and ${processFilter} and ${where} group by s.name), configuration as(select min(s.ts) as first ${base} where s.name='MediaCodec::configure#native' and ${processFilter} and ${where}) select 'new_decoder_first_frame',frames.name,round(frames.first/1e6-${startMs},3),0 from frames,configuration where frames.first>=configuration.first order by frames.first limit 4; select 'phase',s.name,round(s.ts/1e6-${startMs},3),round(s.dur/1e6,3) ${base} where (s.name glob 'GoVue extraction:*' or s.name glob 'GoVue playback:*') and ${where} order by s.ts; select 'network',s.name,round(s.ts/1e6-${startMs},3),round(s.dur/1e6,3) ${base} where s.name glob 'GoVue transport:*' and ${where} order by s.ts;`;
 const output=execFileSync(resolve(process.env.GOVUE_TRACE_PROCESSOR ?? '.cache/trace_processor_shell'),['-Q',sql,`${dir}/${name}.pftrace`],{encoding:'utf8',maxBuffer:4e6,stdio:['ignore','pipe','ignore']});writeFileSync(`${dir}/${name}-timing.csv`,output);
 const parsed=output.split('\n').map(line=>line.match(/^"(phase|network|new_decoder_first_frame)","([^"]+)",(-?[0-9.]+),(-?[0-9.]+)$/)).filter(Boolean).map(m=>({kind:m[1],name:m[2],atMs:Number(m[3]),durationMs:Number(m[4])}));
-const first=parsed.find(r=>pkg==='io.github.kaminarios.lingoplay'?r.name==='GoVue playback: first frame':r.kind==='new_decoder_first_frame');
+const first=parsed.find(r=>pkg==='io.github.kaminarios.govue'?r.name==='GoVue playback: first frame':r.kind==='new_decoder_first_frame');
 const phases=parsed.filter(r=>r.kind==='phase');
 const prepareLimit=first?.atMs??phases.find(r=>/^GoVue playback: format [0-9]+x/.test(r.name)||r.name==='GoVue playback: state 2')?.atMs;
 const prepare=prepareLimit===undefined?undefined:phases.filter(r=>r.name==='GoVue playback: prepare'&&r.atMs<prepareLimit).at(-1);
@@ -108,13 +108,13 @@ if (!previous) {
     result.installedApkSha256 = run('shell', 'sha256sum', address).split(/\s+/)[0];
 }
 const buildFile = resolve('.cache/startup-investigation/ablation/build/apks', result.variant + '.json');
-const expectedBuild = pkg === 'io.github.kaminarios.lingoplay' && existsSync(buildFile) ? JSON.parse(readFileSync(buildFile, 'utf8')) : null;
+const expectedBuild = pkg === 'io.github.kaminarios.govue' && existsSync(buildFile) ? JSON.parse(readFileSync(buildFile, 'utf8')) : null;
 result.expectedApkSha256 = expectedBuild?.apkSha256 ?? null;
 result.expectedPositionMs = process.env.GOVUE_EXPECT_POSITION === undefined ? previous?.expectedPositionMs ?? null : Number(process.env.GOVUE_EXPECT_POSITION) * 1000;
 result.valid = result.firstFrameMs !== null;
 result.exclusionReason = result.valid ? null : 'No native first frame within the recording window.';
 if (expectedBuild && expectedBuild.apkSha256 !== result.installedApkSha256) { result.valid = false; result.exclusionReason = 'Installed APK does not match the declared variant.'; }
-if (result.firstFrameMs !== null && pkg === 'io.github.kaminarios.lingoplay' && (result.firstPositionMs === null || result.firstPlayingMs === null)) {
+if (result.firstFrameMs !== null && pkg === 'io.github.kaminarios.govue' && (result.firstPositionMs === null || result.firstPlayingMs === null)) {
   result.valid = false; result.exclusionReason = 'Missing source-correlated position or playing marker.';
 }
 if (result.firstFrameMs !== null && result.expectedPositionMs !== null && (result.firstPositionMs === null || Math.abs(result.firstPositionMs - result.expectedPositionMs) > 1500)) {

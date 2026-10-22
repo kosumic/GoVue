@@ -7,7 +7,7 @@
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "android": {
-      "package": "io.github.kaminarios.lingoplay",
+      "package": "io.github.kaminarios.govue",
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -39,7 +39,7 @@
     },
     "ios": {
       "icon": "./assets/AppIcon.icon",
-      "bundleIdentifier": "io.github.kaminarios.lingoplay",
+      "bundleIdentifier": "io.github.kaminarios.govue",
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,

@@ -16,6 +16,10 @@ installs CocoaPods dependencies, and compiles an unsigned arm64 release app.
 required status check. Android APK/lint reports and the unsigned iOS app are
 retained for seven days. The unsigned iOS artifact is for compile validation.
 
+JWT verification uses `jsonwebtoken` with its AWS-LC backend. The RustCrypto
+backend pulls in `rsa`, which has no patched release for RUSTSEC-2023-0071 and
+fails the Rust dependency audit.
+
 Like Whip, CI runs CodeQL for JavaScript/TypeScript in a separate job and for
 Java/Kotlin around the Android build. Gradle's build cache is disabled so CodeQL
 observes compilation of the generated Expo project and local native module.

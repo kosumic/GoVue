@@ -82,7 +82,7 @@ adb reverse tcp:8081 tcp:8081
 npm start
 adb shell am start -a android.intent.action.VIEW \
   -d 'govue://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081' \
-  io.github.kaminarios.lingoplay
+  io.github.kaminarios.govue
 ```
 
 On an Apple Silicon Mac with Xcode:

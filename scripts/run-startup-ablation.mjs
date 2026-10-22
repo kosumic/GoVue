@@ -15,7 +15,7 @@ if (![block, variant].every(s => /^[a-z0-9-]+$/.test(s ?? '')) ||
   throw Error('Usage: node scripts/run-startup-ablation.mjs <block> <variant> [cold=4] [warm=2]');
 const serial = process.env.GOVUE_DEVICE_SERIAL;
 if (!serial) throw Error('Set GOVUE_DEVICE_SERIAL.');
-const adb = process.env.ADB ?? 'adb', pkg = 'io.github.kaminarios.lingoplay';
+const adb = process.env.ADB ?? 'adb', pkg = 'io.github.kaminarios.govue';
 const output = resolve(root, process.env.GOVUE_RESULTS_DIR ?? '.cache/startup-investigation/ablation');
 const apks = resolve(root, '.cache/startup-investigation/ablation/build/apks');
 const restoreProfile = process.env.GOVUE_RESTORE_PROFILE ?? (existsSync(resolve(apks, 'production.json')) ? 'production' : 'full');
@@ -26,7 +26,7 @@ const blockFile = resolve(output, block + '-block.json');
 if (existsSync(blockFile)) throw Error('Block already exists; use a new name.');
 const run = (...args) => execFileSync(adb, ['-s', serial, ...args], { encoding: 'utf8', timeout: 120000, maxBuffer: 5e6 });
 const delay = ms => new Promise(done => setTimeout(done, ms));
-const appInForeground = () => /(?:mResumedActivity|topResumedActivity)[^\n]*io\.github\.kaminarios\.lingoplay/.test(run('shell', 'dumpsys', 'activity', 'activities'));
+const appInForeground = () => /(?:mResumedActivity|topResumedActivity)[^\n]*io\.github\.kaminarios\.govue/.test(run('shell', 'dumpsys', 'activity', 'activities'));
 const movies = { bunny: 'aqz-KE-bpKQ', sintel: 'eRsGyueVLvQ', tears: 'R6MlUcmOul8' };
 const condition = () => {
   const battery = run('shell', 'dumpsys', 'battery'), thermal = run('shell', 'dumpsys', 'thermalservice');

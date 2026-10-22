@@ -16,7 +16,7 @@ data_sources {
       atrace_categories: "webview"
       atrace_categories: "input"
       atrace_categories: "binder_driver"
-      atrace_apps: "io.github.kaminarios.lingoplay"
+      atrace_apps: "io.github.kaminarios.govue"
       compact_sched { enabled: true }
     }
   }
