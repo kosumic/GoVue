@@ -18,7 +18,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let mut surfaces = SURFACES
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     let surface = surfaces.entry(root.into()).or_default();
     match string(command, "op")? {
         "player_surface_reset" => *surface = Surface::default(),

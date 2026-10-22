@@ -30,6 +30,8 @@ mod plan;
 mod practice;
 mod replay;
 mod search;
+#[cfg(test)]
+mod tests;
 mod tools;
 mod updates;
 mod usage;
@@ -91,14 +93,14 @@ fn random() -> Result<String> {
     getrandom::getrandom(&mut b).map_err(|_| "Could not generate secure login values.")?;
     Ok(URL_SAFE_NO_PAD.encode(b))
 }
-fn session(id: &str) -> Arc<Mutex<()>> {
-    SESSIONS
+fn session(id: &str) -> Result<Arc<Mutex<()>>> {
+    Ok(SESSIONS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
         .entry(id.into())
         .or_default()
-        .clone()
+        .clone())
 }
 fn read_secret(id: &str) -> Result<Value> {
     let reply = platform()?.secret_read(format!("ai.{id}"));
@@ -252,7 +254,7 @@ fn validate_provider(p: &mut Provider) -> Result<()> {
 fn provider(root: &Path, id: &str) -> Result<Provider> {
     let _g = CONFIG_LOCK
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let cfg = config(root)?;
     if let Some(g) = cfg.groups.iter().find(|g| g.id == id) {
         return Ok(catalog::group_provider(g));
@@ -326,44 +328,53 @@ struct Job {
     last_status: AtomicI32,
 }
 impl Job {
-    fn publish_activity(&self) {
+    fn publish_activity(&self) -> Result<()> {
         let blocks = json!(
             self.activity
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                 .blocks
         );
         self.state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)["blocks"] = blocks;
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?["blocks"] = blocks;
+        Ok(())
     }
     fn pending(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Relaxed) {
             Err("Request cancelled.".into())
+        } else if self.state.is_poisoned()
+            || self.activity.is_poisoned()
+            || self.updates.is_poisoned()
+        {
+            Err("AI state is unavailable. Restart GoVue.".into())
         } else {
             Ok(())
         }
     }
     fn finish(&self, result: Result<Value>) {
-        activity::settle(
-            &mut self
-                .activity
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .blocks,
-            if self.cancelled.load(Ordering::Relaxed) {
-                activity::Status::Stopped
-            } else if result.is_ok() {
-                activity::Status::Completed
-            } else {
-                activity::Status::Failed
-            },
-        );
-        self.publish_activity();
-        let mut s = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let settled = (|| -> Result<()> {
+            activity::settle(
+                &mut self
+                    .activity
+                    .lock()
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?
+                    .blocks,
+                if self.cancelled.load(Ordering::Relaxed) {
+                    activity::Status::Stopped
+                } else if result.is_ok() {
+                    activity::Status::Completed
+                } else {
+                    activity::Status::Failed
+                },
+            );
+            self.publish_activity()
+        })();
+        let result = settled.and(result);
+        // Polling reports a poisoned state directly; a worker must not recover it.
+        let Ok(mut s) = self.state.lock() else {
+            return;
+        };
         if self.cancelled.load(Ordering::Relaxed) {
             s["status"] = json!("cancelled");
             return;
@@ -386,28 +397,27 @@ fn jobs() -> &'static Mutex<HashMap<String, Arc<Job>>> {
 fn new_job(owner: &str) -> Result<Arc<Job>> {
     let mut all = jobs()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     // Finished tasks are disposable; active tasks are never silently evicted.
-    if all.len() >= 16 {
-        all.retain(|_, j| {
-            j.state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)["status"]
-                == "running"
-        });
+    let mut running = 0;
+    let mut finished = Vec::new();
+    for (id, job) in all.iter() {
+        if job
+            .state
+            .lock()
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?["status"]
+            == "running"
+        {
+            running += 1;
+        } else if all.len() >= 16 {
+            finished.push(id.clone());
+        }
     }
-    if all
-        .values()
-        .filter(|j| {
-            j.state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)["status"]
-                == "running"
-        })
-        .count()
-        >= 8
-    {
+    if running >= 8 {
         return Err("Too many AI requests. Stop an existing request first.".into());
+    }
+    for id in finished {
+        all.remove(&id);
     }
     let job = Arc::new(Job {
         id: random()?,
@@ -423,22 +433,23 @@ fn new_job(owner: &str) -> Result<Arc<Job>> {
     drop(all);
     Ok(job)
 }
-fn cancel_owner(id: &str) {
+fn cancel_owner(id: &str) -> Result<()> {
     for job in jobs()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
         .values()
-        .filter(|j| {
-            j.owner == id
-                || j.state
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)["providerId"]
-                    == id
-        })
     {
-        job.cancelled.store(true, Ordering::Relaxed);
+        if job.owner == id
+            || job
+                .state
+                .lock()
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?["providerId"]
+                == id
+        {
+            job.cancelled.store(true, Ordering::Relaxed);
+        }
     }
-    replay::forget_provider(id);
+    replay::forget_provider(id)
 }
 
 struct ResponseState {
@@ -456,34 +467,32 @@ pub struct AiResponse {
 #[uniffi::export]
 impl AiResponse {
     pub fn is_cancelled(&self) -> bool {
-        self.job.as_ref().is_some_and(|j| j.pending().is_err())
+        self.state.is_poisoned() || self.job.as_ref().is_some_and(|j| j.pending().is_err())
     }
     pub fn start(&self, status: i32) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .status = status;
+        if let Ok(mut state) = self.state.lock() {
+            state.status = status;
+        }
     }
     pub fn push(&self, bytes: Vec<u8>) -> bool {
         if self.job.as_ref().is_some_and(|j| j.pending().is_err()) {
             return false;
         }
-        let mut s = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Ok(mut s) = self.state.lock() else {
+            return false;
+        };
         s.total += bytes.len();
         let result = if s.total > 20_000_000 {
             Err("Provider response is too large.".into())
         } else if (200..300).contains(&s.status)
             && let Some(parser) = s.stream.as_mut()
         {
-            parser.push(&bytes).map(|_| {
+            parser.push(&bytes).and_then(|()| {
                 if let Some(job) = &self.job {
                     let mut state = job
                         .state
                         .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
                     state["text"] = json!(format!(
                         "{}{}",
                         state["textPrefix"].as_str().unwrap_or_default(),
@@ -498,10 +507,11 @@ impl AiResponse {
                     state["blocks"] = json!(
                         job.activity
                             .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                             .blocks
                     );
                 }
+                Ok(())
             })
         } else if s.bytes.len() + bytes.len() <= MAX_OUTPUT {
             s.bytes.extend(bytes);
@@ -517,11 +527,10 @@ impl AiResponse {
         true
     }
     pub fn failed(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .error =
-            Some("Could not reach the provider. Check your connection and try again.".into());
+        if let Ok(mut state) = self.state.lock() {
+            state.error =
+                Some("Could not reach the provider. Check your connection and try again.".into());
+        }
     }
 }
 fn http(
@@ -577,7 +586,7 @@ fn http_impl(
     let s = response
         .state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     if let Some(j) = job {
         j.last_status.store(s.status, Ordering::Relaxed);
     }
@@ -724,7 +733,7 @@ impl Sse {
                 let mut tape = job
                     .activity
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
                 if v["type"] == "response.output_item.done" {
                     tape.phase(phase);
                 }
@@ -830,7 +839,7 @@ impl Sse {
                                 .unwrap_or_else(|| format!("call-{}", gemini_offset + index));
                             job.activity
                                 .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                                 .prepare(&id, call["name"].as_str().unwrap_or_default())?;
                         }
                     }
@@ -852,7 +861,7 @@ impl Sse {
             let mut tape = job
                 .activity
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
             for (id, name) in self.tools.call_headers(&self.kind) {
                 tape.prepare(&id, &name)?;
             }
@@ -879,7 +888,7 @@ impl Sse {
         if let Some(job) = &self.job {
             job.activity
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                 .output(reasoning, delta, self.phase)?;
         }
         if reasoning {
@@ -949,10 +958,10 @@ fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<String> {
     if p.kind != "chatgpt" {
         return accounts::credential(root, p, job);
     }
-    let guard = session(&p.id);
+    let guard = session(&p.id)?;
     let _g = guard
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     connections::check_current(root, p, job)?;
     let mut s = read_secret(&p.id)?;
     if p.kind != "chatgpt" {
@@ -1164,7 +1173,7 @@ fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value> {
     }
     let _g = CONFIG_LOCK
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     job.pending()?;
     let mut cfg = config(root)?;
     job.pending()?;
@@ -1240,7 +1249,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
         let mut all = TURNS
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let next = all.entry(group.id.clone()).or_default();
         let count = candidates.len();
         candidates.rotate_left(*next % count);
@@ -1262,7 +1271,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
                 let mut state = job
                     .state
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
                 if !state["text"].as_str().unwrap_or_default().is_empty()
                     || state["gameCommitted"] == true
                     || state["steeringCommitted"] == true
@@ -1278,7 +1287,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
                 state["blocks"] = json!([]);
                 job.activity
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                     .blocks
                     .clear();
                 state["usage"] = Value::Null;
@@ -1296,7 +1305,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
 fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
     job.state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)["providerId"] = json!(p.id);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?["providerId"] = json!(p.id);
     job.pending()?;
     let base = connections::effective_base(p)?;
     if p.model.is_empty() {
@@ -1314,7 +1323,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         }
         let _g = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let transcript = crate::load(
             root.to_str().ok_or("Invalid transcript storage path.")?,
             id,
@@ -1363,7 +1372,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
     {
         let _g = CONFIG_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let agent_md = config(root)?.agent_md;
         if !agent_md.trim().is_empty() {
             instructions.push_str("\n\nAdditional instructions from the user's AGENT.md:\n");
@@ -1482,7 +1491,8 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
     let reasoning = catalog::reasoning(&model, requested_reasoning);
     job.state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)["reasoningEffort"] = json!(reasoning);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?["reasoningEffort"] =
+        json!(reasoning);
     let max_output = model.max_output_tokens;
     match protocol {
         "responses" => {
@@ -1598,7 +1608,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         let mut state = job
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         state["model"] = json!(p.model);
         state["providerLabel"] = json!(p.label);
         state["modelName"] = json!(model.name);
@@ -1652,9 +1662,9 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             let name = string(call, "name")?;
             job.activity
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                 .running(call_id, name)?;
-            job.publish_activity();
+            job.publish_activity()?;
             let result = match name {
                 "update_plan" => plan::update(job, call),
                 "create_interactive_game" => conversations::create_game(job, call),
@@ -1667,14 +1677,14 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
                 let mut tape = job
                     .activity
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
                 if job.cancelled.load(Ordering::Relaxed) {
                     activity::settle(&mut tape.blocks, activity::Status::Stopped);
                 } else {
                     tape.result(call_id, &result);
                 }
             }
-            job.publish_activity();
+            job.publish_activity()?;
             results.push(json!({"id":call["id"],"providerId":call["providerId"],"name":call["name"],"output":result.unwrap_or_else(|error| json!({"error":error}))}));
         }
         tools::continue_with(&mut body, protocol, &response, results)?;
@@ -1694,7 +1704,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         let mut state = job
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         state["textPrefix"] = json!(format!(
             "{}{}",
             state["text"].as_str().unwrap_or_default(),
@@ -1799,16 +1809,16 @@ fn login(root: PathBuf, p: Provider) -> Result<Value> {
     if p.kind != "chatgpt" {
         return Err("Account login is only available for ChatGPT.".into());
     }
-    let guard = session(&p.id);
+    let guard = session(&p.id)?;
     let _g = guard
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    cancel_owner(&p.id);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
+    cancel_owner(&p.id)?;
     let saved = read_secret(&p.id)?;
-    let host_lock = session("host");
+    let host_lock = session("host")?;
     let host_guard = host_lock
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let host = read_secret("host")?;
     let host_id = if let Some(id) = host["id"].as_str() {
         id.to_owned()
@@ -1916,7 +1926,7 @@ fn login(root: PathBuf, p: Provider) -> Result<Value> {
                 worker
                     .state
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)["message"] =
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?["message"] =
                     json!("Return to GoVue to finish signing in.");
                 while !FOREGROUND.load(Ordering::Relaxed) {
                     worker.pending()?;
@@ -1925,10 +1935,10 @@ fn login(root: PathBuf, p: Provider) -> Result<Value> {
                     }
                     thread::sleep(Duration::from_millis(200));
                 }
-                let lock = session(&p.id);
+                let lock = session(&p.id)?;
                 let _lock = lock
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
                 // Save the registration before exchange so a failed exchange can reauthorize it.
                 let mut previous = saved.clone();
                 previous["client_id"] = json!(issued);
@@ -1983,10 +1993,10 @@ fn uuid() -> Result<String> {
 }
 
 fn disconnect(root: &Path, p: &Provider, remove: bool, job: &Arc<Job>) -> Result<Value> {
-    let lock = session(&p.id);
+    let lock = session(&p.id)?;
     let _g = lock
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let (s, readable) = match read_secret(&p.id) {
         Ok(s) => (s, true),
         Err(_) => (json!({}), false),
@@ -2041,7 +2051,7 @@ fn disconnect(root: &Path, p: &Provider, remove: bool, job: &Arc<Job>) -> Result
     if remove {
         let _g = CONFIG_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let mut c = config(root)?;
         c.providers.retain(|v| v.id != p.id);
         for g in &mut c.groups {
@@ -2105,7 +2115,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         "ai_config" => {
             let _g = CONFIG_LOCK
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
             public_config(&root)
         }
         "ai_settings" => {
@@ -2117,7 +2127,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             }
             let _g = CONFIG_LOCK
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
             let mut cfg = config(&root)?;
             cfg.agent_md = agent_md.into();
             save(&root, &cfg)?;
@@ -2133,7 +2143,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             let id = string(&c, "id")?;
             let _g = CONFIG_LOCK
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
             let mut cfg = config(&root)?;
             if let Some(p) = cfg.providers.iter_mut().find(|p| p.id == id) {
                 if !p.enabled {
@@ -2167,7 +2177,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 return Err("Unsupported AI request.".into());
             }
             if matches!(kind.as_str(), "disconnect" | "remove") {
-                cancel_owner(&p.id);
+                cancel_owner(&p.id)?;
             }
             let job = new_job(&p.id)?;
             let worker = job.clone();
@@ -2185,7 +2195,7 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             let id = string(&c, "taskId")?;
             let job = jobs()
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                 .get(id)
                 .cloned()
                 .ok_or("AI request is no longer available.")?;
@@ -2193,18 +2203,18 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 let mut cursor = job
                     .updates
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
                 let state = job
                     .state
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
                 return Ok(cursor.poll(&state, usage::count(&c["afterRevision"])));
             }
             if c["op"] == "ai_poll" {
                 return Ok(job
                     .state
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                     .clone());
             }
             job.cancelled.store(true, Ordering::Relaxed);
@@ -2212,21 +2222,21 @@ fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 &mut job
                     .activity
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                     .blocks,
                 activity::Status::Stopped,
             );
             let interrupted = conversations::interrupt(&job)?;
-            job.publish_activity();
+            job.publish_activity()?;
             if c["op"] == "ai_cancel" {
                 job.state
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)["status"] =
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?["status"] =
                     json!("cancelled");
             } else {
                 jobs()
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                     .remove(id);
             }
             Ok(interrupted)

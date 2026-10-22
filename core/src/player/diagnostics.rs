@@ -69,7 +69,7 @@ pub(super) fn sample(command: &Value) -> Result<Value> {
         .min(1_000_000_000);
     let mut guard = MONITOR
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     let monitor = guard.get_or_insert_with(Monitor::default);
     if monitor.id != id || monitor.epoch != epoch {
         *monitor = Monitor {

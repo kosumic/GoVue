@@ -26,7 +26,7 @@ pub(super) fn control(command: &Value, root: &str) -> Result<Value> {
     let background = settings["backgroundPlayback"] == true;
     let mut mode = MODE
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     id.clone_into(&mut mode.video);
     if !active {
         mode.audio_only = false;

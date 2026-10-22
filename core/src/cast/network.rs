@@ -25,13 +25,10 @@ pub struct Transport {
 impl Transport {
     pub fn close(&self) {
         self.live.store(false, Ordering::SeqCst);
-        for (_, socket) in self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .drain(..)
-        {
-            let _ = socket.shutdown(Shutdown::Both);
+        if let Ok(mut peers) = self.peers.lock() {
+            for (_, socket) in peers.drain(..) {
+                let _ = socket.shutdown(Shutdown::Both);
+            }
         }
     }
     pub fn active(&self) -> bool {
@@ -42,8 +39,7 @@ impl Transport {
             && self
                 .last_media
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(30))
+                .is_ok_and(|last| last.is_some_and(|t| t.elapsed() < Duration::from_secs(30)))
     }
 }
 impl Drop for Transport {
@@ -140,11 +136,12 @@ pub fn start(
                     }
                     let id = state.serial.fetch_add(1, Ordering::SeqCst);
                     if let Ok(copy) = socket.try_clone() {
-                        state
-                            .peers
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .push((id, copy));
+                        let Some(mut peers) = state.peers.lock().ok() else {
+                            state.requests.fetch_sub(1, Ordering::SeqCst);
+                            state.close();
+                            break;
+                        };
+                        peers.push((id, copy));
                     }
                     let root = root.clone();
                     let bundle = bundle.clone();
@@ -159,11 +156,11 @@ pub fn start(
                             receiver.is_some(),
                             &page,
                         );
-                        state
-                            .peers
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .retain(|(n, _)| *n != id);
+                        if let Ok(mut peers) = state.peers.lock() {
+                            peers.retain(|(n, _)| *n != id);
+                        } else {
+                            state.close();
+                        }
                         state.requests.fetch_sub(1, Ordering::SeqCst);
                     });
                 }
@@ -354,7 +351,8 @@ fn serve(
         *state
             .last_media
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
+            .map_err(|_| std::io::Error::other("Cast state is unavailable. Restart GoVue."))? =
+            Some(Instant::now());
     }
     match path {
         "player" if !receiver => {
@@ -498,6 +496,26 @@ pub fn range(raw: &str, length: u64) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn poisoned_transport_closes_without_reading_peers_or_connection_state() {
+        let transport = Transport {
+            base: String::new(),
+            media: String::new(),
+            mime: "video/mp4",
+            live: AtomicBool::new(true),
+            peers: Mutex::new(Vec::new()),
+            serial: AtomicUsize::new(0),
+            requests: AtomicUsize::new(0),
+            last_media: Mutex::new(Some(Instant::now())),
+        };
+        crate::poison(&transport.last_media);
+        assert!(!transport.connected());
+        crate::poison(&transport.peers);
+        transport.close();
+        assert!(!transport.active());
+        assert!(transport.peers.is_poisoned());
+        assert!(transport.last_media.is_poisoned());
+    }
     #[test]
     fn only_private_numeric_lan_addresses_are_accepted() {
         for ip in [

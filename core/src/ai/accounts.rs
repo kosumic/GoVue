@@ -187,10 +187,10 @@ fn pause(job: &Arc<Job>, delay: Duration, deadline: Instant) -> Result<()> {
     }
 }
 fn save_tokens(root: &Path, p: &Provider, job: &Arc<Job>, data: Value) -> Result<Value> {
-    let lock = session(&p.id);
+    let lock = session(&p.id)?;
     let _g = lock
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     job.pending()?;
     connections::check_current(root, p, job)?;
     let previous = read_secret(&p.id)?;
@@ -228,7 +228,7 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
         );
     }
     let s = spec(&p.kind)?;
-    cancel_owner(&p.id);
+    cancel_owner(&p.id)?;
     let job = new_job(&p.id)?;
     let worker = job.clone();
     if matches!(p.kind.as_str(), "kimi" | "copilot") {
@@ -242,7 +242,7 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
     let Ok(server) = tiny_http::Server::http(("127.0.0.1", s.port)) else {
         jobs()
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .remove(&job.id);
         return Err("The account callback port is in use. Close another sign-in and retry.".into());
     };
@@ -317,7 +317,7 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
             worker
                 .state
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)["login"] =
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?["login"] =
                 json!({"url":url.as_str(),"returnUrl":browser_return,"mode":"browser"});
             loop {
                 worker.pending()?;
@@ -364,7 +364,7 @@ pub(super) fn login(root: PathBuf, p: Provider, consent: bool) -> Result<Value> 
                 worker
                     .state
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)["message"] =
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?["message"] =
                     json!("Return to GoVue to finish signing in.");
                 wait_foreground(&worker, deadline)?;
                 let mut body = json!({"grant_type":"authorization_code","client_id":s.client,"code":codes[0].1,"redirect_uri":redirect,"code_verifier":verifier});
@@ -516,7 +516,7 @@ fn device_login(root: &Path, p: &Provider, s: &Spec, job: &Arc<Job>) -> Result<V
     let mut interval = data["interval"].as_u64().unwrap_or(5).clamp(1, 60);
     job.state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)["login"] =
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?["login"] =
         json!({"url":verify,"userCode":code,"mode":"device"});
     loop {
         pause(job, Duration::from_secs(interval), deadline)?;
@@ -546,10 +546,10 @@ fn device_login(root: &Path, p: &Provider, s: &Spec, job: &Arc<Job>) -> Result<V
     }
 }
 pub(super) fn credential(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<String> {
-    let lock = session(&p.id);
+    let lock = session(&p.id)?;
     let _g = lock
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     connections::check_current(root, p, job)?;
     let mut s = read_secret(&p.id)?;
     if !catalog::oauth(p) || p.kind == "openrouter" {

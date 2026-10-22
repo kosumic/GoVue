@@ -86,7 +86,7 @@ pub(super) fn start(command: Value, root: PathBuf) -> Result<Value> {
     let (source, plans, language) = {
         let _guard = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let path = root.to_str().ok_or("Invalid caption storage path.")?;
         let source = crate::vocabulary::word_context(&command, path)?;
         let plans = if kind == "example" {
@@ -102,7 +102,7 @@ pub(super) fn start(command: Value, root: PathBuf) -> Result<Value> {
     let provider_id = {
         let _guard = CONFIG_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         config(&root)?
             .active_id
             .ok_or("Choose a model in AI settings before using word assistance.")?
@@ -148,7 +148,7 @@ pub(super) fn audio(command: &Value, root: &Path) -> Result<Value> {
     let (start, end, cue) = {
         let _guard = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let path = root.to_str().ok_or("Invalid caption storage path.")?;
         let timing = crate::vocabulary::word_audio(command, path)?
             .ok_or("This selection has no playable word or caption timestamps.")?;

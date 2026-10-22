@@ -34,6 +34,22 @@ mod transcript_session;
 mod transport;
 mod vocabulary;
 
+#[cfg(test)]
+fn poison<T: Send>(mutex: &Mutex<T>) {
+    std::thread::scope(|scope| {
+        assert!(
+            scope
+                .spawn(|| {
+                    let _guard = mutex.lock().unwrap();
+                    panic!("Poisoned-state fixture.");
+                })
+                .join()
+                .is_err()
+        );
+    });
+    assert!(mutex.is_poisoned());
+}
+
 /// The same synchronous URL policy gates WebView loads and Rust tab state.
 #[uniffi::export]
 pub fn browser_url_policy(url: String) -> String {
@@ -78,15 +94,13 @@ pub trait CoreEvents: Send + Sync {
 static EVENTS: Mutex<Option<Box<dyn CoreEvents>>> = Mutex::new(None);
 #[uniffi::export]
 pub fn install_core_events(events: Box<dyn CoreEvents>) {
-    *EVENTS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(events);
+    if let Ok(mut slot) = EVENTS.lock() {
+        *slot = Some(events);
+    }
 }
 pub(crate) fn changed(channel: &str) {
-    if let Some(events) = EVENTS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
+    if let Ok(events) = EVENTS.lock()
+        && let Some(events) = events.as_ref()
     {
         events.changed(channel.into());
     }
@@ -392,17 +406,18 @@ fn cache_path(root: &str, id: &str, track: &str) -> Result<PathBuf> {
     Ok(Path::new(root).join(format!("{hash}.json")))
 }
 
-fn remember(path: PathBuf, data: &Transcript) {
+fn remember(path: PathBuf, data: &Transcript) -> Result<()> {
     let mut docs = DOCUMENTS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     docs.retain(|(p, _)| p != &path);
     docs.push_back((path, data.clone()));
     while docs.len() > 3 {
         docs.pop_front();
     }
     drop(docs);
+    Ok(())
 }
 
 fn save(root: &str, data: &Transcript) -> Result<()> {
@@ -416,7 +431,7 @@ fn save(root: &str, data: &Transcript) -> Result<()> {
     fs::write(&temporary, bytes)
         .and_then(|_| fs::rename(&temporary, &path))
         .map_err(|_| "Could not save transcript cache.")?;
-    remember(path.clone(), data);
+    remember(path.clone(), data)?;
     let mut files: Vec<_> = fs::read_dir(root)
         .map_err(|_| "Could not read transcript cache.")?
         .filter_map(|e| {
@@ -450,7 +465,7 @@ fn load(root: &str, id: &str, track: &str) -> Result<Transcript> {
         let docs = DOCUMENTS
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
         if let Some((_, data)) = docs.iter().find(|(p, _)| p == &path) {
             return Ok(data.clone());
         }
@@ -469,7 +484,7 @@ fn load(root: &str, id: &str, track: &str) -> Result<Transcript> {
         return Err("Cached transcript identity changed.".into());
     }
     normalize(&mut data)?;
-    remember(path, &data);
+    remember(path, &data)?;
     Ok(data)
 }
 
@@ -485,7 +500,7 @@ fn with_transcript<T>(
         let docs = DOCUMENTS
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
         if let Some((_, data)) = docs.iter().find(|(p, _)| p == &path) {
             return Ok(read(data));
         }
@@ -625,7 +640,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         }
         // Captions remain usable when device storage is full or unavailable.
         let path = cache_path(root, &data.video_id, &data.track_id)?;
-        remember(path, &data);
+        remember(path, &data)?;
         let cache_saved = {
             let _span = trace::Section::begin(c"GoVue transcript: rust.cache_save");
             save(root, &data).is_ok()
@@ -664,7 +679,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
                 && normalize(&mut data).is_ok()
                 && caption_tracks::matches_audio(&data, command["audioKey"].as_str().unwrap_or(""))
             {
-                remember(cache_path(root, id, &data.track_id)?, &data);
+                remember(cache_path(root, id, &data.track_id)?, &data)?;
                 return Ok(json!(data));
             }
         }
@@ -678,7 +693,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
         let docs = DOCUMENTS
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
         if let Some((_, data)) = docs.iter().find(|(p, _)| p == &path) {
             return transcript_playback::step(data, &command);
         }
@@ -730,13 +745,13 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
 #[uniffi::export]
 pub fn execute(request: String, storage_path: String) -> String {
     let _span = trace::Section::begin(c"GoVue core: execute");
-    let _guard = {
+    let guard = {
         let _span = trace::Section::begin(c"GoVue core: lock_wait");
         REQUEST_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "Core state is unavailable. Restart GoVue.".to_owned())
     };
-    match dispatch(&request, &storage_path) {
+    match guard.and_then(|_guard| dispatch(&request, &storage_path)) {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
         Err(error) => json!({"ok":false,"error":error}).to_string(),
     }

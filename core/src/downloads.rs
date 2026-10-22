@@ -413,7 +413,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     }
                 }
                 media::write(root, "download-settings.json", &settings)?;
-                transfer::configure(root, settings["wifiOnly"] == true);
+                transfer::configure(root, settings["wifiOnly"] == true)?;
             }
             Ok(settings)
         }

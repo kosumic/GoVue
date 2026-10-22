@@ -88,17 +88,16 @@ pub(super) fn install_http(backend: Box<dyn crate::MediaHttp>) {
 }
 static STATUS: OnceLock<Mutex<Value>> = OnceLock::new();
 fn note(key: &str, value: Value) {
-    STATUS
-        .get_or_init(|| Mutex::new(json!({})))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)[key] = value;
+    if let Ok(mut status) = STATUS.get_or_init(|| Mutex::new(json!({}))).lock() {
+        status[key] = value;
+    }
 }
-pub(super) fn status() -> Value {
-    STATUS
+pub(super) fn status() -> Result<Value> {
+    Ok(STATUS
         .get_or_init(|| Mutex::new(json!({})))
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+        .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?
+        .clone())
 }
 
 pub(crate) fn header(name: &str, value: &str) -> Result<Header> {
@@ -129,7 +128,7 @@ fn range_bytes_with(
     let mut url = source
         .redirected
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| io::Error::other("Media transport state is unavailable. Restart GoVue."))?
         .clone()
         .unwrap_or_else(|| source.url.clone());
     let mut redirects = 0;
@@ -233,10 +232,9 @@ fn range_bytes_with(
             note("lastError", Value::Null);
             source.post.store(post, Ordering::Relaxed);
             if url != source.url {
-                *source
-                    .redirected
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
+                *source.redirected.lock().map_err(|_| {
+                    io::Error::other("Media transport state is unavailable. Restart GoVue.")
+                })? = Some(url);
             }
             return Ok(reply.body);
         }
@@ -382,7 +380,7 @@ fn serve(
     {
         let playlist = playlists
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?
             .get(key)
             .cloned();
         let Some(playlist) = playlist else {
@@ -414,7 +412,7 @@ fn serve(
         .unwrap_or("");
     let source = sources
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?
         .get(key)
         .cloned();
     let Some(source) = source else {
@@ -612,7 +610,7 @@ pub(super) fn proxy(command: &Value) -> Result<Value> {
     let mut sources = server
         .sources
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?;
     if sources.len() >= 32 {
         return Err("Too many active media streams. Close the player and try again.".into());
     }
@@ -725,11 +723,11 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
         let mut sources = server
             .sources
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?;
         let mut playlists = server
             .playlists
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?;
         if sources.len() + files.len() > 96 || playlists.len() >= 100 {
             return Err("Too many active media streams. Close the player and try again.".into());
         }
@@ -800,11 +798,11 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
     let mut sources = server
         .sources
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?;
     let mut playlists = server
         .playlists
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?;
     if sources.len() + files.len() > 96 || playlists.len() + lists.len() > 100 {
         return Err("Too many active media streams. Close the player and try again.".into());
     }
@@ -839,12 +837,12 @@ pub(super) fn release(command: &Value) -> Result<Value> {
             server
                 .sources
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?
                 .retain(|name, _| name != key && !name.starts_with(&prefix));
             server
                 .playlists
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .map_err(|_| "Media transport state is unavailable. Restart GoVue.")?
                 .retain(|name, _| name != key && !name.starts_with(&prefix));
         }
     }
@@ -855,6 +853,24 @@ pub(super) fn release(command: &Value) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::media::playback::tests::{index, stream};
+
+    #[test]
+    fn poisoned_redirect_rejects_media_reads_without_exposing_the_address() {
+        let source = source(&json!({
+            "url":"https://fixture.googlevideo.com/videoplayback?secret=private",
+            "length":16,"userAgent":"fixture","origin":"https://m.youtube.com",
+        }))
+        .unwrap();
+        crate::poison(&source.redirected);
+        let error = range_bytes(&source, 0, 15).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(
+            error.to_string(),
+            "Media transport state is unavailable. Restart GoVue."
+        );
+        assert!(streaming::open(&source, 0, 15).is_err());
+        assert!(source.redirected.is_poisoned());
+    }
 
     struct FixtureHttp;
     impl crate::MediaHttp for FixtureHttp {

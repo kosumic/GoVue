@@ -27,9 +27,7 @@ struct Store {
 }
 impl Store {
     fn new() -> Self {
-        let scenario = SCENARIOS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let scenario = SCENARIOS.lock().unwrap();
         let path = std::env::temp_dir().join(format!(
             "govue-{}-{}",
             std::process::id(),

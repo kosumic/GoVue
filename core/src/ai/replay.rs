@@ -40,9 +40,7 @@ pub(super) fn field(protocol: &str) -> &'static str {
 pub(super) fn restore(p: &Provider, c: &Value, job: &Job, protocol: &str) -> Option<Vec<Value>> {
     let scope = scope(p, job, protocol)?;
     let reply = c["historyTail"].as_str()?;
-    let mut history = HISTORY
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut history = HISTORY.lock().ok()?;
     let index = history
         .iter()
         .position(|e| e.scope == scope && e.reply == reply)?;
@@ -66,9 +64,9 @@ pub(super) fn remember(p: &Provider, c: &Value, job: &Job, protocol: &str, body:
     if bytes > MAX_BYTES {
         return;
     }
-    let mut history = HISTORY
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Ok(mut history) = HISTORY.lock() else {
+        return;
+    };
     if job.cancelled.load(Ordering::Relaxed) {
         return;
     }
@@ -85,15 +83,17 @@ pub(super) fn remember(p: &Provider, c: &Value, job: &Job, protocol: &str, body:
         bytes,
     });
 }
-pub(super) fn forget_provider(id: &str) {
+pub(super) fn forget_provider(id: &str) -> Result<()> {
     HISTORY
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
         .retain(|e| e.scope.provider != id);
+    Ok(())
 }
-pub(super) fn forget_chat(root: &Path, id: &str) {
+pub(super) fn forget_chat(root: &Path, id: &str) -> Result<()> {
     HISTORY
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
         .retain(|e| e.scope.root != root || e.scope.chat != id);
+    Ok(())
 }

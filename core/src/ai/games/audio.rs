@@ -53,15 +53,15 @@ fn server() -> Result<&'static ClipServer> {
                         .trim_start_matches('/')
                         .split('/')
                         .collect::<Vec<_>>();
-                    let clip = (route.len() == 2)
-                        .then(|| {
-                            worker
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .get(route[0])
-                                .cloned()
-                        })
-                        .flatten();
+                    let clip = if route.len() == 2 {
+                        worker
+                            .lock()
+                            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
+                            .get(route[0])
+                            .cloned()
+                    } else {
+                        None
+                    };
                     let Some(clip) = clip else {
                         let _ = request.respond(Response::empty(StatusCode(404)));
                         continue;
@@ -144,7 +144,7 @@ pub(in crate::ai) fn release(token: &str) -> Result<Value> {
         server
             .clips
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .remove(token);
     }
     Ok(Value::Null)
@@ -205,7 +205,7 @@ fn register(directory: PathBuf, data: &mut Metadata) -> Result<Value> {
     let mut clips = server
         .clips
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     if clips.len() >= 16 {
         return Err("Too many game audio sessions are active.".into());
     }
@@ -239,7 +239,7 @@ fn evict(root: &Path, protected: &Path) -> Result<()> {
         server
             .clips
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .values()
             .map(|c| c.directory.clone())
             .collect::<Vec<_>>()
@@ -337,7 +337,7 @@ fn prepare_clip(
 ) -> Result<Value> {
     let _build = BUILDS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let cache = root.join("ai/game-audio");
     let directory = cache.join(cache_key(video_id, cue));
     if let Some(mut data) = read_metadata(&directory) {

@@ -134,7 +134,7 @@ struct Conversation {
 }
 
 fn presentation(chat: &Conversation) -> Result<Value> {
-    refresh_games(chat);
+    refresh_games(chat)?;
     let mut value = serde_json::to_value(chat).map_err(|_| "Could not open this chat.")?;
     for message in value["messages"]
         .as_array_mut()
@@ -147,23 +147,26 @@ fn presentation(chat: &Conversation) -> Result<Value> {
     }
     Ok(value)
 }
-fn refresh_games(chat: &Conversation) {
-    let job = chat.active_task.as_ref().and_then(|task| {
+fn refresh_games(chat: &Conversation) -> Result<()> {
+    let job = if let Some(task) = &chat.active_task {
         jobs()
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .get(task)
             .cloned()
-    });
+    } else {
+        None
+    };
     if let Some(job) = job {
         let mut state = job
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         if let Some(message) = chat.messages.iter().find(|m| state["replyId"] == m.id) {
             state["games"] = json!(message.games);
         }
     }
+    Ok(())
 }
 fn path(root: &Path, id: &str) -> Result<PathBuf> {
     if !valid_id(id) {
@@ -293,42 +296,47 @@ fn save(root: &Path, chat: &Conversation) -> Result<()> {
         .and_then(|_| fs::rename(temp, target))
         .map_err(|_| "Could not save chat history.".into())
 }
-fn running(id: &str) -> bool {
-    jobs()
+fn running(id: &str) -> Result<bool> {
+    let all = jobs()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(id)
-        .is_some_and(|j| {
-            !j.cancelled.load(Ordering::Relaxed)
-                && j.state
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)["status"]
-                    == "running"
-        })
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
+    let job = all.get(id).cloned();
+    drop(all);
+    let Some(job) = job else {
+        return Ok(false);
+    };
+    Ok(!job.cancelled.load(Ordering::Relaxed)
+        && job
+            .state
+            .lock()
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?["status"]
+            == "running")
 }
+
 fn recover(root: &Path, chat: &mut Conversation) -> Result<()> {
-    if chat.active_task.as_deref().is_some_and(|id| !running(id)) {
-        let partial = chat.active_task.as_ref().and_then(|id| {
-            jobs()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get(id)
-                .map(|j| {
-                    let state = j
-                        .state
+    if let Some(id) = chat.active_task.as_deref()
+        && !running(id)?
+    {
+        let partial = jobs()
+            .lock()
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
+            .get(id)
+            .map(|j| -> Result<_> {
+                let state = j
+                    .state
+                    .lock()
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
+                Ok((
+                    state["text"].as_str().unwrap_or_default().to_owned(),
+                    state["reasoning"].as_str().unwrap_or_default().to_owned(),
+                    j.activity
                         .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    (
-                        state["text"].as_str().unwrap_or_default().to_owned(),
-                        state["reasoning"].as_str().unwrap_or_default().to_owned(),
-                        j.activity
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .blocks
-                            .clone(),
-                    )
-                })
-        });
+                        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
+                        .blocks
+                        .clone(),
+                ))
+            })
+            .transpose()?;
         chat.active_task = None;
         if let Some(m) = chat.messages.last_mut().filter(|m| m.status == "streaming") {
             if let Some((text, reasoning, blocks)) = partial {
@@ -408,7 +416,7 @@ fn caption(root: &Path, value: &Value) -> Result<Option<TranscriptRef>> {
     }
     let _g = crate::REQUEST_LOCK
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let transcript = crate::load(
         root.to_str().ok_or("Invalid transcript storage path.")?,
         id,
@@ -461,7 +469,7 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
         let selected = {
             let _g = CONFIG_LOCK
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
             config(root)?.active_id
         };
         let p = selected.as_deref().and_then(|id| provider(root, id).ok());
@@ -588,7 +596,7 @@ pub(super) fn record_input(job: &Job, input: PreparedInput) -> Result<()> {
     };
     let _guard = CHATS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     job.pending()?;
     let mut chat = read(root, id)?;
     if chat.active_task.as_deref() != Some(&job.id) {
@@ -605,7 +613,7 @@ pub(super) fn record_input(job: &Job, input: PreparedInput) -> Result<()> {
 fn finish(root: &Path, id: &str, job: &Arc<Job>, result: &Result<Value>) -> Result<Value> {
     let _g = CHATS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     // Deleting a chat or retrying after cancellation must never resurrect an old turn.
     if !path(root, id)?.exists() {
         return Ok(Value::Null);
@@ -625,7 +633,7 @@ fn capture_reply(chat: &mut Conversation, job: &Job, result: &Result<Value>) -> 
     message.content = job
         .state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)["text"]
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?["text"]
         .as_str()
         .unwrap_or_default()
         .into();
@@ -633,7 +641,7 @@ fn capture_reply(chat: &mut Conversation, job: &Job, result: &Result<Value>) -> 
         let state = job
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         message.reasoning = state["reasoning"].as_str().unwrap_or_default().into();
         message.usage = state["usage"].clone();
         message.model = state["model"].as_str().unwrap_or_default().into();
@@ -662,7 +670,7 @@ fn capture_reply(chat: &mut Conversation, job: &Job, result: &Result<Value>) -> 
         let mut tape = job
             .activity
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         activity::settle(
             &mut tape.blocks,
             match message.status.as_str() {
@@ -684,7 +692,7 @@ pub(super) fn steer(job: &Job, terminal: bool) -> Result<Option<(String, String)
     };
     let _guard = CHATS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     job.pending()?;
     let mut chat = read(root, id)?;
     if chat.active_task.as_deref() != Some(&job.id) {
@@ -727,11 +735,11 @@ pub(super) fn steer(job: &Job, terminal: bool) -> Result<Option<(String, String)
     save(root, &chat)?;
     *job.activity
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = activity::Tape::default();
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")? = activity::Tape::default();
     let mut state = job
         .state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     for field in ["text", "textPrefix", "reasoning", "reasoningPrefix"] {
         state[field] = json!("");
     }
@@ -772,7 +780,7 @@ fn enqueue(root: &Path, chat: &mut Conversation, c: &Value) -> Result<Value> {
     }
     let job = jobs()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
         .get(
             chat.active_task
                 .as_ref()
@@ -789,7 +797,7 @@ fn enqueue(root: &Path, chat: &mut Conversation, c: &Value) -> Result<Value> {
     save(root, chat)?;
     job.state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)["pendingMessages"] =
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?["pendingMessages"] =
         json!(chat.pending_messages);
     Ok(json!({"taskId":job.id,"conversation":presentation(chat)?}))
 }
@@ -814,7 +822,7 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
         .map_err(|_| "Invalid game arguments. Supply all fields described by the tool schema.")?;
     let _guard = CHATS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     job.pending()?;
     let mut chat = read(root, id)?;
     if chat.active_task.as_deref() != Some(&job.id) {
@@ -823,7 +831,7 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     let transcript = if let Some(reference) = &chat.transcript {
         let _guard = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         Some(crate::load(
             root.to_str().ok_or("Invalid storage path.")?,
             &reference.video_id,
@@ -859,7 +867,7 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     reply.blocks.clone_from(
         &job.activity
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .blocks,
     );
     let snapshot = json!(reply.games);
@@ -868,7 +876,7 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     let mut state = job
         .state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     state["gameCommitted"] = json!(true);
     state["games"] = snapshot;
     drop(state);
@@ -942,14 +950,14 @@ fn game_action(c: &Value, root: &Path) -> Result<Value> {
         .map_err(|_| "Could not restore game progress.")?;
     chat.updated_at = now();
     save(root, &chat)?;
-    refresh_games(&chat);
+    refresh_games(&chat)?;
     if result["notify"] == true {
         chat_sessions::feedback(
             root,
             &chat.id,
             string(&result["game"], "id")?,
             result["game"]["revision"].as_u64().unwrap_or(0),
-        );
+        )?;
     }
     Ok(result)
 }
@@ -958,7 +966,7 @@ fn game_audio(c: &Value, root: &Path) -> Result<Value> {
     let (video_id, cue) = {
         let _guard = CHATS
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let chat = read(root, string(c, "chatId")?)?;
         let game = chat
             .messages
@@ -995,7 +1003,7 @@ fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
     let (video_id, cue) = {
         let _guard = CHATS
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let chat = read(root, string(c, "chatId")?)?;
         let reference = chat.transcript.ok_or("This chat has no transcript.")?;
         if c["videoId"] != reference.video_id {
@@ -1004,7 +1012,7 @@ fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
         let track_id = string(c, "trackId")?;
         let _guard = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let allowed = crate::with_transcript(
             root.to_str().ok_or("Invalid transcript storage path.")?,
             &reference.video_id,
@@ -1036,7 +1044,7 @@ fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
 fn send(c: Value, root: PathBuf) -> Result<Value> {
     let _g = CHATS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let existing = c["chatId"].as_str().filter(|id| !id.is_empty());
     let mut chat = if let Some(id) = existing {
         let mut chat = read(&root, id)?;
@@ -1300,7 +1308,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
         let mut state = job
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         state["replyId"] = wire["replyId"].clone();
         state["pendingMessages"] = json!(chat.pending_messages);
     }
@@ -1309,7 +1317,7 @@ fn send(c: Value, root: PathBuf) -> Result<Value> {
     if let Err(error) = save(&root, &chat) {
         jobs()
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .remove(&job.id);
         return Err(error);
     }
@@ -1461,7 +1469,7 @@ fn speech_hints(c: &Value, root: &Path) -> Result<Value> {
         // Evicted captions should not prevent dictation using the conversation vocabulary.
         let _g = crate::REQUEST_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let hints = crate::with_transcript(
             root.to_str().ok_or("Invalid transcript storage path.")?,
             &transcript.video_id,
@@ -1495,7 +1503,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         ) {
             let _guard = CHATS
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
             for chat in list(&root)? {
                 for game in chat.messages.iter().flat_map(|m| &m.games) {
                     practice::capture(&root, game)?;
@@ -1515,7 +1523,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     }
     let _g = CHATS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     match string(&c, "op")? {
         "ai_game_action" => game_action(&c, &root),
         "ai_game_export" => game_export(&c, &root),
@@ -1568,19 +1576,22 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         "ai_chat_find" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;
             // Include the currently rendered reply without persisting partial output or queries.
-            if let Some(job) = chat.active_task.as_ref().and_then(|id| {
+            let job = if let Some(id) = chat.active_task.as_ref() {
                 jobs()
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                     .get(id)
                     .cloned()
-            }) && let Some(message) =
-                chat.messages.last_mut().filter(|m| m.status == "streaming")
+            } else {
+                None
+            };
+            if let Some(job) = job
+                && let Some(message) = chat.messages.last_mut().filter(|m| m.status == "streaming")
             {
                 let state = job
                     .state
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
                 message.content = state["text"].as_str().unwrap_or_default().into();
             }
             search::find(
@@ -1629,12 +1640,12 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 && let Some(task) = chat.active_task
                 && let Some(job) = jobs()
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?
                     .get(&task)
             {
                 job.cancelled.store(true, Ordering::Relaxed);
             }
-            replay::forget_chat(&root, id);
+            replay::forget_chat(&root, id)?;
             match fs::remove_file(path(&root, id)?) {
                 Ok(()) => Ok(Value::Null),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
@@ -1654,4 +1665,40 @@ fn parse_reasoning(value: &Value) -> Result<Option<String>> {
         .filter(|v| catalog::valid_reasoning(v))
         .ok_or("Invalid reasoning effort.")?;
     Ok(Some(level.into()))
+}
+
+#[cfg(test)]
+mod poison_tests {
+    use super::*;
+
+    #[test]
+    fn poisoned_partial_reply_is_never_saved_as_recovered_history() {
+        for activity in [false, true] {
+            let job = super::super::tests::job();
+            let root = std::env::temp_dir().join(format!("govue-poison-{}", job.id));
+            let mut chat: Conversation = serde_json::from_value(json!({
+                "id":"fixture","title":"Fixture","providerId":"fixture",
+                "providerLabel":"Fixture","model":"fixture","createdAt":0,
+                "updatedAt":0,"messages":[],"activeTask":job.id,
+            }))
+            .unwrap();
+            jobs().lock().unwrap().insert(job.id.clone(), job.clone());
+            job.cancelled.store(true, Ordering::Relaxed);
+            if activity {
+                crate::poison(&job.activity);
+            } else {
+                crate::poison(&job.state);
+            }
+            let result = recover(&root, &mut chat);
+            jobs().lock().unwrap().remove(&job.id);
+            let saved = path(&root, &chat.id).unwrap().exists();
+            let _ = fs::remove_dir_all(&root);
+            assert_eq!(
+                result.unwrap_err(),
+                "AI state is unavailable. Restart GoVue."
+            );
+            assert_eq!(chat.active_task.as_deref(), Some(job.id.as_str()));
+            assert!(!saved);
+        }
+    }
 }

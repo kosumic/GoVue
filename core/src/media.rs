@@ -313,7 +313,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         | "downloads_transfer_release" => crate::downloads::dispatch(command, root),
         "media_proxy" => super::transport::proxy(command),
         "media_proxy_release" => super::transport::release(command),
-        "media_transport_status" => Ok(super::transport::status()),
+        "media_transport_status" => super::transport::status(),
         "media_range" => {
             let length = command["length"].as_u64().ok_or("Missing media length.")?;
             let offset = command["offset"].as_u64().ok_or("Missing media offset.")?;

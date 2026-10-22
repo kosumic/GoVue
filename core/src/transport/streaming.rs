@@ -73,7 +73,7 @@ pub(super) fn open(source: &Source, start: u64, end: u64) -> io::Result<Box<dyn 
     let mut url = source
         .redirected
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| io::Error::other("Media transport state is unavailable. Restart GoVue."))?
         .clone()
         .unwrap_or_else(|| source.url.clone());
     let mut post = source.post.load(Ordering::Relaxed);
@@ -121,10 +121,9 @@ pub(super) fn open(source: &Source, start: u64, end: u64) -> io::Result<Box<dyn 
         {
             source.post.store(post, Ordering::Relaxed);
             if url != source.url {
-                *source
-                    .redirected
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
+                *source.redirected.lock().map_err(|_| {
+                    io::Error::other("Media transport state is unavailable. Restart GoVue.")
+                })? = Some(url);
             }
             note("lastError", serde_json::Value::Null);
             return Ok(Box::new(body));

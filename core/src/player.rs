@@ -164,12 +164,12 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     if command["op"] == "player_mini" {
         let _guard = WRITES
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
         return mini::layout(command, root);
     }
     let _lock = WRITES
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     let op = string(command, "op")?;
     let current = command["videoId"].as_str().unwrap_or("");
     let mut library = load(root);

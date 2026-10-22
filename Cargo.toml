@@ -15,6 +15,7 @@ allow_attributes_without_reason = "deny"
 # Keep explicit emptiness assertions instead of comparing against typed empty arrays.
 assert_is_empty = "allow"
 dbg_macro = "deny"
+disallowed_methods = "deny"
 excessive_nesting = "warn"
 expect_used = "deny"
 large_futures = "warn"

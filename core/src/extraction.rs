@@ -909,8 +909,8 @@ fn transcript(
     job.check()?;
     let _guard = crate::REQUEST_LOCK
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    crate::remember(crate::cache_path(root, id, &data.track_id)?, &data);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
+    crate::remember(crate::cache_path(root, id, &data.track_id)?, &data)?;
     let _ = crate::save(root, &data);
     Ok(json!(data))
 }

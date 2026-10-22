@@ -82,48 +82,41 @@ impl Session {
             })
         .clamp(0.0, view.duration.max(view.position))
     }
-    fn snapshot(&self) -> Value {
+    fn snapshot(&self) -> Result<Value> {
         let view = self
             .view
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
         let transport = self
             .transport
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
         let result = json!({"available":true,"id":self.id,"videoId":self.video_id,"device":self.name,"deviceId":if self.link {None}else{Some(format!("{}:{}",self.device["host"].as_str().unwrap_or(""),self.device["port"].as_u64().unwrap_or(0)))},"active":self.active(),"link":self.link,
             "phase":view.phase,"error":view.error,"position":Self::position(&view),"duration":view.duration,"speed":view.speed,"acknowledged":view.acknowledged,"linkConnected":self.link&&transport.as_ref().is_some_and(|t|t.connected()),
             "url":if self.link&&self.active(){transport.as_ref().map(|t|format!("{}player",t.base))}else{None}});
         drop(transport);
         drop(view);
-        result
+        Ok(result)
     }
     fn finish(&self, error: Option<&'static str>) {
         if !self.alive.swap(false, Ordering::SeqCst) {
             return;
         }
-        if let Some(transport) = self
-            .transport
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
+        if let Ok(mut transport) = self.transport.lock()
+            && let Some(transport) = transport.take()
         {
             transport.close();
         }
-        let socket = self
-            .socket
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if let Ok(p) = platform()
+        let socket = self.socket.lock().ok().map(|socket| socket.clone());
+        if let Some(socket) = socket
+            && let Ok(p) = platform()
             && !socket.is_empty()
         {
             p.close(socket);
         }
-        let mut view = self
-            .view
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Ok(mut view) = self.view.lock() else {
+            return;
+        };
         view.position = Self::position(&view);
         view.sampled = Instant::now();
         view.phase = if error.is_some() { "error" } else { "closed" };
@@ -133,14 +126,14 @@ impl Session {
         let _write = self
             .writer
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
         if !self.active() {
             return Err("The Cast session has ended.".into());
         }
         let socket = self
             .socket
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?
             .clone();
         if !socket.is_empty()
             && platform()?.write(socket, protocol::encode(destination, namespace, &payload))
@@ -155,7 +148,7 @@ impl Session {
             let mut view = self
                 .view
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
             view.request += 1;
             view.request
         };
@@ -164,13 +157,8 @@ impl Session {
         Ok(id)
     }
     fn stop_receiver(&self) {
-        let app = self
-            .view
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .app_session
-            .clone();
-        if !app.is_empty() {
+        let app = self.view.lock().ok().map(|view| view.app_session.clone());
+        if let Some(app) = app.filter(|app| !app.is_empty()) {
             let _ = self.request(
                 "receiver-0",
                 RECEIVER,
@@ -188,7 +176,7 @@ impl Session {
             let mut view = self
                 .view
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
             if view.phase == "ended" && matches!(action, "play" | "seek") {
                 let position = if action == "play" {
                     0.0
@@ -213,7 +201,7 @@ impl Session {
                 let media = self
                     .metadata
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .map_err(|_| "Cast state is unavailable. Restart GoVue.")?
                     .clone();
                 return self.send(&destination,MEDIA,json!({"type":"LOAD","requestId":id,"media":media,"autoplay":true,"currentTime":position}));
             }
@@ -222,7 +210,7 @@ impl Session {
             let mut view = self
                 .view
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
             let media = view.media_session.ok_or("The receiver is still loading.")?;
             let mut message = match action {
                 "play" => json!({"type":"PLAY"}),
@@ -260,39 +248,40 @@ impl Session {
 fn idle() -> Value {
     json!({"available":available(),"active":false,"id":null,"phase":"closed","acknowledged":false})
 }
-fn current() -> Option<Arc<Session>> {
-    CURRENT
+fn current() -> Result<Option<Arc<Session>>> {
+    Ok(CURRENT
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+        .map_err(|_| "Cast state is unavailable. Restart GoVue.")?
+        .clone())
 }
-fn stop_all() {
-    if let Some(session) = current() {
+fn stop_all() -> Result<()> {
+    if let Some(session) = current()? {
         session.stop_receiver();
     }
     if let Ok(p) = platform() {
         let _ = p.activity(false);
     }
+    Ok(())
 }
 pub(super) fn dispatch(command: &Value) -> Result<Value> {
     match command["op"].as_str().unwrap_or("") {
-        "cast_status" => Ok(current().map_or_else(idle, |s| s.snapshot())),
+        "cast_status" => current()?.map_or_else(|| Ok(idle()), |s| s.snapshot()),
         "cast_stop_all" => {
             let _change = CHANGE
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            stop_all();
+                .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
+            stop_all()?;
             Ok(idle())
         }
         "cast_stop" => {
             let _change = CHANGE
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
             if let Some(session) =
-                current().filter(|s| Some(s.id.as_str()) == command["id"].as_str())
+                current()?.filter(|s| Some(s.id.as_str()) == command["id"].as_str())
             {
-                stop_all();
-                Ok(session.snapshot())
+                stop_all()?;
+                session.snapshot()
             } else {
                 Ok(idle())
             }
@@ -300,24 +289,24 @@ pub(super) fn dispatch(command: &Value) -> Result<Value> {
         "cast_sync" => {
             let _change = CHANGE
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if current().is_some_and(|s| {
+                .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
+            if current()?.is_some_and(|s| {
                 s.active() && Some(s.video_id.as_str()) != command["videoId"].as_str()
             }) {
-                stop_all();
+                stop_all()?;
             }
-            Ok(current().map_or_else(idle, |s| s.snapshot()))
+            current()?.map_or_else(|| Ok(idle()), |s| s.snapshot())
         }
         "cast_control" => {
-            let session = current()
+            let session = current()?
                 .filter(|s| s.active() && Some(s.id.as_str()) == command["id"].as_str())
                 .ok_or("The Cast session has ended.")?;
             session.control(command)?;
-            Ok(session.snapshot())
+            session.snapshot()
         }
         "cast_start" => start(command),
         "cast_replace" => {
-            let owner = current()
+            let owner = current()?
                 .filter(|s| s.active() && !s.link && Some(s.id.as_str()) == command["id"].as_str())
                 .ok_or("The Cast session has ended.")?;
             let mut next = command.clone();
@@ -331,9 +320,9 @@ pub(super) fn dispatch(command: &Value) -> Result<Value> {
 fn start(command: &Value) -> Result<Value> {
     let _change = CHANGE
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
     if command["op"] == "cast_replace"
-        && !current().is_some_and(|s| s.active() && Some(s.id.as_str()) == command["id"].as_str())
+        && !current()?.is_some_and(|s| s.active() && Some(s.id.as_str()) == command["id"].as_str())
     {
         return Err("The Cast session has ended.".into());
     }
@@ -364,7 +353,7 @@ fn start(command: &Value) -> Result<Value> {
         Some((receiver, port))
     };
     let id = random()?;
-    stop_all();
+    stop_all()?;
     if !p.activity(true) {
         return Err("Open GoVue and enable notifications before starting Cast.".into());
     }
@@ -421,7 +410,7 @@ fn start(command: &Value) -> Result<Value> {
     });
     *CURRENT
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session.clone());
+        .map_err(|_| "Cast state is unavailable. Restart GoVue.")? = Some(session.clone());
     let work = session.clone();
     let command = command.clone();
     thread::spawn(move || {
@@ -462,10 +451,10 @@ fn start(command: &Value) -> Result<Value> {
             }
             if !session.link {
                 let (timeout, poll, destination) = {
-                    let mut v = session
-                        .view
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let Some(mut v) = session.view.lock().ok() else {
+                        session.finish(Some("Cast state is unavailable. Restart GoVue."));
+                        break;
+                    };
                     let timeout = if matches!(v.phase, "connecting" | "loading") {
                         v.waiting.elapsed() > Duration::from_secs(20)
                     } else {
@@ -505,16 +494,16 @@ fn start(command: &Value) -> Result<Value> {
         while weak.upgrade().is_some_and(|s| s.active()) {
             thread::sleep(Duration::from_secs(1));
         }
-        let _change = CHANGE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !current().is_some_and(|s| s.active())
+        let Ok(_change) = CHANGE.lock() else {
+            return;
+        };
+        if current().is_ok_and(|session| !session.is_some_and(|s| s.active()))
             && let Ok(p) = platform()
         {
             let _ = p.activity(false);
         }
     });
-    Ok(session.snapshot())
+    session.snapshot()
 }
 #[allow(
     clippy::float_cmp,
@@ -536,7 +525,7 @@ fn run(
         let mut view = session
             .view
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
         view.duration = bundle.duration;
         view.position = view.position.min(bundle.duration);
         view.position
@@ -547,7 +536,7 @@ fn run(
             let mut view = session
                 .view
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
             view.phase = "connecting";
             view.waiting = Instant::now();
         }
@@ -558,7 +547,7 @@ fn run(
         (*session
             .socket
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner))
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?)
         .clone_from(&socket);
         if !session.active() {
             platform()?.close(socket);
@@ -574,7 +563,7 @@ fn run(
         let mut current = session
             .transport
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
         if !session.active() {
             transport.close();
             return Ok(());
@@ -585,7 +574,7 @@ fn run(
         session
             .view
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?
             .phase = "shared";
         return Ok(());
     }
@@ -593,7 +582,7 @@ fn run(
     *session
         .metadata
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = metadata.clone();
+        .map_err(|_| "Cast state is unavailable. Restart GoVue.")? = metadata.clone();
     session.send(
         "receiver-0",
         CONNECTION,
@@ -603,7 +592,7 @@ fn run(
     let socket = session
         .socket
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "Cast state is unavailable. Restart GoVue.")?
         .clone();
     while session.active() {
         let frame = platform()?.read(socket.clone());
@@ -620,7 +609,7 @@ fn run(
         let mut view = session
             .view
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "Cast state is unavailable. Restart GoVue.")?;
         if message.source != "receiver-0" && message.source != view.transport_id {
             continue;
         }

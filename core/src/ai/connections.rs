@@ -112,23 +112,23 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
     {
         let _g = CONFIG_LOCK
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         if let Some(old) = config(root)?.providers.iter().find(|v| v.id == p.id) {
             if old.kind != p.kind {
                 return Err("Add a separate connection to change its provider type.".into());
             }
             if changed(old, &p) || (old.enabled && !p.enabled) || key.is_some() {
-                cancel_owner(&p.id);
+                cancel_owner(&p.id)?;
             }
         }
     }
-    let lock = session(&p.id);
+    let lock = session(&p.id)?;
     let _session = lock
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let _g = CONFIG_LOCK
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let mut cfg = config(root)?;
     let old = cfg.providers.iter().find(|v| v.id == p.id).cloned();
     let auth_changed = old
@@ -142,7 +142,7 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
             p.models.clone_from(&old.models);
         }
         if changed(old, &p) || (old.enabled && !p.enabled) || key.is_some() {
-            cancel_owner(&p.id);
+            cancel_owner(&p.id)?;
         }
     } else if cfg.providers.len() >= 32 {
         return Err("At most 32 providers can be saved.".into());

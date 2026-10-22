@@ -48,7 +48,7 @@ pub(super) fn update(job: &Arc<Job>, call: &Value) -> Result<Value> {
     job.pending()?;
     job.activity
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
         .plan(update.plan, update.explanation)?;
     Ok(json!({"message":"Plan updated."}))
 }

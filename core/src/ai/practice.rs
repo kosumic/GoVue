@@ -114,7 +114,7 @@ fn all(root: &Path) -> Result<Vec<games::Game>> {
 pub(super) fn capture(root: &Path, game: &games::Game) -> Result<games::Game> {
     let _guard = LIBRARY
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     if let Some(saved) = read_game(root, &game.id)? {
         return Ok(saved);
     }
@@ -138,7 +138,7 @@ pub(super) fn capture(root: &Path, game: &games::Game) -> Result<games::Game> {
 pub(super) fn restore(root: &Path, game: &mut games::Game) -> Result<()> {
     let _guard = LIBRARY
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     if let Some(saved) = read_game(root, &game.id)? {
         *game = saved;
     }
@@ -147,7 +147,7 @@ pub(super) fn restore(root: &Path, game: &mut games::Game) -> Result<()> {
 pub(super) fn apply(root: &Path, command: &Value) -> Result<Value> {
     let _guard = LIBRARY
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let mut game = read_game(root, string(command, "gameId")?)?
         .ok_or("This saved game is no longer available.")?;
     let notify = game.apply(command)?;
@@ -291,7 +291,7 @@ pub(super) fn audio(command: &Value, root: &Path) -> Result<Value> {
     let (source, cue) = {
         let _guard = LIBRARY
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let game = read_game(root, string(command, "gameId")?)?
             .ok_or("This saved game is no longer available.")?;
         let source = game.source.ok_or("This activity has no original video.")?;
@@ -317,7 +317,7 @@ pub(super) fn dispatch(command: &Value, root: &Path) -> Result<Value> {
     }
     let _guard = LIBRARY
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let mut state = session(root)?;
     match string(command, "op")? {
         "ai_practice_catalog" => catalog(command, root, &state),

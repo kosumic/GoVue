@@ -115,7 +115,7 @@ pub(crate) fn dispatch(request: &str) -> Result<Value> {
     }
     let mut active = ACTIVE
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     if op == "begin" {
         if string(&c, "draft")?.encode_utf16().count() >= DRAFT_UNITS {
             return Err(

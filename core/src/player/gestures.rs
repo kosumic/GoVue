@@ -95,7 +95,7 @@ pub(super) fn double_tap(command: &Value) -> Result<Value> {
     let duration = number(command, "duration", 604_800.0)?.max(0.0);
     let mut guard = TAPS
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     let taps = guard.get_or_insert_with(SeekTaps::default);
     if taps.owner != owner
         || taps.video_id != id

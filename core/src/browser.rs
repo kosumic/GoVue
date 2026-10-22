@@ -463,7 +463,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let mut browsers = BROWSERS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     let browser = browsers.entry(root.into()).or_default();
     let previous = (
         browser.active,

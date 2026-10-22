@@ -90,7 +90,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
         }
         "downloads_restore" => {
-            super::transfer::reset(root);
+            super::transfer::reset(root)?;
             for entry in &mut entries {
                 if matches!(
                     entry["state"].as_str(),

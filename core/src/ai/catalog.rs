@@ -385,13 +385,13 @@ pub(super) fn operation(op: &str) -> bool {
 }
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     let op = string(&c, "op")?;
-    let lock = session(c["id"].as_str().unwrap_or("catalog"));
+    let lock = session(c["id"].as_str().unwrap_or("catalog"))?;
     let _lock = lock
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let _g = CONFIG_LOCK
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let mut cfg = config(&root)?;
     match op {
         "ai_reasoning_options" => return reasoning_options(&cfg, &c),

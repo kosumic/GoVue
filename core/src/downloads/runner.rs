@@ -214,11 +214,16 @@ fn ensure(root: &str) -> Result<Arc<Runner>> {
             notify(&root_owned);
             loop {
                 let _ = schedule(&root_owned, &worker);
-                let guard = worker
-                    .sleep
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                drop(worker.wake.wait_timeout(guard, Duration::from_millis(500)));
+                let Ok(guard) = worker.sleep.lock() else {
+                    break;
+                };
+                if worker
+                    .wake
+                    .wait_timeout(guard, Duration::from_millis(500))
+                    .is_err()
+                {
+                    break;
+                }
             }
         })
         .map_err(|_| "Could not start downloads.")?;

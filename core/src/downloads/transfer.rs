@@ -72,17 +72,19 @@ impl Transfer {
     }
 }
 static TRANSFERS: OnceLock<Mutex<HashMap<String, Arc<Transfer>>>> = OnceLock::new();
-pub(super) fn configure(root: &str, wifi_only: bool) {
+pub(super) fn configure(root: &str, wifi_only: bool) -> Result<()> {
     let transfers = TRANSFERS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Download state is unavailable. Restart GoVue.")?;
     for (key, transfer) in transfers.iter() {
         if key.starts_with(&format!("{root}/")) {
             transfer.wifi_only.store(wifi_only, Ordering::Release);
             transfer.wake.notify_all();
         }
     }
+    drop(transfers);
+    Ok(())
 }
 fn cleanup(transfer: Arc<Transfer>) {
     thread::spawn(move || {
@@ -94,11 +96,11 @@ fn cleanup(transfer: Arc<Transfer>) {
         }
     });
 }
-pub(super) fn reset(root: &str) {
+pub(super) fn reset(root: &str) -> Result<()> {
     let mut transfers = TRANSFERS
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .map_err(|_| "Download state is unavailable. Restart GoVue.")?;
     transfers.retain(|key, transfer| {
         if !key.starts_with(&format!("{root}/")) {
             return true;
@@ -124,6 +126,7 @@ pub(super) fn reset(root: &str) {
             }
         }
     }
+    Ok(())
 }
 pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let id = string(command, "id")?;
@@ -231,14 +234,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 }
                 Ok(())
             })();
-            if let Err(error) = result {
-                let mut stored = transfer
-                    .error
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if stored.is_none() {
-                    *stored = Some(error);
-                }
+            if let Err(error) = result
+                && let Ok(mut stored) = transfer.error.lock()
+            {
+                stored.get_or_insert(error);
             }
             transfer.done.store(true, Ordering::Release);
         });
@@ -353,10 +352,9 @@ fn copy_part(
                     return;
                 };
                 failed.store(true, Ordering::Relaxed);
-                t.error
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get_or_insert(error);
+                if let Ok(mut stored) = t.error.lock() {
+                    stored.get_or_insert(error);
+                }
             });
         }
     });
@@ -364,9 +362,53 @@ fn copy_part(
         return Err(transfer
             .error
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "Download state is unavailable. Restart GoVue.")?
             .clone()
             .unwrap_or_else(|| "Download failed.".into()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poisoned_worker_error_is_reported_without_recovering_partial_state() {
+        let transfer = Transfer {
+            paused: Mutex::new(false),
+            wifi_only: AtomicBool::new(false),
+            wake: Condvar::new(),
+            cancelled: AtomicBool::new(true),
+            done: AtomicBool::new(false),
+            received: AtomicU64::new(0),
+            total: 16,
+            error: Mutex::new(None),
+            files: Vec::new(),
+            cover: None,
+        };
+        crate::poison(&transfer.error);
+        let source = DownloadSource::new(
+            &json!({
+                "url":"https://fixture.googlevideo.com/videoplayback?secret=private",
+                "bytes":16,"mimeType":"video/mp4",
+            }),
+            "fixture",
+            "https://m.youtube.com",
+        )
+        .unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("govue-poison-download-{nonce}"));
+        let result = copy_part(&transfer, &source, path.to_str().unwrap(), 16, 2);
+        fs::remove_file(path).unwrap();
+        assert_eq!(
+            result.unwrap_err(),
+            "Download state is unavailable. Restart GoVue."
+        );
+        assert_eq!(transfer.received.load(Ordering::Relaxed), 0);
+        assert!(transfer.error.is_poisoned());
+    }
 }

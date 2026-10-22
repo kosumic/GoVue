@@ -11,22 +11,24 @@ type Key = (PathBuf, String);
 static CONTROLLERS: OnceLock<Mutex<HashMap<Key, Arc<Mutex<Session>>>>> = OnceLock::new();
 static FEEDBACK: OnceLock<Mutex<HashMap<Key, (String, u64)>>> = OnceLock::new();
 
-pub(super) fn feedback(root: &Path, chat: &str, game: &str, revision: u64) {
+pub(super) fn feedback(root: &Path, chat: &str, game: &str, revision: u64) -> Result<()> {
     FEEDBACK
         .get_or_init(Default::default)
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
         .insert((root.into(), chat.into()), (game.into(), revision));
     crate::changed("chat-feedback");
+    Ok(())
 }
-fn clear_feedback(root: &Path, chat: Option<&str>) {
+fn clear_feedback(root: &Path, chat: Option<&str>) -> Result<()> {
     if let Some(chat) = chat {
         FEEDBACK
             .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?
             .remove(&(root.into(), chat.into()));
     }
+    Ok(())
 }
 fn cancel(session: &mut Session, root: &Path) -> Value {
     let Some(task) = session.task.take() else {
@@ -74,7 +76,7 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
         }
         session.version = version;
         if c["clearFeedback"] == true {
-            clear_feedback(root, c["chatId"].as_str().or(session.chat.as_deref()));
+            clear_feedback(root, c["chatId"].as_str().or(session.chat.as_deref()))?;
         }
         // A view may adopt an already-running saved conversation without sending.
         if session.task.is_none()
@@ -98,7 +100,7 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
         clear_feedback(
             root,
             c["command"]["chatId"].as_str().or(session.chat.as_deref()),
-        );
+        )?;
     }
     let mut command = if c["op"] == "ai_chat_session_feedback" {
         let chat = string(c, "chatId")?;

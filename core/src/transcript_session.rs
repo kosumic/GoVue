@@ -146,7 +146,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         crate::remember(
             crate::cache_path(root, &seed.video_id, &seed.track_id)?,
             &seed,
-        );
+        )?;
         documents.push(json!({"data":seed,"cached":true}));
     }
     let reader = Arc::new(Reader {
