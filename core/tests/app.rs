@@ -62,13 +62,37 @@ fn every_bundled_notice_is_available_through_the_offline_json_boundary() {
     assert_eq!(reply["ok"], true, "{reply}");
     let notices = reply["value"].as_array().unwrap();
     let mut ids = HashSet::new();
+    let mut categories = HashSet::new();
     for notice in notices {
         let id = notice["id"].as_str().unwrap();
         assert!(ids.insert(id), "Duplicate notice {id}");
         assert!(!notice["title"].as_str().unwrap().is_empty());
+        assert!(!notice["license"].as_str().unwrap().is_empty());
+        assert!(!notice["attribution"].as_str().unwrap().is_empty());
+        let source = url::Url::parse(notice["sourceUrl"].as_str().unwrap()).unwrap();
+        assert_eq!(source.scheme(), "https");
+        assert!(source.host_str().is_some());
+        categories.insert(notice["category"].as_str().unwrap());
+        assert!(
+            notice.get("text").is_none(),
+            "License text must be loaded on demand"
+        );
         let content = call(json!({"op":"app_license", "id":id}));
         assert_eq!(content["ok"], true, "{content}");
         assert!(content["value"]["text"].as_str().unwrap().len() > 100);
+    }
+    assert_eq!(categories, HashSet::from(["featured", "npm", "cargo"]));
+    for title in [
+        "LiTube",
+        "lucide-react-native",
+        "react-native",
+        "uniffi",
+        "serde",
+    ] {
+        assert!(
+            notices.iter().any(|notice| notice["title"] == title),
+            "Missing {title}"
+        );
     }
     let gpl = call(json!({"op":"app_license", "id":"govue"}));
     assert_eq!(gpl["value"]["text"], include_str!("../../LICENSE"));

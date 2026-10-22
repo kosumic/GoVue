@@ -1,5 +1,22 @@
 # Third-party components
 
+In the app, open **About → Open-source licenses** for project credits, source
+links, and expandable license texts. These notices are embedded in the shared
+Rust core and can be read offline on Android and iOS.
+
+`dependencies.json` contains generated notices for every direct production npm
+dependency and direct Rust dependency of `govue-core`, resolved for Android and
+iOS. This list covers direct dependencies; additional
+vendored component notices are listed separately below and in the app's credits.
+Development, build, and general transitive dependencies are outside this report.
+
+After updating dependencies, run `npm ci`, then enter `nix develop path:.` and
+run `npm run licenses:generate`. The generator reads license files from the
+installed npm packages and uses `cargo-about` for Rust license texts. Commit the
+updated `dependencies.json`. `npm run check:licenses` (also included in
+`npm run check` and CI) checks the installed npm notices and fingerprints the
+Rust manifests, lockfile, and license configuration to detect stale notices.
+
 The isolated token renderer bundles [BgUtils](https://github.com/LuanRT/BgUtils). Its MIT notice is included here and in the generated JavaScript shipped with the app. The legacy YouTube.js decoder has been removed; its notice is retained for historical attribution.
 
 GoVue is a React Native/Rust port of [HydeYYHH/Litube](https://github.com/HydeYYHH/Litube), based on commit `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f` (2026-10-16). The browser integration scripts under `src/youtube/litube/` are copied or adapted from LiTube, with the page bridge adapted to React Native. Player presentation and state are being ported to shared React Native and Rust. The shared vectors in `src/player/icons.tsx`, including the About mark, are adapted from the same revision’s Android drawables. LiTube's GNU GPL version 3 license is included in `LiTube-GPL-3.0.txt` and the repository `LICENSE`. Original MIT notices for dependencies remain applicable to those components.

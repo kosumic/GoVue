@@ -74,6 +74,9 @@ jobs:
       - name: Check app version configuration
         run: npm run check:app-version
 
+      - name: Check bundled license notices
+        run: npm run check:licenses
+
       - name: Test JavaScript and browser behavior
         run: npm test
 

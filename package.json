@@ -32,12 +32,14 @@
     "core:ios": "node scripts/build-core.ts ios",
     "prebuild:ios": "npm run core:ios && expo prebuild --platform ios",
     "check:app-version": "node scripts/check-app-version.cjs",
+    "licenses:generate": "node scripts/license-notices.ts --write",
+    "check:licenses": "node scripts/license-notices.ts",
     "test": "node --test tests/*.test.*",
     "test:ios-http": "node scripts/test-ios-http.ts",
     "fmt:core": "cargo fmt --all --check",
     "lint:core": "cargo clippy --locked --workspace --all-targets -- -D warnings",
     "test:core": "cargo test --locked -p govue-core",
-    "check": "npm run check:app-version && npm run lint && npm run typecheck && npm test && npm run fmt:core && npm run lint:core && npm run test:core"
+    "check": "npm run check:app-version && npm run check:licenses && npm run lint && npm run typecheck && npm test && npm run fmt:core && npm run lint:core && npm run test:core"
   },
   "dependencies": {
     "@react-native-clipboard/clipboard": "1.16.3",

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Alert, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, AtSign, ChevronDown, ChevronRight, CodeXml, Download, ExternalLink, FileDown, FileText, RefreshCw, Scale, Share2, Trash2 } from 'lucide-react-native';
+import { ActivityIndicator, Alert, Image, Linking, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { AtSign, ChevronDown, ChevronRight, CodeXml, Download, ExternalLink, FileDown, FileText, RefreshCw, Scale, Share2, Trash2 } from 'lucide-react-native';
 import { coreRequest } from '../../modules/govue-core';
 import { version as appVersion } from '../../package.json';
-import { checkAppUpdate, DEVELOPER_URL, LATEST_RELEASE_URL, REPOSITORY_URL, WHIP_DOWNLOAD_URL, type AppUpdate, type LicenseNotice } from '../core/app';
+import { checkAppUpdate, DEVELOPER_URL, LATEST_RELEASE_URL, REPOSITORY_URL, WHIP_DOWNLOAD_URL, type AppUpdate } from '../core/app';
 import { useHaptic } from '../player/Haptics';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
+import { LicenseReader } from './LicenseReader';
 
 function run(action: () => Promise<unknown>) {
   void action().catch(error => Alert.alert('GoVue', error instanceof Error ? error.message : 'Please try again.'));
@@ -156,58 +156,8 @@ export function AboutContent({ onClearCache, onExportDiagnostics }: {
         icon={<FileDown size={23} color={colors.ink} />} onPress={() => run(() => onExportDiagnostics(false))} />
       {!!notice && <Text accessibilityLiveRegion="polite" style={s.status}>{notice}</Text>}
     </Section>
-    <LicenseReader visible={licensesOpen} onClose={() => setLicensesOpen(false)} />
+    {licensesOpen && <LicenseReader onClose={() => setLicensesOpen(false)} />}
   </>;
-}
-
-function LicenseReader({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const colors = useThemeColors();
-  const s = useThemeStyles(makeStyles);
-  const insets = useSafeAreaInsets();
-  const [notices, setNotices] = useState<LicenseNotice[]>([]);
-  const [selected, setSelected] = useState<LicenseNotice | null>(null);
-  const [text, setText] = useState('');
-  const [error, setError] = useState('');
-  const scroll = useRef<ScrollView>(null);
-
-  useEffect(() => {
-    if (!visible) return;
-    let active = true;
-    setError(''); setText('');
-    scroll.current?.scrollTo({ y: 0, animated: false });
-    if (selected) {
-      void coreRequest<{ text: string }>({ op: 'app_license', id: selected.id })
-        .then(result => { if (active) setText(result.text); })
-        .catch(() => { if (active) setError('Could not load this license. Close it and try again.'); });
-    } else {
-      void coreRequest<LicenseNotice[]>({ op: 'app_licenses' })
-        .then(result => { if (active) setNotices(result); })
-        .catch(() => { if (active) setError('Could not load license notices. Close and try again.'); });
-    }
-    return () => { active = false; };
-  }, [selected, visible]);
-  const back = () => { if (selected) setSelected(null); else onClose(); };
-
-  return <Modal visible={visible} onRequestClose={back} onDismiss={() => setSelected(null)}>
-    <View style={[s.licensePage, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <View style={s.licenseHeading}>
-        <Pressable accessibilityRole="button" accessibilityLabel={selected ? 'Back to licenses' : 'Back to About'}
-          style={({ pressed }) => [s.back, pressed && s.pressed]} onPress={back}>
-          <ArrowLeft size={24} color={colors.ink} />
-        </Pressable>
-        <Text accessibilityRole="header" style={s.licenseTitle}>{selected?.title || 'Open-source licenses'}</Text>
-      </View>
-      <ScrollView ref={scroll} contentContainerStyle={s.licenseBody}>
-        {error ? <Text accessibilityLiveRegion="polite" style={s.status}>{error}</Text>
-          : selected ? text ? <Text selectable style={s.licenseText}>{text}</Text> : <ActivityIndicator color={colors.action} />
-            : <>
-              <Text style={s.licenseIntro}>GoVue is free software under the GNU General Public License v3.0. These notices are bundled with the app and available offline.</Text>
-              {notices.map(notice => <AboutAction key={notice.id} title={notice.title} detail={notice.license}
-                icon={<Scale size={23} color={colors.ink} />} onPress={() => setSelected(notice)} />)}
-            </>}
-      </ScrollView>
-    </View>
-  </Modal>;
 }
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
@@ -230,11 +180,4 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   share: { width: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator, borderRadius: 8 },
   status: { color: colors.muted, fontSize: 13, lineHeight: 20, paddingHorizontal: 4, paddingVertical: 10 },
-  licensePage: { flex: 1, backgroundColor: colors.background },
-  licenseHeading: { flexDirection: 'row', alignItems: 'center', paddingRight: 16 },
-  back: { width: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  licenseTitle: { flex: 1, color: colors.ink, fontSize: 20, lineHeight: 28, fontWeight: '500', paddingVertical: 12 },
-  licenseBody: { padding: 16, paddingBottom: 32, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  licenseIntro: { color: colors.muted, fontSize: 14, lineHeight: 22, marginBottom: 20 },
-  licenseText: { color: colors.ink, fontSize: 13, lineHeight: 21 },
 });

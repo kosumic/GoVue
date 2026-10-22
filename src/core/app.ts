@@ -6,7 +6,11 @@ export const DEVELOPER_URL = 'https://x.com/Kosumi1989';
 export const WHIP_DOWNLOAD_URL = 'https://kosumic.github.io/whip/';
 
 export type AppUpdate = { latestVersion: string; updateAvailable: boolean };
-export type LicenseNotice = { id: string; title: string; license: string };
+export type LicenseNotice = {
+  id: string; title: string; license: string;
+  category: 'featured' | 'npm' | 'cargo';
+  sourceUrl: string; attribution: string;
+};
 
 // HTTPS is a platform effect; release validation and version policy stay in Rust.
 export async function checkAppUpdate(installedVersion: string, signal: AbortSignal): Promise<AppUpdate> {
