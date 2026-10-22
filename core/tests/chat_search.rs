@@ -84,6 +84,136 @@ fn history_searches_titles_and_message_text_without_exposing_prepared_context() 
 }
 
 #[test]
+fn history_index_lists_and_searches_metadata_without_opening_message_records() {
+    let store = Store::new();
+    store.write(
+        "older",
+        "French lesson",
+        1,
+        &["Private prompt", "Private reply"],
+    );
+    store.write(
+        "newer",
+        "Vocabulary",
+        2,
+        &["A question", "Searchable answer"],
+    );
+    let expected = store.ok(json!({"op":"ai_chats"}));
+    let index = fs::read_to_string(store.0.join("ai/chat-index.json")).unwrap();
+    assert!(!index.contains("messages"));
+    assert!(!index.contains("Private prompt"));
+    assert!(!index.contains("hidden provider context"));
+    // Cached listing must still work when a body cannot be decoded. Opening
+    // that chat continues to validate the full saved record independently.
+    fs::write(store.0.join("ai/chats/older.json"), "unreadable body").unwrap();
+    assert_eq!(store.ok(json!({"op":"ai_chats"})), expected);
+    assert_eq!(
+        store.call(json!({"op":"ai_chat_get","chatId":"older"}))["ok"],
+        false
+    );
+    let titles = store.ok(json!({"op":"ai_chats","query":"French"}));
+    assert_eq!(titles["chats"][0]["id"], "older");
+    assert_eq!(titles["chats"][0]["searchMatch"]["matched"], "French");
+    let content = store.ok(json!({"op":"ai_chats","query":"Searchable"}));
+    assert_eq!(content["chats"].as_array().unwrap().len(), 1);
+    assert_eq!(content["chats"][0]["searchMatch"]["messageId"], "newer_1");
+}
+
+#[test]
+fn history_index_recovers_save_and_delete_when_index_commit_fails() {
+    let store = Store::new();
+    store.write("chat", "Original", 1, &["A question", "A reply"]);
+    store.ok(json!({"op":"ai_chats"}));
+    let blocked = store.0.join("ai/chat-index.json.tmp");
+    let dirty = store.0.join("ai/chat-index.dirty");
+    fs::create_dir(&blocked).unwrap();
+    // The body commits but replacing the index fails. A later reader must
+    // rebuild from the committed body rather than return the stale index.
+    assert_eq!(
+        store.call(
+            json!({"op":"ai_chat_update","chatId":"chat","title":"Committed title","pinned":true})
+        )["ok"],
+        false
+    );
+    assert!(dirty.exists());
+    assert_eq!(
+        store.ok(json!({"op":"ai_chat_get","chatId":"chat"}))["title"],
+        "Committed title"
+    );
+    fs::remove_dir(&blocked).unwrap();
+    let listed = store.ok(json!({"op":"ai_chats"}));
+    assert_eq!(listed["chats"][0]["title"], "Committed title");
+    assert_eq!(listed["chats"][0]["pinned"], true);
+    assert!(!dirty.exists());
+
+    fs::create_dir(&blocked).unwrap();
+    assert_eq!(
+        store.call(json!({"op":"ai_chat_delete","chatId":"chat"}))["ok"],
+        false
+    );
+    assert!(dirty.exists());
+    assert!(!store.0.join("ai/chats/chat.json").exists());
+    fs::remove_dir(&blocked).unwrap();
+    assert_eq!(store.ok(json!({"op":"ai_chats"}))["chats"], json!([]));
+    assert!(!dirty.exists());
+    store.ok(json!({"op":"ai_chat_delete","chatId":"chat"}));
+}
+
+#[test]
+fn failed_body_write_does_not_publish_uncommitted_metadata() {
+    let store = Store::new();
+    store.write("chat", "Original", 1, &["A question", "A reply"]);
+    store.ok(json!({"op":"ai_chats"}));
+    fs::create_dir(store.0.join("ai/chats/chat.json.tmp")).unwrap();
+    assert_eq!(
+        store.call(json!({"op":"ai_chat_update","chatId":"chat","title":"Uncommitted title"}))["ok"],
+        false
+    );
+    assert_eq!(
+        store.ok(json!({"op":"ai_chats"}))["chats"][0]["title"],
+        "Original"
+    );
+    assert_eq!(
+        store.ok(json!({"op":"ai_chat_get","chatId":"chat"}))["title"],
+        "Original"
+    );
+    assert!(!store.0.join("ai/chat-index.dirty").exists());
+}
+
+#[test]
+fn history_index_rebuilds_missing_invalid_oversized_and_interrupted_indexes() {
+    let store = Store::new();
+    store.write("chat", "Original", 1, &["A question", "A reply"]);
+    store.ok(json!({"op":"ai_chats"}));
+    let path = store.0.join("ai/chat-index.json");
+    let stale = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        store.ok(json!({"op":"ai_chats"}))["chats"][0]["title"],
+        "Original"
+    );
+    for invalid in [
+        "unreadable index".to_owned(),
+        json!({"version":0,"chats":[]}).to_string(),
+        " ".repeat(1_000_001),
+    ] {
+        fs::write(&path, invalid).unwrap();
+        assert_eq!(
+            store.ok(json!({"op":"ai_chats"}))["chats"][0]["title"],
+            "Original"
+        );
+    }
+    // Simulate a restart after the record committed and before index commit.
+    store.write("chat", "After interruption", 2, &["A question", "A reply"]);
+    fs::write(&path, stale).unwrap();
+    fs::write(store.0.join("ai/chat-index.dirty"), "1").unwrap();
+    let listed = store.ok(json!({"op":"ai_chats"}));
+    assert_eq!(listed["chats"][0]["title"], "After interruption");
+    assert_eq!(listed["chats"][0]["updatedAt"], 2);
+    assert!(!store.0.join("ai/chat-index.dirty").exists());
+}
+
+#[test]
 fn find_is_literal_unicode_safe_and_retains_selection_across_new_messages() {
     let store = Store::new();
     store.write("chat", "Find", 1, &["😀 İSTANBUL a.b", "A.B and aXb"]);

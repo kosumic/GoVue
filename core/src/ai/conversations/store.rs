@@ -4,10 +4,13 @@ use crate::ai::{MAX_OUTPUT, activity, catalog, games, jobs, practice, usage, val
 use crate::{Error, Result};
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::atomic::Ordering,
 };
+
+mod index;
+pub(super) use index::{Metadata, list};
 
 pub(super) fn path(root: &Path, id: &str) -> Result<PathBuf> {
     if !valid_id(id) {
@@ -138,21 +141,49 @@ pub(super) fn save(root: &Path, chat: &Conversation) -> Result<()> {
     if bytes.len() > MAX_CHAT {
         return Err("This chat is full. Start a new chat to continue.".into());
     }
-    let target = path(root, &chat.id)?;
-    fs::create_dir_all(target.parent().ok_or("Invalid chat storage path.")?).map_err(|cause| {
-        Error::caused_by(
-            "Could not save chat history.",
-            "create chat directory",
-            cause,
-        )
-    })?;
-    let temp = target.with_extension("tmp");
-    fs::write(&temp, bytes).map_err(|cause| {
-        Error::caused_by("Could not save chat history.", "write saved chat", cause)
-    })?;
-    fs::rename(temp, target).map_err(|cause| {
-        Error::caused_by("Could not save chat history.", "commit saved chat", cause)
+    index::update(root, &chat.id, Some(Metadata::from(chat)), || {
+        atomic_write(&path(root, &chat.id)?, &bytes)
     })
+}
+
+pub(super) fn delete(root: &Path, id: &str) -> Result<()> {
+    let target = path(root, id)?;
+    index::update(root, id, None, || match fs::remove_file(&target) {
+        Ok(()) => sync_directory(target.parent().ok_or("Invalid chat storage path.")?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(cause) => Err(Error::caused_by(
+            "Could not delete this chat.",
+            "delete saved chat",
+            cause,
+        )),
+    })
+}
+
+fn storage_error(cause: std::io::Error) -> Error {
+    Error::caused_by("Could not save chat history.", "commit chat storage", cause)
+}
+
+fn sync_directory(dir: &Path) -> Result<()> {
+    fs::File::open(dir)
+        .and_then(|file| file.sync_all())
+        .map_err(storage_error)
+}
+
+fn atomic_write(target: &Path, bytes: &[u8]) -> Result<()> {
+    let dir = target.parent().ok_or("Invalid chat storage path.")?;
+    fs::create_dir_all(dir).map_err(storage_error)?;
+    let temp = target.with_file_name(format!(
+        "{}.tmp",
+        target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid chat storage path.")?
+    ));
+    let mut file = fs::File::create(&temp).map_err(storage_error)?;
+    file.write_all(bytes).map_err(storage_error)?;
+    file.sync_all().map_err(storage_error)?;
+    fs::rename(temp, target).map_err(storage_error)?;
+    sync_directory(dir)
 }
 pub(super) fn running(id: &str) -> Result<bool> {
     let all = jobs()
@@ -210,7 +241,7 @@ pub(super) fn recover(root: &Path, chat: &mut Conversation) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn list(root: &Path) -> Result<Vec<Conversation>> {
+fn ids(root: &Path) -> Result<Vec<String>> {
     let dir = root.join("ai/chats");
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -223,15 +254,28 @@ pub(super) fn list(root: &Path) -> Result<Vec<Conversation>> {
             ));
         }
     };
-    let mut rows = Vec::new();
+    let mut ids = Vec::new();
     for entry in entries.take(MAX_CHATS * 2).flatten() {
         let p = entry.path();
         if p.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        if let Some(id) = p.file_stem().and_then(|s| s.to_str())
-            && let Ok(mut chat) = read(root, id)
+        if let Some(id) = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|id| valid_id(id))
         {
+            ids.push(id.to_owned());
+        }
+    }
+    Ok(ids)
+}
+
+// Only operations that need message bodies use this path.
+pub(super) fn load_all(root: &Path) -> Result<Vec<Conversation>> {
+    let mut rows = Vec::new();
+    for id in ids(root)? {
+        if let Ok(mut chat) = read(root, &id) {
             recover(root, &mut chat)?;
             rows.push(chat);
         }

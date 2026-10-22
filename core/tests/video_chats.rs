@@ -394,6 +394,8 @@ fn video_chats_are_created_empty_reused_and_keep_context_across_models() {
     legacy["updatedAt"] = json!(u64::MAX);
     let legacy_path = root.join("ai/chats/legacy_duplicate.json");
     fs::write(&legacy_path, legacy.to_string()).unwrap();
+    // Simulate migration from a history created before the metadata index.
+    fs::remove_file(root.join("ai/chat-index.json")).unwrap();
     let visible = ok(root, json!({"op":"ai_chats"}));
     let rows = visible["chats"].as_array().unwrap();
     assert_eq!(rows.iter().filter(|row| row["videoId"] == video).count(), 1);

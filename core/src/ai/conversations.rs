@@ -9,13 +9,13 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::{fs, thread};
+use std::thread;
 
 const MAX_CHAT: usize = 4_000_000;
 const MAX_CHATS: usize = 100;
 
 mod store;
-use store::{list, path, read, recover, save};
+use store::{Metadata, list, load_all, path, read, recover, save};
 static CHATS: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -180,7 +180,7 @@ fn refresh_games(chat: &Conversation) -> Result<()> {
     }
     Ok(())
 }
-fn visible_chats(root: &Path) -> Result<Vec<Conversation>> {
+fn visible_chats(root: &Path) -> Result<Vec<Metadata>> {
     let rows = list(root)?;
     let bound: std::collections::HashSet<_> = rows
         .iter()
@@ -266,7 +266,9 @@ fn open_video(root: &Path, c: &Value) -> Result<Conversation> {
             })
     };
     let mut chat = if let Some(chat) = existing {
-        chat.clone()
+        let mut chat = read(root, &chat.id)?;
+        recover(root, &mut chat)?;
+        chat
     } else {
         if rows.len() >= MAX_CHATS {
             return Err("Chat history is full. Delete an older chat first.".into());
@@ -1143,7 +1145,7 @@ fn usage_report(command: &Value, root: &Path) -> Result<Value> {
         .get("chatId")
         .map(|v| v.as_str().ok_or("Invalid conversation identity."))
         .transpose()?;
-    let chats = list(root)?;
+    let chats = load_all(root)?;
     if selected.is_some_and(|id| !chats.iter().any(|chat| chat.id == id)) {
         return Err("This chat is no longer available.".into());
     }
@@ -1295,6 +1297,61 @@ fn speech_hints(c: &Value, root: &Path) -> Result<Value> {
     Ok(json!(crate::speech::hints(texts, std::iter::empty())))
 }
 
+fn chat_list(c: &Value, root: &Path) -> Result<Value> {
+    let query = search::query(c)?;
+    let archived = c.get("archived").map_or(Ok(false), |value| {
+        value.as_bool().ok_or("Invalid archive filter.")
+    })?;
+    let mut rows = {
+        let _guard = CHATS
+            .lock()
+            .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
+        visible_chats(root)?
+    };
+    rows.sort_by_key(|chat| !chat.pinned);
+    let mut chats = Vec::new();
+    for chat in rows.iter().filter(|chat| chat.archived == archived) {
+        let mut hit = None;
+        if !query.is_empty() {
+            hit = search::first(&chat.title, &query).or_else(|| {
+                chat.transcript
+                    .as_ref()
+                    .and_then(|t| search::first(&t.title, &query))
+            });
+            if hit.is_none() {
+                // Content search is bounded to one MAX_CHAT record at a time.
+                // Release CHATS before scanning text and between record reads so
+                // saves/deletes never wait for an entire history search.
+                let saved = {
+                    let _guard = CHATS
+                        .lock()
+                        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
+                    if let Ok(mut saved) = read(root, &chat.id) {
+                        recover(root, &mut saved)?;
+                        Some(saved)
+                    } else {
+                        None
+                    }
+                };
+                hit = saved.as_ref().and_then(|saved| {
+                    saved.messages.iter().find_map(|message| {
+                        search::first(&message.content, &query).map(|mut hit| {
+                            hit.message_id = Some(message.id.clone());
+                            hit.role = Some(message.role.clone());
+                            hit
+                        })
+                    })
+                });
+            }
+            if hit.is_none() {
+                continue;
+            }
+        }
+        chats.push(json!({"id":chat.id,"videoId":chat.video_id.as_ref().or_else(|| chat.transcript.as_ref().map(|t| &t.video_id)),"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title),"pinned":chat.pinned,"archived":chat.archived,"searchMatch":hit}));
+    }
+    Ok(json!({"query":query,"chats":chats}))
+}
+
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     if string(&c, "op")?.starts_with("ai_practice_") {
         if matches!(
@@ -1309,7 +1366,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             let _guard = CHATS
                 .lock()
                 .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-            for chat in list(&root)? {
+            for chat in load_all(&root)? {
                 for game in chat.messages.iter().flat_map(|m| &m.games) {
                     practice::capture(&root, game)?;
                 }
@@ -1326,6 +1383,9 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     if c["op"] == "ai_chat_audio" {
         return transcript_audio(&c, &root);
     }
+    if c["op"] == "ai_chats" {
+        return chat_list(&c, &root);
+    }
     let _g = CHATS
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
@@ -1334,28 +1394,6 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         "ai_game_export" => game_export(&c, &root),
         "ai_chat_speech_hints" => speech_hints(&c, &root),
         "ai_usage" => usage_report(&c, &root),
-        "ai_chats" => {
-            let query = search::query(&c)?;
-            let archived = c.get("archived").map_or(Ok(false), |value| {
-                value.as_bool().ok_or("Invalid archive filter.")
-            })?;
-            let mut rows = visible_chats(&root)?;
-            rows.sort_by_key(|chat| !chat.pinned);
-            let chats = rows.iter().filter(|chat| chat.archived == archived).filter_map(|chat| {
-                let hit = if query.is_empty() { None } else {
-                    search::first(&chat.title, &query)
-                        .or_else(|| chat.transcript.as_ref().and_then(|t| search::first(&t.title, &query)))
-                        .or_else(|| chat.messages.iter().find_map(|message| {
-                            search::first(&message.content, &query).map(|mut hit| {
-                                hit.message_id = Some(message.id.clone()); hit.role = Some(message.role.clone()); hit
-                            })
-                        }))
-                };
-                if !query.is_empty() && hit.is_none() { return None; }
-                Some(json!({"id":chat.id,"videoId":chat.video_id.as_ref().or_else(|| chat.transcript.as_ref().map(|t| &t.video_id)),"title":chat.title,"providerId":chat.provider_id,"providerLabel":chat.provider_label,"model":chat.model,"updatedAt":chat.updated_at,"videoTitle":chat.transcript.as_ref().map(|t| &t.title),"pinned":chat.pinned,"archived":chat.archived,"searchMatch":hit}))
-            }).collect::<Vec<_>>();
-            Ok(json!({"query":query,"chats":chats}))
-        }
         "ai_chat_update" => {
             let mut chat = read(&root, string(&c, "chatId")?)?;
             if let Some(value) = c.get("title") {
@@ -1451,15 +1489,8 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 job.cancelled.store(true, Ordering::Relaxed);
             }
             replay::forget_chat(&root, id)?;
-            match fs::remove_file(path(&root, id)?) {
-                Ok(()) => Ok(Value::Null),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
-                Err(cause) => Err(crate::Error::caused_by(
-                    "Could not delete this chat.",
-                    "delete saved chat",
-                    cause,
-                )),
-            }
+            store::delete(&root, id)?;
+            Ok(Value::Null)
         }
         _ => Err("Unsupported conversation operation.".into()),
     }
@@ -1479,6 +1510,7 @@ fn parse_reasoning(value: &Value) -> Result<Option<String>> {
 #[cfg(test)]
 mod poison_tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn poisoned_partial_reply_is_never_saved_as_recovered_history() {
