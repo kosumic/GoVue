@@ -90,7 +90,7 @@ pub(super) fn start(command: Value, root: PathBuf) -> Result<Value> {
     }
     let (source, plans, language) = {
         let _guard = crate::REQUEST_LOCK
-            .lock()
+            .lock(c"GoVue core request: word_assistance.start")
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let path = root.to_str().ok_or("Invalid caption storage path.")?;
         let source = crate::vocabulary::word_context(&command, path)?;
@@ -152,7 +152,7 @@ pub(super) fn audio(command: &Value, root: &Path) -> Result<Value> {
     let video_id = string(command, "videoId")?;
     let (start, end, cue) = {
         let _guard = crate::REQUEST_LOCK
-            .lock()
+            .lock(c"GoVue core request: word_assistance.audio")
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let path = root.to_str().ok_or("Invalid caption storage path.")?;
         let timing = crate::vocabulary::word_audio(command, path)?

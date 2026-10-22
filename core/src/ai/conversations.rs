@@ -220,7 +220,7 @@ fn caption(root: &Path, value: &Value) -> Result<Option<TranscriptRef>> {
         return Err("Invalid transcript identity.".into());
     }
     let _g = crate::REQUEST_LOCK
-        .lock()
+        .lock(c"GoVue core request: chat.caption")
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
     let transcript = crate::transcript::load(
         root.to_str().ok_or("Invalid transcript storage path.")?,
@@ -637,7 +637,7 @@ pub(super) fn create_game(job: &Arc<Job>, call: &Value) -> Result<Value> {
     }
     let transcript = if let Some(reference) = &chat.transcript {
         let _guard = crate::REQUEST_LOCK
-            .lock()
+            .lock(c"GoVue core request: chat.create_game")
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         Some(crate::transcript::load(
             root.to_str().ok_or("Invalid storage path.")?,
@@ -818,7 +818,7 @@ fn transcript_audio(c: &Value, root: &Path) -> Result<Value> {
         }
         let track_id = string(c, "trackId")?;
         let _guard = crate::REQUEST_LOCK
-            .lock()
+            .lock(c"GoVue core request: chat.transcript_audio")
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let allowed = crate::transcript::with_transcript(
             root.to_str().ok_or("Invalid transcript storage path.")?,
@@ -1275,7 +1275,7 @@ fn speech_hints(c: &Value, root: &Path) -> Result<Value> {
         }
         // Evicted captions should not prevent dictation using the conversation vocabulary.
         let _g = crate::REQUEST_LOCK
-            .lock()
+            .lock(c"GoVue core request: chat.dictation_hints")
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let hints = crate::transcript::with_transcript(
             root.to_str().ok_or("Invalid transcript storage path.")?,

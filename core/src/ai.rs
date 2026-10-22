@@ -1004,7 +1004,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
             return Err("Invalid transcript identity.".into());
         }
         let _g = crate::REQUEST_LOCK
-            .lock()
+            .lock(c"GoVue core request: ai.transcript_context")
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
         let transcript = crate::transcript::load(
             root.to_str().ok_or("Invalid transcript storage path.")?,

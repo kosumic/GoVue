@@ -482,7 +482,7 @@ fn transcript(
     crate::transcript::normalize(&mut data)?;
     job.check()?;
     let _guard = crate::REQUEST_LOCK
-        .lock()
+        .lock(c"GoVue core request: extraction.persist_transcript")
         .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
     crate::transcript::remember(root, &data)?;
     let _ = crate::transcript::save(root, &data);

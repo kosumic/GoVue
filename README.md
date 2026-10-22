@@ -454,6 +454,7 @@ WebView is signed in. Available formats and captions depend on YouTube.
 - [Porting inventory and verification evidence](PORTING.md)
 - [Casting networking policy](docs/cast-networking.md)
 - [CI and dependency automation](.github/CI.md)
+- [Core request lock profiling](docs/core-lock-profiling.md)
 - [Historical feature and profiling notes](docs/legacy-features.md) — includes
   superseded extraction and UI descriptions.
 

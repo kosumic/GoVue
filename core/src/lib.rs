@@ -23,6 +23,7 @@ mod language_catalog;
 mod languages;
 mod media;
 mod player;
+mod request_lock;
 mod speech;
 mod trace;
 mod transcript;
@@ -224,7 +225,7 @@ const MAX_BYTES: usize = 8_000_000;
 const MAX_SEGMENTS: usize = 50_000;
 type Result<T> = std::result::Result<T, Error>;
 
-static REQUEST_LOCK: Mutex<()> = Mutex::new(());
+static REQUEST_LOCK: request_lock::RequestLock = request_lock::RequestLock::new();
 
 fn clean(text: &str) -> String {
     text.nfkc()
@@ -306,53 +307,77 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
     if op.starts_with("app_") {
+        let _span = trace::Section::begin(c"GoVue core op: app");
         return app::dispatch(&command);
     }
     if op.starts_with("transcript_session_") {
+        let _span = trace::Section::begin(c"GoVue core op: transcript_session");
         return transcript_session::dispatch(&command, root);
     }
     if op.starts_with("extract_") {
+        let _span = trace::Section::begin(c"GoVue core op: extraction");
         return extraction::dispatch(&command, root);
     }
     if op.starts_with("cast_") {
+        let _span = trace::Section::begin(c"GoVue core op: cast");
         return cast::dispatch(&command);
     }
     if matches!(
         op,
         "browser_input" | "browser_identity" | "browser_layout" | "browser_position"
     ) {
+        let _span = trace::Section::begin(c"GoVue core op: browser_boundary");
         return browser::boundary(&command);
     }
     if op.starts_with("browser_") {
+        let _span = trace::Section::begin(c"GoVue core op: browser");
         return browser::dispatch(&command, root);
     }
     if op.starts_with("player_") {
+        let _span = trace::Section::begin(c"GoVue core op: player");
         return player::dispatch(&command, root);
     }
     if op.starts_with("vocabulary_") {
+        let _span = trace::Section::begin(c"GoVue core op: vocabulary");
         return vocabulary::dispatch(&command, root);
     }
     if op == "language_settings" {
+        let _span = trace::Section::begin(c"GoVue core op: language_settings");
         return languages::settings(&command, root);
     }
     if op == "language_choices" {
+        let _span = trace::Section::begin(c"GoVue core op: language_choices");
         return language_catalog::choices(&command);
     }
     if op == "response_speech" {
+        let _span = trace::Section::begin(c"GoVue core op: response_speech");
         return speech::reading::plan(&command);
     }
     if op.starts_with("media_") || op.starts_with("sponsor_") || op.starts_with("downloads_") {
+        let _span = trace::Section::begin(match op {
+            _ if op.starts_with("media_settings") => c"GoVue core op: player_settings",
+            _ if op.starts_with("downloads_") => c"GoVue core op: downloads",
+            _ if op.starts_with("sponsor_") => c"GoVue core op: sponsor",
+            _ => c"GoVue core op: media",
+        });
         return media::dispatch(&command, root);
     }
     if op.starts_with("gallery_") {
+        let _span = trace::Section::begin(c"GoVue core op: gallery");
         return gallery::dispatch(&command, root);
     }
     if op == "info" {
+        let _span = trace::Section::begin(c"GoVue core op: info");
         return Ok(
             json!({"engine": "rust", "version": env!("CARGO_PKG_VERSION"),
             "commit": option_env!("GOVUE_GIT_COMMIT")}),
         );
     }
+    let _span = trace::Section::begin(match op {
+        "accept" => c"GoVue core op: transcript_accept",
+        "restore" => c"GoVue core op: transcript_restore",
+        _ => c"GoVue core op: transcript",
+    });
     transcript::dispatch(&command, root)
 }
 
@@ -361,12 +386,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
 #[uniffi::export]
 pub fn execute(request: String, storage_path: String) -> String {
     let _span = trace::Section::begin(c"GoVue core: execute");
-    let guard = {
-        let _span = trace::Section::begin(c"GoVue core: lock_wait");
-        REQUEST_LOCK
-            .lock()
-            .map_err(|_| "Core state is unavailable. Restart GoVue.".into())
-    };
+    let guard = REQUEST_LOCK
+        .lock(c"GoVue core request: execute")
+        .map_err(|_| "Core state is unavailable. Restart GoVue.".into());
     match guard.and_then(|_guard| dispatch(&request, &storage_path)) {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
         Err(error) => json!({"ok":false,"error":error}).to_string(),
