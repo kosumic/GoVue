@@ -110,10 +110,7 @@ public final class GoVueCoreModule: Module {
             let formats = try JSONSerialization.jsonObject(with: data) as? [[String: Any]], formats.count <= 500 else {
         throw NSError(domain: "GoVue", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid media capabilities request."])
       }
-      let keys = formats.compactMap { format -> String? in
-        let mime = format["mimeType"] as? String ?? ""
-        return (mime.hasPrefix("audio/mp4") && mime.contains("mp4a")) || (mime.hasPrefix("video/mp4") && ["avc1", "hvc1", "hev1"].contains(where: mime.contains)) ? format["key"] as? String : nil
-      }
+      let keys = NativeMediaCapabilities.supportedKeys(formats)
       return String(data: try JSONSerialization.data(withJSONObject: keys), encoding: .utf8)!
     }
     OnCreate {

@@ -21,10 +21,7 @@ final class NativeDownloadPlatform: DownloadPlatform {
   }
   func supportedFormats(formats: String) -> String {
     guard let data = formats.data(using: .utf8), let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return "[]" }
-    let keys = items.prefix(500).compactMap { item -> String? in
-      let mime = item["mimeType"] as? String ?? ""
-      return (mime.hasPrefix("audio/mp4") && mime.contains("mp4a")) || (mime.hasPrefix("video/mp4") && ["avc1", "hvc1", "hev1"].contains(where: mime.contains)) ? item["key"] as? String : nil
-    }
+    let keys = NativeMediaCapabilities.supportedKeys(items.prefix(500))
     return String(decoding: (try? JSONSerialization.data(withJSONObject: keys)) ?? Data("[]".utf8), as: UTF8.self)
   }
   func mux(video: String, audio: String, output: String) -> Bool {
