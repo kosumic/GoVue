@@ -459,7 +459,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             plan(&command["catalog"], &Config::parse(&command["config"])?)
         }
         "downloads_subtitles" => {
-            let data = crate::load(
+            let data = crate::transcript::load(
                 root,
                 string(command, "videoId")?,
                 string(command, "trackId")?,

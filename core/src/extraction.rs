@@ -8,8 +8,7 @@ use base64::{
 };
 use serde_json::Value;
 use std::{
-    collections::{HashMap, VecDeque},
-    io::Read,
+    collections::HashMap,
     sync::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -19,7 +18,11 @@ use std::{
 };
 use url::Url;
 
+mod network;
 mod page;
+mod player_cache;
+use network::{HTTP, allowed_address, fetch, fetch_response, response_text};
+use player_cache::{Player, player};
 
 const ORIGIN: &str = "https://www.youtube.com";
 const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
@@ -30,12 +33,22 @@ const PREPARATION_REQUEST: &str = "prepare:media";
 // On a translated-caption 429, retry once after the guest session has aged.
 // Empirical workaround: https://github.com/yt-dlp/yt-dlp/pull/15709.
 const TRANSLATION_SESSION_AGE: Duration = Duration::from_secs(75);
-static HTTP: OnceLock<Box<dyn ExtractionHttp>> = OnceLock::new();
-type Jobs = HashMap<(String, String), Arc<Job>>;
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct RequestKey {
+    root: String,
+    request: String,
+}
+impl RequestKey {
+    fn new(root: &str, request: &str) -> Self {
+        Self {
+            root: root.into(),
+            request: request.into(),
+        }
+    }
+}
+type Jobs = HashMap<RequestKey, Arc<Job>>;
 static JOBS: OnceLock<Mutex<Jobs>> = OnceLock::new();
 static WORKERS: AtomicUsize = AtomicUsize::new(0);
-static PLAYERS: OnceLock<Mutex<VecDeque<Player>>> = OnceLock::new();
-static CONFIGURATIONS: OnceLock<Mutex<VecDeque<Configuration>>> = OnceLock::new();
 
 #[derive(uniffi::Record)]
 pub struct ExtractionHeader {
@@ -71,24 +84,6 @@ pub fn install_extraction_http(backend: Box<dyn ExtractionHttp>) {
 struct Session {
     cookies: HashMap<String, String>,
     since: Instant,
-}
-#[derive(Clone)]
-struct Player {
-    root: String,
-    id: String,
-    at: Instant,
-    data: Value,
-    chapters: Vec<Value>,
-    session: Session,
-    web_loaded: bool,
-    chapters_loaded: bool,
-}
-#[derive(Clone)]
-struct Configuration {
-    root: String,
-    at: Instant,
-    context: Value,
-    session: Session,
 }
 struct Runtime {
     sequence: u32,
@@ -172,243 +167,6 @@ impl Job {
     }
 }
 
-fn allowed_address(raw: &str, interpreter: bool) -> Result<()> {
-    let url = Url::parse(raw).map_err(|_| "Invalid extraction address.")?;
-    if raw.len() > 30_000
-        || url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.port_or_known_default() != Some(443)
-        || url.fragment().is_some()
-        || raw.chars().any(char::is_control)
-    {
-        return Err("Unsupported extraction address.".into());
-    }
-    let host = url.host_str().unwrap_or("");
-    let allowed = if interpreter {
-        [
-            "www.youtube.com",
-            "m.youtube.com",
-            "www.google.com",
-            "www.gstatic.com",
-        ]
-        .contains(&host)
-            && (url.path().starts_with("/js/") || url.path().starts_with("/s/"))
-    } else {
-        ["www.youtube.com", "m.youtube.com", "youtube.com"].contains(&host)
-            && matches!(
-                url.path(),
-                "/watch"
-                    | "/youtubei/v1/player"
-                    | "/youtubei/v1/att/get"
-                    | "/api/timedtext"
-                    | "/api/jnn/v1/GenerateIT"
-                    | "/api/jnn/v1/Create"
-            )
-    };
-    if allowed {
-        Ok(())
-    } else {
-        Err("Unsupported extraction address.".into())
-    }
-}
-
-fn fetch_response_bounded(
-    job: &Job,
-    url: &str,
-    body: Option<Value>,
-    interpreter: bool,
-    extra: &[(&str, &str)],
-    limit: usize,
-) -> Result<ExtractionReply> {
-    if limit == 0 || limit > MAX_BYTES {
-        return Err("Invalid extraction size limit.".into());
-    }
-    job.check()?;
-    allowed_address(url, interpreter)?;
-    let browser_request = interpreter
-        || url.contains("/api/jnn/v1/")
-        || url.contains("/api/timedtext")
-        || url.contains("/youtubei/v1/att/get");
-    let mut headers = vec![
-        ExtractionHeader {
-            name: "User-Agent".into(),
-            value: if browser_request {
-                job.user_agent.clone()
-            } else {
-                UA.into()
-            },
-        },
-        ExtractionHeader {
-            name: "Referer".into(),
-            value: format!("{ORIGIN}/"),
-        },
-    ];
-    for (name, value) in extra {
-        headers.push(ExtractionHeader {
-            name: (*name).into(),
-            value: (*value).into(),
-        });
-    }
-    let method = if body.is_some() { "POST" } else { "GET" };
-    if !interpreter {
-        let session = job
-            .session
-            .lock()
-            .map_err(|_| "Extraction session unavailable.")?;
-        if !session.cookies.is_empty() {
-            headers.push(ExtractionHeader {
-                name: "Cookie".into(),
-                value: session
-                    .cookies
-                    .iter()
-                    .map(|(name, value)| format!("{name}={value}"))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            });
-        }
-    }
-    if body.is_some()
-        && !headers
-            .iter()
-            .any(|h| h.name.eq_ignore_ascii_case("Content-Type"))
-    {
-        headers.push(ExtractionHeader {
-            name: "Content-Type".into(),
-            value: "application/json".into(),
-        });
-    }
-    let request = ExtractionRequest {
-        url: url.into(),
-        method: method.into(),
-        headers,
-        body: body.map_or_else(String::new, |b| b.to_string()),
-        max_bytes: u32::try_from(limit).map_err(|_| "Invalid extraction size limit.")?,
-        prefix_only: limit < MAX_BYTES,
-    };
-    let reply = if let Some(http) = HTTP.get() {
-        http.request(request)
-    } else {
-        // Host CLI uses the same bounded contract as Android/iOS.
-        let agent = ureq::Agent::config_builder()
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(15)))
-            .build()
-            .new_agent();
-        let mut call = ureq::http::Request::builder()
-            .method(request.method.as_str())
-            .uri(&request.url);
-        for header in request.headers {
-            call = call.header(&header.name, &header.value);
-        }
-        let call = call
-            .body(request.body.as_bytes())
-            .map_err(|_| "Invalid extraction request.")?;
-        match agent.run(call) {
-            Ok(response) => {
-                let status = i32::from(response.status().as_u16());
-                let headers = response
-                    .headers()
-                    .get_all("set-cookie")
-                    .iter()
-                    .filter_map(|value| value.to_str().ok())
-                    .map(|value| ExtractionHeader {
-                        name: "Set-Cookie".into(),
-                        value: value.into(),
-                    })
-                    .collect();
-                let mut body = Vec::new();
-                response
-                    .into_body()
-                    .into_reader()
-                    .take(u64::from(request.max_bytes) + u64::from(!request.prefix_only))
-                    .read_to_end(&mut body)
-                    .map_err(|_| "YouTube extraction connection failed.")?;
-                ExtractionReply {
-                    status,
-                    body,
-                    headers,
-                }
-            }
-            Err(_) => return Err("YouTube extraction connection failed.".into()),
-        }
-    };
-    job.check()?;
-    if !interpreter {
-        let mut session = job
-            .session
-            .lock()
-            .map_err(|_| "Extraction session unavailable.")?;
-        for header in reply
-            .headers
-            .iter()
-            .filter(|h| h.name.eq_ignore_ascii_case("Set-Cookie"))
-        {
-            for cookie in header.value.split(',') {
-                if let Some((name, value)) = cookie
-                    .trim()
-                    .split(';')
-                    .next()
-                    .and_then(|cookie| cookie.split_once('='))
-                    && name.len() <= 100
-                    && value.len() <= 8192
-                    && !name.is_empty()
-                    && name
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-                    && !value.chars().any(char::is_control)
-                    && (session.cookies.len() < 20 || session.cookies.contains_key(name))
-                {
-                    if name == "VISITOR_INFO1_LIVE"
-                        && session
-                            .cookies
-                            .get(name)
-                            .is_none_or(|previous| previous != value)
-                    {
-                        session.since = Instant::now();
-                    }
-                    session.cookies.insert(name.into(), value.into());
-                }
-            }
-        }
-    }
-    if reply.body.len() > limit + usize::from(limit == MAX_BYTES) {
-        return Err("YouTube extraction response is too large.".into());
-    }
-    Ok(reply)
-}
-fn fetch_response(
-    job: &Job,
-    url: &str,
-    body: Option<Value>,
-    interpreter: bool,
-    extra: &[(&str, &str)],
-) -> Result<ExtractionReply> {
-    let reply = fetch_response_bounded(job, url, body, interpreter, extra, MAX_BYTES)?;
-    if reply.body.len() > MAX_BYTES {
-        return Err("YouTube extraction response is too large.".into());
-    }
-    Ok(reply)
-}
-fn response_text(reply: ExtractionReply) -> Result<String> {
-    if reply.status != 200 {
-        return Err(format!(
-            "YouTube extraction request failed (HTTP {}).",
-            reply.status
-        ));
-    }
-    String::from_utf8(reply.body).map_err(|_| "Unreadable YouTube extraction response.".into())
-}
-fn fetch(
-    job: &Job,
-    url: &str,
-    body: Option<Value>,
-    interpreter: bool,
-    extra: &[(&str, &str)],
-) -> Result<String> {
-    response_text(fetch_response(job, url, body, interpreter, extra)?)
-}
 fn caption_source(job: &Job, url: &str, verified: bool, translated: bool) -> Result<String> {
     let mut reply = fetch_response(job, url, None, false, &[])?;
     if !verified && matches!(reply.status, 403 | 429) {
@@ -490,190 +248,6 @@ fn chapters(data: &Value) -> Vec<Value> {
         }
     }
     result
-}
-fn configuration_context(html: &str) -> Option<Value> {
-    page_json(html, "ytcfg.set(")
-        .map(|config| config["INNERTUBE_CONTEXT"].clone())
-        .filter(|context| context["client"].is_object())
-        .or_else(|| {
-            page_json(html, "\"INNERTUBE_CONTEXT\":")
-                .filter(|context| context["client"].is_object())
-        })
-}
-
-fn configuration(
-    job: &Job,
-    root: &str,
-    id: &str,
-    fresh: bool,
-    need_page: bool,
-) -> Result<(Value, Option<String>)> {
-    let cached = CONFIGURATIONS
-        .get_or_init(Default::default)
-        .lock()
-        .map_err(|_| "Extractor configuration unavailable.")?
-        .iter()
-        .find(|config| config.root == root)
-        .cloned();
-    if let Some(cached) = cached {
-        let mut session = job
-            .session
-            .lock()
-            .map_err(|_| "Extraction session unavailable.")?;
-        // A player refresh may already have restored newer cookies and session
-        // age. Keep them so configuration reuse cannot reset caption retries.
-        if session.cookies.is_empty() {
-            session.clone_from(&cached.session);
-        }
-        drop(session);
-        if !fresh && !need_page && cached.at.elapsed() < CACHE_LIFETIME {
-            let _span = crate::trace::Section::begin(c"GoVue extraction: reuse configuration");
-            return Ok((cached.context, None));
-        }
-    }
-    let address = format!("{ORIGIN}/watch?v={id}&hl=en");
-    let mut html = String::new();
-    if !need_page {
-        let _span = crate::trace::Section::begin(c"GoVue extraction: configuration prefix");
-        let reply = fetch_response_bounded(job, &address, None, false, &[], 65_536)?;
-        if reply.status != 200 {
-            return Err(format!(
-                "YouTube extraction request failed (HTTP {}).",
-                reply.status
-            ));
-        }
-        // The trailing UTF-8 code point may be cut off. Only a complete JSON
-        // context before that boundary is accepted; no page code is evaluated.
-        html = String::from_utf8_lossy(&reply.body).into_owned();
-    }
-    if need_page || configuration_context(&html).is_none() {
-        html = fetch(job, &address, None, false, &[])?;
-    }
-    let context =
-        configuration_context(&html).ok_or("YouTube did not provide extraction configuration.")?;
-    let config = Configuration {
-        root: root.into(),
-        at: Instant::now(),
-        context: context.clone(),
-        session: job
-            .session
-            .lock()
-            .map_err(|_| "Extraction session unavailable.")?
-            .clone(),
-    };
-    job.check()?;
-    let mut configurations = CONFIGURATIONS
-        .get_or_init(Default::default)
-        .lock()
-        .map_err(|_| "Extractor configuration unavailable.")?;
-    configurations.retain(|config| config.root != root && config.at.elapsed() < CACHE_LIFETIME);
-    configurations.push_front(config);
-    configurations.truncate(3);
-    drop(configurations);
-    Ok((context, Some(html)))
-}
-
-fn native_player(job: &Job, id: &str, context: Value) -> Result<Value> {
-    let mut client = context["client"].clone();
-    if !client.is_object() {
-        return Err("YouTube did not provide a client context.".into());
-    }
-    for (key, value) in [
-        ("clientName", "VISIONOS"),
-        ("clientVersion", "1.02"),
-        ("deviceMake", "Apple"),
-        ("deviceModel", "RealityDevice17,1"),
-        ("osName", "visionOS"),
-        ("osVersion", "26.5.23O471"),
-        ("userAgent", UA),
-    ] {
-        client[key] = json!(value);
-    }
-    let mut native_context = context;
-    native_context["client"] = client;
-    let data = json_response(&fetch(
-        job,
-        &format!("{ORIGIN}/youtubei/v1/player?prettyPrint=false"),
-        Some(
-            json!({"context":native_context,"videoId":id,"contentCheckOk":true,"racyCheckOk":true}),
-        ),
-        false,
-        &[
-            ("X-Youtube-Client-Name", "101"),
-            ("X-Youtube-Client-Version", "1.02"),
-        ],
-    )?)?;
-    match data["playabilityStatus"]["status"].as_str().unwrap_or("") {
-        "OK" => {},
-        "LOGIN_REQUIRED" => return Err("YouTube requires sign-in or verification for this video. Standalone extraction cannot access it yet.".into()),
-        "LIVE_STREAM_OFFLINE" => return Err("This live stream is offline.".into()),
-        _ => return Err("This video is unavailable to the standalone YouTube extractor.".into()),
-    }
-    if data["videoDetails"]["videoId"] != id {
-        return Err("YouTube returned another video's metadata.".into());
-    }
-    Ok(data)
-}
-
-fn player(job: &Job, root: &str, id: &str, fresh: bool, need_page: bool) -> Result<Player> {
-    {
-        let players = PLAYERS
-            .get_or_init(Default::default)
-            .lock()
-            .map_err(|_| "Extractor cache unavailable.")?;
-        if let Some(cached) = players.iter().find(|p| p.root == root && p.id == id) {
-            job.session
-                .lock()
-                .map_err(|_| "Extraction session unavailable.")?
-                .clone_from(&cached.session);
-            if !fresh && cached.at.elapsed() < CACHE_LIFETIME && (!need_page || cached.web_loaded) {
-                return Ok(cached.clone());
-            }
-        }
-    }
-    let (context, html) = configuration(job, root, id, fresh, need_page)?;
-    let mut data = match native_player(job, id, context) {
-        Err(_) if html.is_none() => return player(job, root, id, true, need_page),
-        result => result?,
-    };
-    let html = html.as_deref().unwrap_or("");
-    // Web subtitle addresses require WebPO tokens. Keep the web client's
-    // caption metadata paired with that token context, independently of the
-    // native client used for direct media streams.
-    let web = page_json(html, "var ytInitialPlayerResponse = ")
-        .or_else(|| page_json(html, "ytInitialPlayerResponse="))
-        .filter(|web| web["videoDetails"]["videoId"] == id);
-    let web_loaded = need_page || web.is_some();
-    if let Some(web) = web.filter(|web| web["captions"].is_object()) {
-        data["captions"] = web["captions"].clone();
-    }
-    let initial = page_json(html, "var ytInitialData = ")
-        .or_else(|| page_json(html, "ytInitialData="))
-        .unwrap_or(Value::Null);
-    let result = Player {
-        root: root.into(),
-        id: id.into(),
-        at: Instant::now(),
-        data,
-        web_loaded,
-        chapters_loaded: initial.is_object(),
-        chapters: chapters(&initial),
-        session: job
-            .session
-            .lock()
-            .map_err(|_| "Extraction session unavailable.")?
-            .clone(),
-    };
-    job.check()?;
-    let mut players = PLAYERS
-        .get_or_init(Default::default)
-        .lock()
-        .map_err(|_| "Extractor cache unavailable.")?;
-    players.retain(|p| p.at.elapsed() < CACHE_LIFETIME && !(p.root == root && p.id == id));
-    players.push_front(result.clone());
-    players.truncate(3);
-    drop(players);
-    Ok(result)
 }
 fn tracks(player: &Player) -> Vec<Track> {
     crate::caption_tracks::extract(&player.data, "").0
@@ -760,7 +334,7 @@ fn token(job: &Job, player: &Player) -> Result<String> {
         return Err("YouTube could not verify this extraction session.".into());
     }
     job.evaluate(json!({"stage":"mint","integrityToken":integrity[0],"estimatedTtlSecs":integrity[1],
-        "mintRefreshThreshold":integrity[2],"websafeFallbackToken":integrity[3],"videoId":player.id}))
+        "mintRefreshThreshold":integrity[2],"websafeFallbackToken":integrity[3],"videoId":player.id.as_str()}))
 }
 fn caption_address(raw: &str, id: &str, po_token: Option<&str>) -> Result<String> {
     allowed_address(raw, false)?;
@@ -880,7 +454,7 @@ fn transcript(
             if source.trim().is_empty() {
                 return Err("YouTube returned no caption text after verification.".into());
             }
-            crate::parse_captions(&source)
+            crate::captions::parse(&source)
         })();
         match result {
             Err(error) => {
@@ -905,13 +479,13 @@ fn transcript(
         caption_metadata: Some(caption_metadata),
         track_metadata: Some(track_metadata),
     };
-    crate::normalize(&mut data)?;
+    crate::transcript::normalize(&mut data)?;
     job.check()?;
     let _guard = crate::REQUEST_LOCK
         .lock()
         .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
-    crate::remember(crate::cache_path(root, id, &data.track_id)?, &data)?;
-    let _ = crate::save(root, &data);
+    crate::transcript::remember(root, &data)?;
+    let _ = crate::transcript::save(root, &data);
     Ok(json!(data))
 }
 fn catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value> {
@@ -969,21 +543,7 @@ fn chapter_catalog(job: &Job, root: &str, id: &str, fresh: bool) -> Result<Value
     let _span = crate::trace::Section::begin(c"GoVue extraction: chapters");
     // Playback intentionally fetches only a configuration prefix. Load the
     // complete, video-correlated metadata in a separate cancellable job.
-    let cached = PLAYERS
-        .get()
-        .and_then(|players| players.lock().ok())
-        .and_then(|players| {
-            players
-                .iter()
-                .find(|player| {
-                    !fresh
-                        && player.root == root
-                        && player.id == id
-                        && player.at.elapsed() < CACHE_LIFETIME
-                        && player.chapters_loaded
-                })
-                .map(|player| player.chapters.clone())
-        });
+    let cached = player_cache::chapters(root, id, fresh);
     // A prefix may contain the complete caption response but still omit
     // ytInitialData. Caption readiness alone cannot satisfy chapter loading.
     let raw = match cached {
@@ -1001,7 +561,7 @@ pub(super) fn select_preparation(root: &str, video: Option<&str>) {
     let Some(mut jobs) = JOBS.get().and_then(|jobs| jobs.lock().ok()) else {
         return;
     };
-    let key = (root.to_owned(), PREPARATION_REQUEST.to_owned());
+    let key = RequestKey::new(root, PREPARATION_REQUEST);
     if jobs
         .get(&key)
         .is_some_and(|job| job.prepared_video.as_deref() != video)
@@ -1013,7 +573,7 @@ pub(super) fn select_preparation(root: &str, video: Option<&str>) {
 }
 
 fn claim_preparation(jobs: &mut Jobs, root: &str, id: &str, request: &str, fresh: bool) -> bool {
-    let key = (root.to_owned(), PREPARATION_REQUEST.to_owned());
+    let key = RequestKey::new(root, PREPARATION_REQUEST);
     if jobs
         .get(&key)
         .is_none_or(|job| job.prepared_video.as_deref() != Some(id))
@@ -1032,7 +592,7 @@ fn claim_preparation(jobs: &mut Jobs, root: &str, id: &str, request: &str, fresh
         return false;
     }
     let _span = crate::trace::Section::begin(c"GoVue extraction: claim preparation");
-    jobs.insert((root.into(), request.into()), job);
+    jobs.insert(RequestKey::new(root, request), job);
     true
 }
 
@@ -1069,7 +629,9 @@ fn runtime_tasks(root: &str, from_page: bool) -> Result<Value> {
         .map_err(|_| "Extractor busy.")?;
     let mut requests = Vec::new();
     let mut tasks = Vec::new();
-    for ((store, request), job) in jobs.iter() {
+    for (key, job) in jobs.iter() {
+        let store = &key.root;
+        let request = &key.request;
         if store != root || !from_page && !request.starts_with("worker:") || job.check().is_err() {
             continue;
         }
@@ -1134,7 +696,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     } else {
         None
     };
-    let key = (root.to_owned(), request.to_owned());
+    let key = RequestKey::new(root, request);
     let mut jobs = JOBS
         .get_or_init(Default::default)
         .lock()
@@ -1352,7 +914,9 @@ pub(crate) fn resolve(
 
 #[cfg(test)]
 mod tests {
+    use super::player_cache::PLAYERS;
     use super::*;
+    use std::collections::VecDeque;
     use std::{fs, path::Path, sync::atomic::AtomicUsize};
 
     #[test]
@@ -1383,7 +947,10 @@ mod tests {
             thread::spawn(move || waiting.wait_until(Instant::now() + TRANSLATION_SESSION_AGE));
         thread::sleep(Duration::from_millis(10));
         job.cancel();
-        assert_eq!(worker.join().unwrap().unwrap_err(), "Extraction cancelled.");
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().to_string(),
+            "Extraction cancelled."
+        );
     }
 
     #[test]
@@ -1580,7 +1147,7 @@ mod tests {
         let mut players = PLAYERS.get().unwrap().lock().unwrap();
         let cached = players
             .iter_mut()
-            .find(|p| p.id == ID && p.root == root.to_string_lossy())
+            .find(|p| p.id.as_str() == ID && p.root == root.to_string_lossy())
             .unwrap();
         cached.session.since = ready_at.checked_sub(TRANSLATION_SESSION_AGE).unwrap();
         drop(players);
@@ -1669,6 +1236,7 @@ mod tests {
         assert!(
             wait("translated:limited", true)
                 .unwrap_err()
+                .to_string()
                 .contains("temporarily limiting translated captions")
         );
         assert!(Instant::now() >= ready_at);
@@ -1719,7 +1287,7 @@ mod tests {
                 )["ok"],
                 true
             );
-            let error = wait("translated:error", true).unwrap_err();
+            let error = wait("translated:error", true).unwrap_err().to_string();
             assert!(error.contains(if status == 429 {
                 "temporarily limiting"
             } else if status == 403 {
@@ -1753,7 +1321,7 @@ mod tests {
                 let mut players = PLAYERS.get().unwrap().lock().unwrap();
                 let cached = players
                     .iter_mut()
-                    .find(|p| p.id == ID && p.root == root.to_string_lossy())
+                    .find(|p| p.id.as_str() == ID && p.root == root.to_string_lossy())
                     .unwrap();
                 cached.data["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"][0]["vssId"] =
                     json!(track);
@@ -1771,7 +1339,7 @@ mod tests {
             );
             let result = wait("unmarked", true);
             if status == 500 {
-                assert!(result.unwrap_err().contains("HTTP 500"));
+                assert!(result.unwrap_err().to_string().contains("HTTP 500"));
                 assert_eq!(count.load(Ordering::Relaxed) - before, 1);
             } else {
                 assert_eq!(result.unwrap()["segments"][0]["text"], "Hello\nthere");

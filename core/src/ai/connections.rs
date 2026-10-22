@@ -185,8 +185,10 @@ pub(super) fn save_connection(c: &Value, root: &Path) -> Result<Value> {
         if let Some((previous, _)) = &credentials
             && write_secret(&p.id, previous).is_err()
         {
-            return Err(format!(
-                "{error} Credentials could not be restored; reconnect this provider."
+            return Err(crate::Error::caused_by(
+                format!("{error} Credentials could not be restored; reconnect this provider."),
+                "restore credentials after provider save failure",
+                error,
             ));
         }
         return Err(error);

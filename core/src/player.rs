@@ -1,5 +1,6 @@
 //! Shared player state. UI concepts follow LiTube; all persisted records omit
 //! signed media/caption URLs and browser session data.
+use crate::transcript::with_transcript;
 use crate::{Result, clean, media, string, video_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -207,7 +208,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .as_f64()
                 .filter(|n| n.is_finite() && *n >= 0.0)
                 .ok_or("Invalid caption position.")?;
-            return crate::with_transcript(root, current, string(command, "trackId")?, |data| {
+            return with_transcript(root, current, string(command, "trackId")?, |data| {
                 let after = data.segments.partition_point(|s| s.start <= position);
                 let index = after.checked_sub(1).filter(|&i| {
                     let s = &data.segments[i];

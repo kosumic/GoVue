@@ -64,7 +64,7 @@ pub(super) fn captions(
     let reply = json_response(&raw)?;
     let source = string(&reply, "source")?;
     let parsed = match reply["format"].as_str() {
-        Some("timedtext") => crate::parse_captions(source)?,
+        Some("timedtext") => crate::captions::parse(source)?,
         Some("panel") if track.translated_from.is_none() => panel(source, &track.label)?,
         _ => return Err("Unsupported page caption format.".into()),
     };
@@ -116,7 +116,7 @@ fn panel(source: &str, label: &str) -> Result<(Vec<crate::Segment>, crate::capti
     {
         return Err("The transcript panel selected another caption language.".into());
     }
-    crate::parse_captions(&json!({"events":events}).to_string())
+    crate::captions::parse(&json!({"events":events}).to_string())
 }
 
 pub(super) fn reply(command: &Value, root: &str, job: &Job) -> Result<Value> {
@@ -296,10 +296,10 @@ mod tests {
             let request = "worker:page-protocol";
             register(&json!({"adapterId":"page:workflow","videoId":VIDEO}), &root).unwrap();
             let worker = Arc::new(job(None));
-            JOBS.get_or_init(Default::default)
-                .lock()
-                .unwrap()
-                .insert((root.clone(), request.into()), worker.clone());
+            JOBS.get_or_init(Default::default).lock().unwrap().insert(
+                super::super::RequestKey::new(&root, request),
+                worker.clone(),
+            );
             let track: Track = serde_json::from_value(json!({"id":id,"language":language,
                 "label":label,"automatic":automatic,"translatedFrom":translated_from}))
             .unwrap();
@@ -349,7 +349,7 @@ mod tests {
                 .unwrap()
                 .lock()
                 .unwrap()
-                .remove(&(root.clone(), request.into()));
+                .remove(&super::super::RequestKey::new(&root, request));
             register(&json!({"adapterId":"page:workflow","videoId":null}), &root).unwrap();
         }
     }

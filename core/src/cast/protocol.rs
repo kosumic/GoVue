@@ -52,7 +52,7 @@ fn number(data: &[u8], at: &mut usize) -> Option<u64> {
     None
 }
 pub fn decode(data: &[u8]) -> Result<Message> {
-    let invalid = || "Invalid Cast message.".to_owned();
+    let invalid = || crate::Error::from("Invalid Cast message.");
     if data.is_empty() || data.len() > 65536 {
         return Err(invalid());
     }

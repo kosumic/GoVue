@@ -11,7 +11,7 @@ const paths = {
   app: 'App.tsx', core: native + 'GoVueCoreModule.kt', engine: native + 'NativeMediaEngine.kt',
   extractionHttp: native + 'NativeExtractionHttp.kt', ui: 'src/media/useMediaBrowser.ts',
   playback: 'core/src/media/playback.rs', transport: 'core/src/transport.rs',
-  extraction: 'core/src/extraction.rs',
+  playerCache: 'core/src/extraction/player_cache.rs',
 };
 const library = 'modules/govue-core/android/src/main/jniLibs/arm64-v8a/libgovue_core.so';
 const apk = 'android/app/build/outputs/apk/release/app-release.apk';
@@ -108,7 +108,7 @@ if (command === 'plan') {
         "pub(crate) fn adaptive_videos<'a>(catalog: &'a Value, _selected: &Value) -> Result<Vec<&'a Value>> {\n    Ok(videos(catalog)?.into_iter().filter(|stream| stream[\"kind\"] == \"video\").collect())\n}\n\n");
     } else if (factor === 'cap') patch(paths.ui, '...(prepared.startupHeight ? { govueStartupHeight: prepared.startupHeight } : {}),', '', 2);
     else if (factor === 'buffer') patch(paths.ui, '    player.bufferOptions = { minBufferForPlayback: 0.25 };', "    // Ablation: use Expo's default playback buffer threshold.");
-    else if (factor === 'prefix') patch(paths.extraction, '&[], 65_536)?;', '&[], 131_072)?;');
+    else if (factor === 'prefix') patch(paths.playerCache, '&[], 65_536)?;', '&[], 131_072)?;');
     else if (factor === 'quic') patch(paths.engine, '.setEnableQuic(true).addQuicHint(host, 443, 443).build()', '.setEnableQuic(false).build()');
     else if (factor === 'quicMedia' || factor === 'quicExtraction') {
       patch(paths.engine, 'private val capacity: Semaphore) {', 'private val capacity: Semaphore, private val enableQuic: Boolean = true) {');

@@ -1,5 +1,5 @@
 //! Reader document loading, cache policy, and cancellation shared by all platforms.
-use crate::{Result, json, request, string};
+use crate::{Result, identity::SessionId, json, request, string};
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -15,9 +15,13 @@ struct Reader {
     cancelled: AtomicBool,
     state: Mutex<Value>,
 }
-type Key = (String, String);
-static READERS: OnceLock<Mutex<HashMap<Key, Arc<Reader>>>> = OnceLock::new();
-static CLOSED: OnceLock<Mutex<HashMap<Key, u64>>> = OnceLock::new();
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct ReaderKey {
+    root: String,
+    session: SessionId,
+}
+static READERS: OnceLock<Mutex<HashMap<ReaderKey, Arc<Reader>>>> = OnceLock::new();
+static CLOSED: OnceLock<Mutex<HashMap<ReaderKey, u64>>> = OnceLock::new();
 fn channel(id: &str) -> String {
     format!("transcript:{id}")
 }
@@ -29,16 +33,12 @@ fn check(reader: &Reader) -> Result<()> {
     }
 }
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
-    let id = string(command, "sessionId")?;
-    if id.is_empty()
-        || id.len() > 100
-        || !id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_:-".contains(&b))
-    {
-        return Err("Invalid reader session.".into());
-    }
-    let key = (root.to_owned(), id.to_owned());
+    let id = SessionId::parse(string(command, "sessionId")?, 100)
+        .map_err(|_| "Invalid reader session.")?;
+    let key = ReaderKey {
+        root: root.into(),
+        session: id.clone(),
+    };
     let mut readers = READERS
         .get_or_init(Default::default)
         .lock()
@@ -141,12 +141,9 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         && !documents
             .iter()
             .any(|d| d["data"]["trackId"] == seed.track_id)
-        && crate::normalize(&mut seed).is_ok()
+        && crate::transcript::normalize(&mut seed).is_ok()
     {
-        crate::remember(
-            crate::cache_path(root, &seed.video_id, &seed.track_id)?,
-            &seed,
-        )?;
+        crate::transcript::remember(root, &seed)?;
         documents.push(json!({"data":seed,"cached":true}));
     }
     let reader = Arc::new(Reader {
@@ -165,7 +162,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     drop(readers);
     let (root, id, video, audio, tracks) = (
         root.to_owned(),
-        id.to_owned(),
+        id,
         video.to_owned(),
         audio.to_owned(),
         tracks.clone(),
@@ -206,7 +203,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 state["documents"] = json!(loaded);
                 state["loading"] = json!(loaded.len() < tracks.len());
                 drop(state);
-                crate::changed(&channel(&id));
+                crate::changed(&channel(id.as_str()));
             }
             Ok(())
         })();
@@ -217,7 +214,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 state["loading"] = json!(false);
                 state["error"] = json!(error);
             }
-            crate::changed(&channel(&id));
+            crate::changed(&channel(id.as_str()));
         }
     });
     Ok(initial)

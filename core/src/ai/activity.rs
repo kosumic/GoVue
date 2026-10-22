@@ -364,7 +364,7 @@ impl Tape {
                     .ok()
                     .and_then(|v| v["title"].as_str())
                     .map(str::to_owned);
-                *error = result.as_ref().err().cloned();
+                *error = result.as_ref().err().map(ToString::to_string);
             }
         }
     }

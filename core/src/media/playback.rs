@@ -171,7 +171,7 @@ pub(crate) struct IndexedSegment {
 
 // ISO BMFF Segment Index. Reject nested indexes and references outside the file.
 pub(crate) fn segment_index(stream: &Value, data: &[u8]) -> Result<Vec<IndexedSegment>> {
-    let invalid = || "Invalid MP4 segment index.".to_string();
+    let invalid = || crate::Error::from("Invalid MP4 segment index.");
     let length = stream["bytes"].as_u64().ok_or_else(invalid)?;
     range(&stream["initRange"], length).ok_or_else(invalid)?;
     let (index_start, index_end) = range(&stream["indexRange"], length).ok_or_else(invalid)?;

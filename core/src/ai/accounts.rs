@@ -144,7 +144,8 @@ fn checked(reply: Value) -> Result<Value> {
     if !(200..300).contains(&status) {
         return Err(format!(
             "Account authorization failed (HTTP {status}). Reconnect or try again later."
-        ));
+        )
+        .into());
     }
     Ok(reply["data"].clone())
 }

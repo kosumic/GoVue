@@ -1,4 +1,5 @@
-use crate::{Result, Transcript, folded, load, string, timestamp};
+use crate::transcript::load;
+use crate::{Result, Transcript, folded, string, timestamp};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

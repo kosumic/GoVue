@@ -2,17 +2,15 @@
 //! Native adapters only handle HTTPS bytes and protected credential storage.
 use crate::{Result, json, string};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::{
     collections::HashMap,
-    fs,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicI32, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -26,8 +24,10 @@ mod chat_sessions;
 mod connections;
 mod conversations;
 mod games;
+mod jobs;
 mod plan;
 mod practice;
+mod providers;
 mod replay;
 mod search;
 #[cfg(test)]
@@ -37,13 +37,17 @@ mod updates;
 mod usage;
 mod word_assistance;
 
+use jobs::{Job, cancel_owner, jobs, new_job};
+use providers::{
+    CONFIG_LOCK, Config, Provider, config, provider, public_config, save, valid_id,
+    validate_provider,
+};
+
 const AUTH: &str = "https://auth.openai.com";
 const RESOURCE: &str = "https://api.openai.com/v1";
 const MAX_OUTPUT: usize = 2_000_000;
 static PLATFORM: OnceLock<Box<dyn AiPlatform>> = OnceLock::new();
-static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 static FOREGROUND: AtomicBool = AtomicBool::new(true);
-static JOBS: OnceLock<Mutex<HashMap<String, Arc<Job>>>> = OnceLock::new();
 static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 
 #[derive(uniffi::Record)]
@@ -128,335 +132,11 @@ fn write_secret(id: &str, value: &Value) -> Result<()> {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Provider {
-    id: String,
-    label: String,
-    kind: String,
-    #[serde(default)]
-    base_url: String,
-    #[serde(default)]
-    model: String,
-    #[serde(default = "catalog::enabled")]
-    enabled: bool,
-    #[serde(default)]
-    auth: String,
-    #[serde(default)]
-    protocol: String,
-    #[serde(default)]
-    azure: bool,
-    #[serde(default)]
-    append_v1_suffix: bool,
-    #[serde(default)]
-    custom_user_agent: String,
-    #[serde(default)]
-    models: Vec<catalog::Model>,
-}
-#[derive(Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Config {
-    providers: Vec<Provider>,
-    active_id: Option<String>,
-    #[serde(default)]
-    groups: Vec<catalog::Group>,
-    #[serde(default)]
-    agent_md: String,
-}
-fn config(root: &Path) -> Result<Config> {
-    let path = root.join("ai/providers.json");
-    match fs::read(&path) {
-        Ok(b) if b.len() <= 2_000_000 => {
-            let mut cfg: Config =
-                serde_json::from_slice(&b).map_err(|_| "Provider settings are unreadable.")?;
-            catalog::migrate(&mut cfg);
-            Ok(cfg)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-        _ => Err("Could not read provider settings.".into()),
-    }
-}
-fn save(root: &Path, c: &Config) -> Result<()> {
-    let dir = root.join("ai");
-    fs::create_dir_all(&dir).map_err(|_| "Could not save provider settings.")?;
-    let temp = dir.join("providers.tmp");
-    let bytes = serde_json::to_vec(c).map_err(|_| "Invalid provider settings.")?;
-    if bytes.len() > 2_000_000 {
-        return Err("Provider settings are full. Remove unused models or connections.".into());
-    }
-    fs::write(&temp, bytes)
-        .and_then(|_| fs::rename(temp, dir.join("providers.json")))
-        .map_err(|_| "Could not save provider settings.".into())
-}
-fn valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-}
-fn validate_provider(p: &mut Provider) -> Result<()> {
-    if p.id == "host" {
-        return Err("Reserved provider identity.".into());
-    }
-    if !valid_id(&p.id)
-        || p.label.trim().is_empty()
-        || p.label.len() > 100
-        || p.model.len() > 200
-        || p.model.chars().any(char::is_control)
-    {
-        return Err("Invalid provider settings.".into());
-    }
-    p.label = p.label.trim().into();
-    p.model = p.model.trim().into();
-    if p.kind != "custom" && catalog::default_base(&p.kind).is_none() {
-        return Err("Unsupported provider type.".into());
-    }
-    if p.base_url.is_empty() {
-        p.base_url = catalog::default_base(&p.kind).unwrap_or_default().into();
-    }
-    p.base_url = catalog::validate_url(&p.base_url)?;
-    let u = Url::parse(&p.base_url).map_err(|_| "Invalid provider endpoint.")?;
-    if u.query().is_some() && (!p.azure || u.query_pairs().any(|(k, _)| k != "api-version")) {
-        return Err("Only Azure endpoints may contain an api-version query.".into());
-    }
-    if !matches!(p.auth.as_str(), "" | "key" | "oauth")
-        || !matches!(
-            p.protocol.as_str(),
-            "" | "responses" | "chat" | "anthropic" | "gemini"
-        )
-    {
-        return Err("Invalid authentication or API protocol.".into());
-    }
-    connections::validate(p)?;
-    if catalog::oauth(p)
-        && !matches!(
-            p.kind.as_str(),
-            "chatgpt" | "codex" | "anthropic" | "openrouter" | "xai" | "kimi" | "copilot"
-        )
-    {
-        return Err("This provider does not support account sign-in.".into());
-    }
-    if catalog::oauth(p) && p.base_url != catalog::default_base(&p.kind).unwrap_or_default() {
-        return Err(
-            "Account credentials can only be used with their provider's own endpoint.".into(),
-        );
-    }
-    if p.azure && (catalog::oauth(p) || !matches!(catalog::protocol(p), "chat" | "responses")) {
-        return Err("Azure requires an API key and an OpenAI protocol.".into());
-    }
-    if matches!(p.kind.as_str(), "chatgpt" | "codex") && catalog::protocol(p) != "responses" {
-        return Err("This account connection requires Responses API.".into());
-    }
-    catalog::validate_models(p)?;
-    Ok(())
-}
-fn provider(root: &Path, id: &str) -> Result<Provider> {
-    let _g = CONFIG_LOCK
-        .lock()
-        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-    let cfg = config(root)?;
-    if let Some(g) = cfg.groups.iter().find(|g| g.id == id) {
-        return Ok(catalog::group_provider(g));
-    }
-    let mut p = cfg
-        .providers
-        .into_iter()
-        .find(|p| p.id == id)
-        .ok_or("Provider was removed.")?;
-    validate_provider(&mut p)?;
-    Ok(p)
-}
-fn public_config(root: &Path) -> Result<Value> {
-    let c = config(root)?;
-    let mut rows = Vec::new();
-    for p in &c.providers {
-        let mut row = serde_json::to_value(p).map_err(|_| "Invalid provider settings.")?;
-        row["connection"] = connections::preview(p);
-        let s = match read_secret(&p.id) {
-            Ok(s) => s,
-            Err(_) => {
-                row["credentialError"] = json!(
-                    "Stored credentials could not be read. Reconnect or remove this provider."
-                );
-                json!({})
-            }
-        };
-        row["connected"] = json!(if catalog::oauth(p) && p.kind != "openrouter" {
-            s["access_token"].as_str().is_some_and(|s| !s.is_empty())
-        } else {
-            s["key"].as_str().is_some_and(|s| !s.is_empty())
-                || (p.kind == "custom"
-                    && !catalog::oauth(p)
-                    && row.get("credentialError").is_none())
-        });
-        row["needsReauth"] = json!(s["needs_reauth"] == true);
-        row["account"] = s["email"].clone();
-        row["planEnabled"] = json!(has_plan(&s));
-        rows.push(row);
-    }
-    let groups: Vec<_> = c
-        .groups
-        .iter()
-        .map(|g| {
-            let mut row = serde_json::to_value(g).unwrap_or(Value::Null);
-            row["connected"] = json!(g.members.iter().any(|member| rows.iter().any(|p| {
-                p["id"] == member.provider_id
-                    && p["enabled"] == true
-                    && p["connected"] == true
-                    && p["needsReauth"] != true
-                    && p["models"]
-                        .as_array()
-                        .is_some_and(|models| models.iter().any(|m| m["id"] == member.model))
-            })));
-            row
-        })
-        .collect();
-    Ok(
-        json!({"providers":rows,"groups":groups,"activeId":c.active_id,"choices":catalog::choices(),"agentMd":c.agent_md}),
-    )
-}
-
-struct Job {
-    id: String,
-    owner: String,
-    cancelled: AtomicBool,
-    state: Mutex<Value>,
-    activity: Mutex<activity::Tape>,
-    updates: Mutex<updates::Cursor>,
-    conversation: OnceLock<(PathBuf, String)>,
-    last_status: AtomicI32,
-}
-impl Job {
-    fn publish_activity(&self) -> Result<()> {
-        let blocks = json!(
-            self.activity
-                .lock()
-                .map_err(|_| "AI state is unavailable. Restart GoVue.")?
-                .blocks
-        );
-        self.state
-            .lock()
-            .map_err(|_| "AI state is unavailable. Restart GoVue.")?["blocks"] = blocks;
-        Ok(())
-    }
-    fn pending(&self) -> Result<()> {
-        if self.cancelled.load(Ordering::Relaxed) {
-            Err("Request cancelled.".into())
-        } else if self.state.is_poisoned()
-            || self.activity.is_poisoned()
-            || self.updates.is_poisoned()
-        {
-            Err("AI state is unavailable. Restart GoVue.".into())
-        } else {
-            Ok(())
-        }
-    }
-    fn finish(&self, result: Result<Value>) {
-        let settled = (|| -> Result<()> {
-            activity::settle(
-                &mut self
-                    .activity
-                    .lock()
-                    .map_err(|_| "AI state is unavailable. Restart GoVue.")?
-                    .blocks,
-                if self.cancelled.load(Ordering::Relaxed) {
-                    activity::Status::Stopped
-                } else if result.is_ok() {
-                    activity::Status::Completed
-                } else {
-                    activity::Status::Failed
-                },
-            );
-            self.publish_activity()
-        })();
-        let result = settled.and(result);
-        // Polling reports a poisoned state directly; a worker must not recover it.
-        let Ok(mut s) = self.state.lock() else {
-            return;
-        };
-        if self.cancelled.load(Ordering::Relaxed) {
-            s["status"] = json!("cancelled");
-            return;
-        }
-        match result {
-            Ok(v) => {
-                s["status"] = json!("completed");
-                s["result"] = v;
-            }
-            Err(e) => {
-                s["status"] = json!("failed");
-                s["error"] = json!(e);
-            }
-        }
-    }
-}
-fn jobs() -> &'static Mutex<HashMap<String, Arc<Job>>> {
-    JOBS.get_or_init(Default::default)
-}
-fn new_job(owner: &str) -> Result<Arc<Job>> {
-    let mut all = jobs()
-        .lock()
-        .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-    // Finished tasks are disposable; active tasks are never silently evicted.
-    let mut running = 0;
-    let mut finished = Vec::new();
-    for (id, job) in all.iter() {
-        if job
-            .state
-            .lock()
-            .map_err(|_| "AI state is unavailable. Restart GoVue.")?["status"]
-            == "running"
-        {
-            running += 1;
-        } else if all.len() >= 16 {
-            finished.push(id.clone());
-        }
-    }
-    if running >= 8 {
-        return Err("Too many AI requests. Stop an existing request first.".into());
-    }
-    for id in finished {
-        all.remove(&id);
-    }
-    let job = Arc::new(Job {
-        id: random()?,
-        owner: owner.into(),
-        cancelled: AtomicBool::new(false),
-        state: Mutex::new(json!({"status":"running","text":""})),
-        activity: Mutex::new(activity::Tape::default()),
-        updates: Mutex::new(updates::Cursor::default()),
-        conversation: OnceLock::new(),
-        last_status: AtomicI32::new(0),
-    });
-    all.insert(job.id.clone(), job.clone());
-    drop(all);
-    Ok(job)
-}
-fn cancel_owner(id: &str) -> Result<()> {
-    for job in jobs()
-        .lock()
-        .map_err(|_| "AI state is unavailable. Restart GoVue.")?
-        .values()
-    {
-        if job.owner == id
-            || job
-                .state
-                .lock()
-                .map_err(|_| "AI state is unavailable. Restart GoVue.")?["providerId"]
-                == id
-        {
-            job.cancelled.store(true, Ordering::Relaxed);
-        }
-    }
-    replay::forget_provider(id)
-}
-
 struct ResponseState {
     status: i32,
     bytes: Vec<u8>,
     stream: Option<Sse>,
-    error: Option<String>,
+    error: Option<crate::Error>,
     total: usize,
 }
 #[derive(uniffi::Object)]
@@ -606,7 +286,9 @@ fn http_impl(
                     .into()
             }
             429 => "Provider usage limit reached. Check your plan or try again later.".into(),
-            n => format!("Provider request failed (HTTP {n}). Check the endpoint and model."),
+            n => {
+                format!("Provider request failed (HTTP {n}). Check the endpoint and model.").into()
+            }
         });
     }
     if let Some(parser) = &s.stream {
@@ -1256,7 +938,7 @@ fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Value> {
         *next = next.wrapping_add(1);
         drop(all);
     }
-    let mut error = "No model in this group could answer.".to_owned();
+    let mut error = crate::Error::from("No model in this group could answer.");
     for candidate in candidates {
         job.pending()?;
         let mut wire = c.clone();
@@ -1324,7 +1006,7 @@ fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Result<Val
         let _g = crate::REQUEST_LOCK
             .lock()
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?;
-        let transcript = crate::load(
+        let transcript = crate::transcript::load(
             root.to_str().ok_or("Invalid transcript storage path.")?,
             id,
             string(c, "trackId")?,

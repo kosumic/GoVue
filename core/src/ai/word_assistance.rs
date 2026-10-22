@@ -158,7 +158,7 @@ pub(super) fn audio(command: &Value, root: &Path) -> Result<Value> {
         let timing = crate::vocabulary::word_audio(command, path)?
             .ok_or("This selection has no playable word or caption timestamps.")?;
         let (start, end) = (timing.start, timing.end);
-        let data = crate::load(path, video_id, string(command, "trackId")?)?;
+        let data = crate::transcript::load(path, video_id, string(command, "trackId")?)?;
         let index = command["segmentIndex"]
             .as_u64()
             .ok_or("Invalid caption reference.")?;

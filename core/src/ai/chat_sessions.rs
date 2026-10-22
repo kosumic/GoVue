@@ -1,5 +1,5 @@
 //! Conversation/task ownership and deferred game feedback live beside saved chats.
-use crate::{Result, string};
+use crate::{Result, identity::SessionId, string};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -11,16 +11,33 @@ struct Session {
     task: Option<String>,
     chat: Option<String>,
 }
-type Key = (PathBuf, String);
-static CONTROLLERS: OnceLock<Mutex<HashMap<Key, Arc<Mutex<Session>>>>> = OnceLock::new();
-static FEEDBACK: OnceLock<Mutex<HashMap<Key, (String, u64)>>> = OnceLock::new();
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct ControllerKey {
+    root: PathBuf,
+    session: SessionId,
+}
+#[derive(Eq, Hash, PartialEq)]
+struct FeedbackKey {
+    root: PathBuf,
+    chat: String,
+}
+impl FeedbackKey {
+    fn new(root: &Path, chat: &str) -> Self {
+        Self {
+            root: root.into(),
+            chat: chat.into(),
+        }
+    }
+}
+static CONTROLLERS: OnceLock<Mutex<HashMap<ControllerKey, Arc<Mutex<Session>>>>> = OnceLock::new();
+static FEEDBACK: OnceLock<Mutex<HashMap<FeedbackKey, (String, u64)>>> = OnceLock::new();
 
 pub(super) fn feedback(root: &Path, chat: &str, game: &str, revision: u64) -> Result<()> {
     FEEDBACK
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?
-        .insert((root.into(), chat.into()), (game.into(), revision));
+        .insert(FeedbackKey::new(root, chat), (game.into(), revision));
     crate::changed("chat-feedback");
     Ok(())
 }
@@ -30,7 +47,7 @@ fn clear_feedback(root: &Path, chat: Option<&str>) -> Result<()> {
             .get_or_init(Default::default)
             .lock()
             .map_err(|_| "AI state is unavailable. Restart GoVue.")?
-            .remove(&(root.into(), chat.into()));
+            .remove(&FeedbackKey::new(root, chat));
     }
     Ok(())
 }
@@ -44,16 +61,11 @@ fn cancel(session: &mut Session, root: &Path) -> Value {
     result
 }
 pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
-    let id = string(c, "sessionId")?;
-    if id.is_empty()
-        || id.len() > 150
-        || !id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_:-".contains(&b))
-    {
-        return Err("Invalid chat session.".into());
-    }
-    let key = (root.to_path_buf(), id.to_owned());
+    let id = SessionId::parse(string(c, "sessionId")?, 150).map_err(|_| "Invalid chat session.")?;
+    let key = ControllerKey {
+        root: root.into(),
+        session: id,
+    };
     let mut controllers = CONTROLLERS
         .get_or_init(Default::default)
         .lock()
@@ -112,7 +124,7 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
             .get_or_init(Default::default)
             .lock()
             .map_err(|_| "Game feedback is busy.")?
-            .get(&(root.into(), chat.into()))
+            .get(&FeedbackKey::new(root, chat))
             .cloned();
         let Some((game, revision)) = pending else {
             return Ok(Value::Null);
@@ -162,8 +174,8 @@ pub(super) fn dispatch(c: &Value, root: &Path) -> Result<Value> {
             .get_or_init(Default::default)
             .lock()
             .map_err(|_| "Game feedback is busy.")?;
-        if pending.get(&(root.into(), chat.clone())) == Some(&(game, revision)) {
-            pending.remove(&(root.into(), chat));
+        if pending.get(&FeedbackKey::new(root, &chat)) == Some(&(game, revision)) {
+            pending.remove(&FeedbackKey::new(root, &chat));
         }
     }
     Ok(result)

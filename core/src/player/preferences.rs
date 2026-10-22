@@ -74,7 +74,7 @@ fn checked(key: &str, value: &Value) -> Result<Value> {
         _ => value.is_boolean(),
     };
     if !valid {
-        return Err(format!("Invalid player setting: {key}."));
+        return Err(format!("Invalid player setting: {key}.").into());
     }
     Ok(value.clone())
 }

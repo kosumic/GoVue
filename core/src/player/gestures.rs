@@ -8,7 +8,7 @@ fn number(command: &Value, key: &str, maximum: f64) -> Result<f64> {
     command[key]
         .as_f64()
         .filter(|n| n.is_finite() && n.abs() <= maximum)
-        .ok_or_else(|| format!("Invalid gesture {key}."))
+        .ok_or_else(|| format!("Invalid gesture {key}.").into())
 }
 
 pub(super) fn drag(command: &Value) -> Result<Value> {

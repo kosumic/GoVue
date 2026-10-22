@@ -143,7 +143,8 @@ pub(crate) fn catalog(command: &Value) -> Result<Value> {
             .unwrap_or("Play the video and try again.")
             .chars()
             .take(500)
-            .collect());
+            .collect::<String>()
+            .into());
     }
     let media = &data["media"];
     let formats = media["formats"]

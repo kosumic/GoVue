@@ -22,7 +22,7 @@ pub struct Bundle {
 // Parse the bounded sidx box, retaining its earliest presentation timestamp.
 type SegmentIndex = (u32, u64, Vec<(u64, u64, u32)>);
 fn index(stream: &Value, bytes: &[u8]) -> Result<SegmentIndex> {
-    let invalid = || "Invalid Cast segment index.".to_string();
+    let invalid = || crate::Error::from("Invalid Cast segment index.");
     let length = stream["bytes"].as_u64().ok_or_else(invalid)?;
     let (start, end) = playback::range(&stream["indexRange"], length).ok_or_else(invalid)?;
     if bytes.len() as u64 != end - start + 1 {

@@ -442,7 +442,7 @@ fn prepare_clip(
             serde_json::to_vec(&data).map_err(|_| "Could not encode the audio clip.")?,
         )
         .map_err(|_| "Could not finish caching audio.")?;
-        Ok::<_, String>(data)
+        Ok::<_, crate::Error>(data)
     })();
     match result {
         Ok(mut data) => prepared(directory, &mut data, cache_only),

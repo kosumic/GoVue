@@ -167,7 +167,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             prune(root, Some(&destination));
             Ok(json!({"image":result}))
         }
-        _ => Err(clean("Unknown gallery action.")),
+        _ => Err(clean("Unknown gallery action.").into()),
     }
 }
 

@@ -1,7 +1,5 @@
-use super::{
-    Result, Segment, Transcript, caption_words::is_word, folded, load, string, video_id,
-    with_transcript,
-};
+use super::{Result, Segment, Transcript, caption_words::is_word, folded, string, video_id};
+use crate::transcript::{load, with_transcript};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -212,7 +210,7 @@ fn index(command: &Value, key: &str) -> Result<usize> {
     command[key]
         .as_u64()
         .and_then(|n| usize::try_from(n).ok())
-        .ok_or_else(|| format!("Invalid {key}."))
+        .ok_or_else(|| format!("Invalid {key}.").into())
 }
 
 struct Selection {

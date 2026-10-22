@@ -24,7 +24,7 @@ struct Transfer {
     done: AtomicBool,
     received: AtomicU64,
     total: u64,
-    error: Mutex<Option<String>>,
+    error: Mutex<Option<crate::Error>>,
     files: Vec<String>,
     cover: Option<String>,
 }
@@ -405,7 +405,7 @@ mod tests {
         let result = copy_part(&transfer, &source, path.to_str().unwrap(), 16, 2);
         fs::remove_file(path).unwrap();
         assert_eq!(
-            result.unwrap_err(),
+            result.unwrap_err().to_string(),
             "Download state is unavailable. Restart GoVue."
         );
         assert_eq!(transfer.received.load(Ordering::Relaxed), 0);
