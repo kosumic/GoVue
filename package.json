@@ -44,7 +44,7 @@
   "dependencies": {
     "@react-native-clipboard/clipboard": "1.16.3",
     "bgutils-js": "^4.0.3",
-    "expo": "~57.0.30",
+    "expo": "~57.0.31",
     "expo-brightness": "~57.0.2",
     "expo-dev-client": "~57.0.20",
     "expo-document-picker": "~57.0.3",
@@ -53,7 +53,7 @@
     "expo-linear-gradient": "~57.0.2",
     "expo-navigation-bar": "~57.0.3",
     "expo-screen-orientation": "~57.0.3",
-    "expo-sharing": "~57.0.23",
+    "expo-sharing": "~57.0.24",
     "expo-speech": "~57.0.3",
     "expo-speech-recognition": "^57.1.1",
     "expo-splash-screen": "~57.0.10",
