@@ -1,0 +1,28 @@
+<!doctype html><html lang="en" data-composition-variables='[{"id":"rasterScale","type":"number","label":"3D render scale","default":0.5,"min":0.25,"max":1,"step":0.25}]'><head><meta charset="UTF-8"><meta name="viewport" content="width=1080,height=1920"><title>GoVue — Live on iPhone</title>
+<script src="assets/vendor/gsap.min.js"></script><script type="importmap">{"imports":{"three":"./assets/vendor/three.module.js","three/addons/":"./assets/vendor/three-addons/"}}</script>
+<style>
+@font-face{font-family:Barlow;font-weight:400;src:url('assets/fonts/Barlow-400.ttf') format('truetype')}
+@font-face{font-family:Barlow;font-weight:600;src:url('assets/fonts/Barlow-600.ttf') format('truetype')}
+@font-face{font-family:Barlow;font-weight:700;src:url('assets/fonts/Barlow-700.ttf') format('truetype')}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#e9edf2}
+#root{position:relative;width:100%;height:100%;overflow:hidden;background:#e9edf2}.clip{position:absolute;inset:0;width:100%;height:100%}
+#live-stage{display:block;width:100%;height:100%;z-index:2}.phone-source{width:1080px;height:1920px;z-index:0;pointer-events:none}.story-copy{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none}
+</style></head><body>
+<div id="root" data-composition-id="govue-live" data-width="1080" data-height="1920" data-duration="35">
+<canvas id="live-stage" class="clip" data-start="0" data-duration="35" data-track-index="0" width="1080" height="1920" data-layout-allow-overflow></canvas>
+<video id="live-browse" class="clip phone-source" src="assets/footage/browse.ff9f546cbc65.mp4" data-start="0" data-duration="4" data-track-index="1" data-layout-ignore data-hf-media-start-basis="local" preload="auto" muted playsinline></video>
+<video id="live-reader" class="clip phone-source" src="assets/footage/reader.95d9651d0838.mp4" data-start="4" data-duration="10" data-track-index="1" data-layout-ignore data-hf-media-start-basis="local" preload="auto" muted playsinline></video>
+<video id="live-longpress" class="clip phone-source" src="assets/footage/longpress.40a5ca82059c.mp4" data-start="14" data-duration="5" data-track-index="1" data-layout-ignore data-hf-media-start-basis="local" preload="auto" muted playsinline></video>
+<video id="live-chat" class="clip phone-source" src="assets/footage/chat.1de585c18cf2.mp4" data-start="19" data-duration="6" data-track-index="1" data-layout-ignore data-hf-media-start-basis="local" preload="auto" muted playsinline></video>
+<video id="live-quiz" class="clip phone-source" src="assets/footage/quiz.0307ad183e35.mp4" data-start="25" data-duration="10" data-track-index="1" data-layout-ignore data-hf-media-start-basis="local" preload="auto" muted playsinline></video>
+<div id="v3-intro" class="clip story-copy" data-composition-id="v3-intro" data-composition-src="compositions/v3/intro.html" data-start="0" data-duration="4" data-track-index="2" data-width="1080" data-height="1920"></div>
+<div id="v3-reader" class="clip story-copy" data-composition-id="v3-reader" data-composition-src="compositions/v3/reader.html" data-start="4" data-duration="10" data-track-index="2" data-width="1080" data-height="1920"></div>
+<div id="v3-longpress" class="clip story-copy" data-composition-id="v3-longpress" data-composition-src="compositions/v3/longpress.html" data-start="14" data-duration="5" data-track-index="2" data-width="1080" data-height="1920"></div>
+<div id="v3-chat" class="clip story-copy" data-composition-id="v3-chat" data-composition-src="compositions/v3/chat.html" data-start="19" data-duration="6" data-track-index="2" data-width="1080" data-height="1920"></div>
+<div id="v3-practice" class="clip story-copy" data-composition-id="v3-practice" data-composition-src="compositions/v3/practice.html" data-start="25" data-duration="6" data-track-index="2" data-width="1080" data-height="1920"></div>
+<div id="v3-close" class="clip story-copy" data-composition-id="v3-close" data-composition-src="compositions/v3/close.html" data-start="31" data-duration="4" data-track-index="2" data-width="1080" data-height="1920"></div>
+<audio id="live-score" src="assets/audio/govue-v3-music.wav" data-start="0" data-duration="35" data-track-index="3" data-volume="0.9" data-automation="{&quot;version&quot;:1,&quot;lanes&quot;:[{&quot;target&quot;:&quot;volume&quot;,&quot;points&quot;:[{&quot;t&quot;:0,&quot;v&quot;:0.9},{&quot;t&quot;:33.8,&quot;v&quot;:0.9},{&quot;t&quot;:35,&quot;v&quot;:0}]}]}"></audio>
+</div>
+<script>window.__govueClock={time:0};window.__timelines['govue-live']=gsap.timeline({paused:true}).to(window.__govueClock,{time:35,duration:35,ease:'none',onUpdate:()=>window.__govueV3?.renderAt(window.__govueClock.time)},0);</script>
+<script type="module">import * as THREE from 'three';window.THREE=THREE;window.__hf=window.__hf||{};window.__hf.buildReady=window.__hf.buildReady||{};window.__hf.buildReady.govueLive=import('./stage-v3.js').then(m=>m.buildStage(THREE));</script>
+</body></html>

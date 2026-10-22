@@ -1,0 +1,50 @@
+[
+  {
+    "name": "browse",
+    "raw": "../../.cache/launch-v3-watch-clean-01.mov",
+    "in": 0.5,
+    "start": 0,
+    "duration": 4
+  },
+  {
+    "name": "reader",
+    "raw": "../../.cache/launch-v3-reader-01.mov",
+    "in": 8.5,
+    "start": 4,
+    "duration": 10
+  },
+  {
+    "name": "longpress",
+    "raw": "../../.cache/launch-v3-longpress-02.mov",
+    "in": 4.1,
+    "start": 14,
+    "duration": 5,
+    "segments": [
+      {
+        "in": 4.1,
+        "duration": 1.4666666666666666
+      },
+      {
+        "raw": "../../.cache/launch-v3-longpress-save-01.mov",
+        "in": 8.5,
+        "duration": 3.533333333333333
+      }
+    ],
+    "note": "Real physical long press followed by an editorial cut to Save word. Omit Apple translation, which is unavailable in iOS Simulator; retain real app pixels and normal gesture speed."
+  },
+  {
+    "name": "chat",
+    "raw": "../../.cache/launch-v3-chat-01.mov",
+    "in": 0,
+    "sourceDuration": 5.666666667,
+    "start": 19,
+    "duration": 6
+  },
+  {
+    "name": "quiz",
+    "raw": "../../.cache/launch-v3-quiz-01.mov",
+    "in": 1,
+    "start": 25,
+    "duration": 10
+  }
+]

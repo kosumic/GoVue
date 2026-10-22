@@ -11,6 +11,8 @@ export default defineConfig([
     'src/youtube/generated/**',
     // Vendored DASH player and browser extension sources.
     'core/src/cast/assets/dash.all.min.js', 'src/youtube/litube/**',
+    // The launch film vendors its pinned WebGL runtime and generates render artifacts.
+    'videos/**/assets/vendor/**', 'videos/**/.hyperframes/**', 'videos/**/renders/**',
   ]),
   {
     files: ['**/*.{js,jsx,cjs,mjs,ts,tsx}'],

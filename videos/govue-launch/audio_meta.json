@@ -1,0 +1,30 @@
+{
+  "duration_s": 35,
+  "narration": null,
+  "bgm": {
+    "path": "assets/audio/govue-v3-music.wav",
+    "source_path": "assets/audio/tech-house-vibes.source.mp3",
+    "title": "Tech House vibes",
+    "artist": "Alejandro Magaña (A. M.)",
+    "provider": "Mixkit",
+    "catalog_id": 130,
+    "license": "https://mixkit.co/license/#musicFree",
+    "duration_s": 45,
+    "source_range_s": [
+      0,
+      45
+    ],
+    "target_lufs": -15,
+    "true_peak_db": -1.5,
+    "clip_range_s": [
+      0,
+      35
+    ],
+    "fade_out_s": [
+      33.8,
+      35
+    ]
+  },
+  "sfx": [],
+  "screen_recording_audio": "muted"
+}

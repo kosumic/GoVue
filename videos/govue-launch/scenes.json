@@ -1,0 +1,38 @@
+[
+  {
+    "id": "intro",
+    "start": 0,
+    "duration": 4,
+    "title": "Turn watching into learning."
+  },
+  {
+    "id": "reader",
+    "start": 4,
+    "duration": 10,
+    "title": "Read along."
+  },
+  {
+    "id": "longpress",
+    "start": 14,
+    "duration": 5,
+    "title": "Hold. Select. Save."
+  },
+  {
+    "id": "chat",
+    "start": 19,
+    "duration": 6,
+    "title": "Ask your AI."
+  },
+  {
+    "id": "practice",
+    "start": 25,
+    "duration": 6,
+    "title": "Make it stick."
+  },
+  {
+    "id": "close",
+    "start": 31,
+    "duration": 4,
+    "title": "Learn from every line."
+  }
+]

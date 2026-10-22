@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><body><template>
+<style>
+#v2-prompt-root{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;color:#151B24}
+#v2-prompt-root .copy{position:absolute;left:96px;right:145px;top:485px}
+#v2-prompt-root h1{margin:0;font:400 154px/0.96 'Instrument Serif',sans-serif;letter-spacing:-.045em;font-style:italic;}
+#v2-prompt-root .line{display:block;width:100%}
+#v2-prompt-root .sub{position:absolute;left:96px;right:145px;bottom:385px;margin:0;font:400 37px/1.2 Barlow,sans-serif;color:#354353;max-width:780px}
+
+#v2-prompt-root .sub{top:350px;bottom:auto;font-size:42px;color:#151B24}
+
+#v2-prompt-root .logo{position:absolute;left:96px;top:430px;width:118px;height:118px;object-fit:contain}
+#v2-prompt-root .cta{position:absolute;left:96px;right:145px;top:1315px}
+#v2-prompt-root .platform{font:400 30px/1.3 Barlow,sans-serif;margin:0 0 21px}
+#v2-prompt-root .address{font:500 25px/1.25 'IBM Plex Mono',monospace;letter-spacing:-.025em;margin:0}
+</style>
+<div data-hf-id="hf-7lvs" id="v2-prompt-root" data-composition-id="v2-prompt" data-width="1080" data-height="1920" data-duration="6">
+ <div data-hf-id="hf-jrg2" id="v2-prompt-content" class="clip" data-start="0" data-duration="6" data-track-index="1">
+  
+  <div data-hf-id="hf-q6vq" class="copy" id="v2-prompt-copy"><h1 data-hf-id="hf-m3fm"><span data-hf-id="hf-ormy" id="v2-prompt-line-0" class="line">Make this</span><span data-hf-id="hf-etyc" id="v2-prompt-line-1" class="line">into a game.</span></h1></div>
+  <p data-hf-id="hf-idhh" id="v2-prompt-sub" class="sub"><span data-hf-id="hf-07qv" class="line">Ask your AI.</span></p>
+  
+ </div>
+</div>
+<script>(()=>{
+ const out=p=>p===1?1:1-Math.pow(2,-10*p);
+ const into=p=>p===0?0:Math.pow(2,10*(p-1));
+ const tl=gsap.timeline({paused:true});
+ tl.fromTo('#v2-prompt-line-0',{y:35,opacity:0},{y:0,opacity:1,duration:.65,ease:out},0.18);
+tl.fromTo('#v2-prompt-line-1',{y:35,opacity:0},{y:0,opacity:1,duration:.65,ease:out},0.3);
+ tl.fromTo('#v2-prompt-sub',{y:18,opacity:0},{y:0,opacity:1,duration:.5,ease:out},0.1);
+ tl.to(['#v2-prompt-copy','#v2-prompt-sub'],{y:-25,opacity:0,duration:.3,ease:into},2.4);
+ window.__timelines['v2-prompt']=tl;
+})();</script>
+</template></body></html>

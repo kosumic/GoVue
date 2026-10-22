@@ -1,0 +1,33 @@
+<!doctype html><html lang="en"><body><template>
+<style>
+#v2-close-root{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;color:#151B24}
+#v2-close-root .copy{position:absolute;left:96px;right:145px;top:585px}
+#v2-close-root h1{margin:0;font:600 194px/1.02 Barlow,sans-serif;letter-spacing:-.045em;}
+#v2-close-root .line{display:block;width:100%}
+#v2-close-root .sub{position:absolute;left:96px;right:145px;bottom:385px;margin:0;font:400 37px/1.2 Barlow,sans-serif;color:#354353;max-width:780px}
+
+
+#v2-close-root .sub{top:835px;bottom:auto;font:italic 400 100px/1.02 'Instrument Serif',serif;letter-spacing:-.025em;color:#151B24}
+#v2-close-root .logo{position:absolute;left:96px;top:430px;width:118px;height:118px;object-fit:contain}
+#v2-close-root .cta{position:absolute;left:96px;right:145px;top:1315px}
+#v2-close-root .platform{font:400 30px/1.3 Barlow,sans-serif;margin:0 0 21px}
+#v2-close-root .address{font:500 25px/1.25 'IBM Plex Mono',monospace;letter-spacing:-.025em;margin:0}
+</style>
+<div data-hf-id="hf-n01g" id="v2-close-root" data-composition-id="v2-close" data-width="1080" data-height="1920" data-duration="4">
+ <div data-hf-id="hf-mymu" id="v2-close-content" class="clip" data-start="0" data-duration="4" data-track-index="1">
+  <img data-hf-id="hf-xxlb" class="logo" id="v2-close-logo" src="assets/icon.png" alt="GoVue">
+  <div data-hf-id="hf-mqh8" class="copy" id="v2-close-copy"><h1 data-hf-id="hf-m3fm"><span data-hf-id="hf-5z5o" id="v2-close-line-0" class="line">GoVue</span></h1></div>
+  <p data-hf-id="hf-2nov" id="v2-close-sub" class="sub"><span data-hf-id="hf-bp41" class="line">Learn from</span><span data-hf-id="hf-prwe" class="line">every line.</span></p>
+  <div data-hf-id="hf-31yq" id="v2-close-cta" class="cta"><p data-hf-id="hf-af1l" class="platform">Android + iOS · open source</p><p data-hf-id="hf-5k9i" class="address">github.com/kosumic/GoVue</p></div>
+ </div>
+</div>
+<script>(()=>{
+ const out=p=>p===1?1:1-Math.pow(2,-10*p);
+ const into=p=>p===0?0:Math.pow(2,10*(p-1));
+ const tl=gsap.timeline({paused:true});
+ tl.fromTo('#v2-close-line-0',{y:35,opacity:0},{y:0,opacity:1,duration:.65,ease:out},0.8);
+ tl.fromTo('#v2-close-sub',{y:18,opacity:0},{y:0,opacity:1,duration:.5,ease:out},1.2);
+ tl.fromTo('#v2-close-logo',{scale:.9,opacity:0},{scale:1,opacity:1,duration:.6,ease:out},.7);tl.fromTo('#v2-close-cta',{y:15,opacity:0},{y:0,opacity:1,duration:.6,ease:out},1.6);
+ window.__timelines['v2-close']=tl;
+})();</script>
+</template></body></html>

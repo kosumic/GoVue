@@ -1,0 +1,3 @@
+[
+  { "at": 1, "command": ["tap", "-x", "193", "-y", "230", "--tap-style", "physical", "--post-delay", "0.6"] }
+]

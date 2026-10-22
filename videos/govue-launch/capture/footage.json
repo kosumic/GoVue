@@ -1,0 +1,84 @@
+[
+  {
+    "name": "browse",
+    "src": "assets/footage/browse.ff9f546cbc65.mp4",
+    "start": 0,
+    "duration": 4,
+    "sha256": "ff9f546cbc65c9eec51243fe70f5fdbe3a9229ba29450226c59bbc179a48199f",
+    "raw": "launch-v3-watch-clean-01.mov",
+    "sourceIn": 0.5,
+    "width": 1206,
+    "height": 2622,
+    "fps": 30,
+    "sourceDuration": 4,
+    "speed": 1
+  },
+  {
+    "name": "reader",
+    "src": "assets/footage/reader.95d9651d0838.mp4",
+    "start": 4,
+    "duration": 10,
+    "sha256": "95d9651d0838ed7ab141e8df06669dc316e07b4b364cf424f53be45742af2fce",
+    "raw": "launch-v3-reader-01.mov",
+    "sourceIn": 8.5,
+    "width": 1206,
+    "height": 2622,
+    "fps": 30,
+    "sourceDuration": 10,
+    "speed": 1
+  },
+  {
+    "name": "longpress",
+    "src": "assets/footage/longpress.40a5ca82059c.mp4",
+    "start": 14,
+    "duration": 5,
+    "sha256": "40a5ca82059c2e30e62d5b37bfcea035bd2ac43a009478bce8684dd735aa2797",
+    "raw": "launch-v3-longpress-02.mov",
+    "sourceIn": 4.1,
+    "width": 1206,
+    "height": 2622,
+    "fps": 30,
+    "sourceDuration": 5,
+    "speed": 1,
+    "segments": [
+      {
+        "in": 4.1,
+        "duration": 1.4666666666666666
+      },
+      {
+        "raw": "../../.cache/launch-v3-longpress-save-01.mov",
+        "in": 8.5,
+        "duration": 3.533333333333333
+      }
+    ],
+    "editNote": "Real physical long press followed by an editorial cut to Save word. Omit Apple translation, which is unavailable in iOS Simulator; retain real app pixels and normal gesture speed."
+  },
+  {
+    "name": "chat",
+    "src": "assets/footage/chat.1de585c18cf2.mp4",
+    "start": 19,
+    "duration": 6,
+    "sha256": "1de585c18cf2dbbc26c6d09835bb5861d2fbb3b617e1eafc296ad0237db92923",
+    "raw": "launch-v3-chat-01.mov",
+    "sourceIn": 0,
+    "width": 1206,
+    "height": 2622,
+    "fps": 30,
+    "sourceDuration": 5.666666667,
+    "speed": 0.9444444445000001
+  },
+  {
+    "name": "quiz",
+    "src": "assets/footage/quiz.0307ad183e35.mp4",
+    "start": 25,
+    "duration": 10,
+    "sha256": "0307ad183e35ce40dc3ceb042d585aaaa1d3fadb6c11b560fc018743698c61f8",
+    "raw": "launch-v3-quiz-01.mov",
+    "sourceIn": 1,
+    "width": 1206,
+    "height": 2622,
+    "fps": 30,
+    "sourceDuration": 10,
+    "speed": 1
+  }
+]

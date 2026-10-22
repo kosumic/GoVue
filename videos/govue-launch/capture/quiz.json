@@ -1,0 +1,20 @@
+[
+  {
+    "at": 0.5,
+    "command": [
+      "batch",
+      "--tap-style",
+      "physical",
+      "--step",
+      "tap -x 74 -y 242",
+      "--step",
+      "sleep 4",
+      "--step",
+      "tap -x 190 -y 316",
+      "--step",
+      "sleep 1.5",
+      "--step",
+      "tap -x 74 -y 242"
+    ]
+  }
+]

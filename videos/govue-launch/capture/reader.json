@@ -1,0 +1,5 @@
+[
+  { "at": 0.3, "command": ["tap", "-x", "202", "-y", "220", "--tap-style", "physical", "--post-delay", "0.1"] },
+  { "at": 0.7, "command": ["tap", "-x", "46", "-y", "332", "--tap-style", "physical", "--post-delay", "0.2"] },
+  { "at": 5.5, "command": ["tap", "-x", "183", "-y", "417", "--tap-style", "physical", "--post-delay", "0.1"] }
+]

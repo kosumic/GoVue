@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><body><template>
+<style>
+#f06-root { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+#f06-root .copy { position:absolute; inset:170px 132px auto 84px; }
+#f06-root .kicker { font:500 24px 'IBM Plex Mono',monospace; letter-spacing:.08em; text-transform:uppercase; margin:0 0 34px; color:#AAAAAA; }
+#f06-root h1 { margin:0; font:900 138px/.91 Barlow,sans-serif; letter-spacing:-.045em; color:#FFFFFF; }
+#f06-root .line { display:block; width:100%; min-height:132px; }
+#f06-root .line.accent { color:#3EA6FF; }
+#f06-root .note { font:400 37px/1.2 Barlow,sans-serif; max-width:760px; margin:32px 0 0; color:#FFFFFF; }
+#f06-root .close-note { font-size:58px; font-weight:600; letter-spacing:-.03em; }
+#f06-root .cta { position:absolute; inset:auto 132px 380px 84px; color:#FFFFFF; }
+#f06-root .platform { font:600 30px Barlow,sans-serif; margin:0 0 15px; }
+#f06-root .url { font:500 25px 'IBM Plex Mono',monospace; margin:0; }
+
+
+</style>
+<div data-hf-id="hf-xvlc" id="f06-root" data-composition-id="f06" data-width="1080" data-height="1920" data-duration="5.625">
+ <div data-hf-id="hf-daol" id="f06-content" class="clip" data-start="0" data-duration="5.625" data-track-index="1">
+  <div data-hf-id="hf-bdx3" class="copy">
+   <p data-hf-id="hf-2t8g" class="kicker" id="f06-kicker">05 / play</p>
+   <h1 data-hf-id="hf-m3fm"><span data-hf-id="hf-zt6t" class="line " id="f06-line0">now make it</span><span data-hf-id="hf-7hym" class="line accent" id="f06-line1">a game.</span></h1>
+   <p data-hf-id="hf-crao" class="note " id="f06-note">Ask the agent for a quiz. Play with lesson audio.</p>
+  </div>
+  
+ </div>
+</div>
+<script>
+(() => {
+ const tl = gsap.timeline({ paused:true });
+ tl.fromTo('#f06-kicker', {y:16,opacity:0}, {y:0,opacity:1,duration:.42,ease:'power3.out'}, .06);
+ tl.fromTo('#f06-line0', {y:80,rotationX:-48,opacity:0,transformPerspective:900,transformOrigin:'50% 100%'}, {y:0,rotationX:0,opacity:1,duration:.72,ease:'power4.out'}, 0.12);
+tl.fromTo('#f06-line1', {y:80,rotationX:-48,opacity:0,transformPerspective:900,transformOrigin:'50% 100%'}, {y:0,rotationX:0,opacity:1,duration:.72,ease:'power4.out'}, 1.1);
+ tl.fromTo('#f06-note', {y:22,opacity:0}, {y:0,opacity:1,duration:.5,ease:'power3.out'}, 2.8);
+ 
+ tl.to('#f06-root .copy', {y:-24,opacity:0,duration:.28,ease:'power2.in'}, 5.345);
+ window.__timelines['f06'] = tl;
+})();
+</script>
+</template></body></html>

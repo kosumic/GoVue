@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><body><template>
+<style>
+#v2-context-root{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;color:#151B24}
+#v2-context-root .copy{position:absolute;left:96px;right:145px;top:270px}
+#v2-context-root h1{margin:0;font:500 104px/1.02 Barlow,sans-serif;letter-spacing:-.045em;}
+#v2-context-root .line{display:block;width:100%}
+#v2-context-root .sub{position:absolute;left:96px;right:145px;bottom:385px;margin:0;font:400 37px/1.2 Barlow,sans-serif;color:#354353;max-width:780px}
+
+
+
+#v2-context-root .logo{position:absolute;left:96px;top:430px;width:118px;height:118px;object-fit:contain}
+#v2-context-root .cta{position:absolute;left:96px;right:145px;top:1315px}
+#v2-context-root .platform{font:400 30px/1.3 Barlow,sans-serif;margin:0 0 21px}
+#v2-context-root .address{font:500 25px/1.25 'IBM Plex Mono',monospace;letter-spacing:-.025em;margin:0}
+</style>
+<div data-hf-id="hf-ks9h" id="v2-context-root" data-composition-id="v2-context" data-width="1080" data-height="1920" data-duration="7">
+ <div data-hf-id="hf-30n4" id="v2-context-content" class="clip" data-start="0" data-duration="7" data-track-index="1">
+  
+  <div data-hf-id="hf-gjwr" class="copy" id="v2-context-copy"><h1 data-hf-id="hf-m3fm"><span data-hf-id="hf-2pbd" id="v2-context-line-0" class="line">A phrase worth</span><span data-hf-id="hf-taaz" id="v2-context-line-1" class="line">keeping.</span></h1></div>
+  <p data-hf-id="hf-x0lm" id="v2-context-sub" class="sub"><span data-hf-id="hf-l682" class="line">Examples. Grammar. The original context.</span></p>
+  
+ </div>
+</div>
+<script>(()=>{
+ const out=p=>p===1?1:1-Math.pow(2,-10*p);
+ const into=p=>p===0?0:Math.pow(2,10*(p-1));
+ const tl=gsap.timeline({paused:true});
+ tl.fromTo('#v2-context-line-0',{y:35,opacity:0},{y:0,opacity:1,duration:.65,ease:out},0.18);
+tl.fromTo('#v2-context-line-1',{y:35,opacity:0},{y:0,opacity:1,duration:.65,ease:out},0.3);
+ tl.fromTo('#v2-context-sub',{y:18,opacity:0},{y:0,opacity:1,duration:.5,ease:out},4.2);
+ tl.to(['#v2-context-copy','#v2-context-sub'],{y:-25,opacity:0,duration:.3,ease:into},6.7);
+ window.__timelines['v2-context']=tl;
+})();</script>
+</template></body></html>

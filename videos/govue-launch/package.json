@@ -1,0 +1,22 @@
+{
+  "name": "govue-launch",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:scenes": "node scripts/build-v3.mjs",
+    "build:audio": "node scripts/prepare-music.mjs",
+    "prepare:footage": "node scripts/prepare-live.mjs",
+    "build": "npm run build:scenes",
+    "dev": "bash scripts/hf.sh preview --background",
+    "check": "bash scripts/hf.sh check",
+    "render": "bash scripts/hf.sh render --fps 30 --quality delivery --variables-file capture/delivery-settings.json --output renders/govue-tiktok-35s.mp4",
+    "review": "bash scripts/hf.sh render --fps 24 --quality draft --workers 2 --video-frame-format png --variables-file capture/delivery-settings.json --output renders/govue-v4-review.mp4",
+    "snapshot": "bash scripts/hf.sh snapshot"
+  },
+  "devDependencies": {
+    "fontkit": "2.0.4",
+    "gsap": "3.14.2",
+    "hyperframes": "0.8.181",
+    "three": "0.181.2"
+  }
+}

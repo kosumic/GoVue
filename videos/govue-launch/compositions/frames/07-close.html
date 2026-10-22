@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><body><template>
+<style>
+#f07-root { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+#f07-root .copy { position:absolute; inset:170px 132px auto 84px; }
+#f07-root .kicker { font:500 24px 'IBM Plex Mono',monospace; letter-spacing:.08em; text-transform:uppercase; margin:0 0 34px; color:#AAAAAA; }
+#f07-root h1 { margin:0; font:900 196px/.91 Barlow,sans-serif; letter-spacing:-.045em; color:#FFFFFF; }
+#f07-root .line { display:block; width:100%; min-height:132px; }
+#f07-root .line.accent { color:#3EA6FF; }
+#f07-root .note { font:400 37px/1.2 Barlow,sans-serif; max-width:760px; margin:32px 0 0; color:#FFFFFF; }
+#f07-root .close-note { font-size:58px; font-weight:600; letter-spacing:-.03em; }
+#f07-root .cta { position:absolute; inset:auto 132px 380px 84px; color:#FFFFFF; }
+#f07-root .platform { font:600 30px Barlow,sans-serif; margin:0 0 15px; }
+#f07-root .url { font:500 25px 'IBM Plex Mono',monospace; margin:0; }
+
+#f07-root h1{opacity:0}
+</style>
+<div data-hf-id="hf-ylf2" id="f07-root" data-composition-id="f07" data-width="1080" data-height="1920" data-duration="4.6875">
+ <div data-hf-id="hf-c2cm" id="f07-content" class="clip" data-start="0" data-duration="4.6875" data-track-index="1">
+  <div data-hf-id="hf-bdx3" class="copy">
+   <p data-hf-id="hf-0ktg" class="kicker" id="f07-kicker">meet your next learning habit</p>
+   <h1 data-hf-id="hf-m3fm"><span data-hf-id="hf-lhsf" class="line " id="f07-line0">GoVue</span></h1>
+   <p data-hf-id="hf-mk5l" class="note close-note" id="f07-note">learn from every line.</p>
+  </div>
+  <div data-hf-id="hf-zols" class="cta" id="f07-cta"><p data-hf-id="hf-af1l" class="platform">Android + iOS · open source</p><p data-hf-id="hf-qv2p" class="url">github.com/kosumic/GoVue</p></div>
+ </div>
+</div>
+<script>
+(() => {
+ const tl = gsap.timeline({ paused:true });
+ tl.fromTo('#f07-kicker', {y:16,opacity:0}, {y:0,opacity:1,duration:.42,ease:'power3.out'}, .06);
+ 
+ tl.fromTo('#f07-note', {y:22,opacity:0}, {y:0,opacity:1,duration:.5,ease:'power3.out'}, 1.15);
+ tl.fromTo('#f07-cta', {y:20,opacity:0}, {y:0,opacity:1,duration:.5,ease:'power3.out'}, 2);
+ 
+ window.__timelines['f07'] = tl;
+})();
+</script>
+</template></body></html>
