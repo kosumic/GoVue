@@ -14,10 +14,10 @@ const clips = JSON.parse(fs.readFileSync(path.join(root, 'capture/footage.json')
 const scenes = [
   { id: 'intro', start: 0, duration: 4, title: 'Turn watching into learning.' },
   { id: 'reader', start: 4, duration: 10, title: 'Read along.' },
-  { id: 'longpress', start: 14, duration: 5, title: 'Hold. Select. Save.' },
+  { id: 'longpress', start: 14, duration: 5, title: 'Hold to translate.' },
   { id: 'chat', start: 19, duration: 6, title: 'Ask your AI.' },
   { id: 'practice', start: 25, duration: 6, title: 'Make it stick.' },
-  { id: 'close', start: 31, duration: 4, title: 'Learn from every line.' },
+  { id: 'close', start: 31, duration: 4, title: 'Learn from every video lesson.' },
 ];
 const duration = scenes.at(-1).start + scenes.at(-1).duration;
 const volumeAutomation = JSON.stringify({ version: 1, lanes: [{ target: 'volume', points: [
@@ -36,13 +36,18 @@ ${['reader', 'longpress', 'chat'].includes(s.id) ? `#${id}-root h1{display:inlin
 #${id}-root .desc{font:400 43px/1.15 Barlow,sans-serif;margin:24px 0 0;max-width:780px;letter-spacing:-.02em}
 #${id}-root .closing{position:absolute;left:96px;right:150px;top:1450px;color:#e9edf2}
 #${id}-root .platform{font:400 32px/1.3 Barlow,sans-serif;margin:0 0 18px}
-#${id}-root .address{font:600 30px/1.3 Barlow,sans-serif;margin:0}
+${close ? `#${id}-root .platforms{display:flex;align-items:center;gap:32px;margin:0 0 18px}
+#${id}-root .platform{display:inline-flex;align-items:center;gap:12px;margin:0}
+#${id}-root .platform-icon{display:block;width:48px;height:48px;object-fit:contain}
+#${id}-root .android-icon{width:64px;height:64px}
+#${id}-root .platform-note{font:400 28px/1.3 Barlow,sans-serif;color:#b5c0cd}
+` : ''}#${id}-root .address{font:600 30px/1.3 Barlow,sans-serif;margin:0}
 #${id}-root .credit{font:400 22px/1.3 Barlow,sans-serif;color:#b5c0cd;margin:22px 0 0;max-width:800px}
 </style>
 <div id="${id}-root" data-composition-id="${id}" data-width="1080" data-height="1920" data-duration="${s.duration}">
  <div id="${id}-content" class="clip" data-start="0" data-duration="${s.duration}" data-track-index="0">
   <div id="${id}-inner"><h1>${s.title}</h1>${s.sub ? `<p class="desc">${s.sub}</p>` : ''}</div>
-  ${close ? '<div id="v3-closing-info" class="closing"><p class="platform">Android + iOS · open source</p><p class="address">github.com/kosumic/GoVue</p><p class="credit">iPhone 17 Pro: Ibrahim.Bhl · CC BY 4.0</p></div>' : ''}
+  ${close ? '<div id="v3-closing-info" class="closing"><div class="platforms" aria-label="Android and iOS, open source"><span class="platform"><img class="platform-icon android-icon" src="assets/platforms/android.svg" width="64" height="64" alt="">Android</span><span class="platform"><img class="platform-icon" src="assets/platforms/apple.svg" width="48" height="48" alt="">iOS</span><span class="platform-note">· open source</span></div><p class="address">github.com/kosumic/GoVue</p><p class="credit">iPhone 17 Pro: Ibrahim.Bhl · CC BY 4.0</p></div>' : ''}
  </div>
 </div>
 <script>(()=>{

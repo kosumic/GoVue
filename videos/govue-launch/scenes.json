@@ -15,7 +15,7 @@
     "id": "longpress",
     "start": 14,
     "duration": 5,
-    "title": "Hold. Select. Save."
+    "title": "Hold to translate."
   },
   {
     "id": "chat",
@@ -33,6 +33,6 @@
     "id": "close",
     "start": 31,
     "duration": 4,
-    "title": "Learn from every line."
+    "title": "Learn from every video lesson."
   }
 ]

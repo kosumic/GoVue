@@ -16,7 +16,8 @@ const actions = JSON.parse(fs.readFileSync(values.plan, 'utf8'));
 fs.mkdirSync(values.output, { recursive: true });
 const base = path.join(values.output, values.name);
 if (fs.existsSync(`${base}.mov`)) throw new Error(`Keep the earlier take: ${base}.mov`);
-process.env.AXE_HID_STABILIZATION_MS = '25';
+// Allow the simulator's HID session to settle before sending physical input.
+process.env.AXE_HID_STABILIZATION_MS ??= '250';
 const run = (program, args) => new Promise((resolve, reject) => {
   const p = spawn(program, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';

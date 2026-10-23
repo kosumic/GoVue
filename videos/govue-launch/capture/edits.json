@@ -1,36 +1,26 @@
 [
   {
     "name": "browse",
-    "raw": "../../.cache/launch-v3-watch-clean-01.mov",
+    "raw": "../../.cache/launch-0.3.0-20261022/takes/browse-01.mov",
     "in": 0.5,
     "start": 0,
     "duration": 4
   },
   {
     "name": "reader",
-    "raw": "../../.cache/launch-v3-reader-01.mov",
-    "in": 8.5,
+    "raw": "../../.cache/launch-0.3.0-20261022/takes/reader-01.mov",
+    "in": 7,
     "start": 4,
     "duration": 10
   },
   {
     "name": "longpress",
-    "raw": "../../.cache/launch-v3-longpress-02.mov",
-    "in": 4.1,
+    "raw": "../../.cache/translation-demo-20261022/takes/translation-apprendre-01.mov",
+    "in": 7.366666666666666,
     "start": 14,
     "duration": 5,
-    "segments": [
-      {
-        "in": 4.1,
-        "duration": 1.4666666666666666
-      },
-      {
-        "raw": "../../.cache/launch-v3-longpress-save-01.mov",
-        "in": 8.5,
-        "duration": 3.533333333333333
-      }
-    ],
-    "note": "Real physical long press followed by an editorial cut to Save word. Omit Apple translation, which is unavailable in iOS Simulator; retain real app pixels and normal gesture speed."
+    "holdLastFrame": 4,
+    "note": "Real physical hold and actual app card; EXPO_PUBLIC_GOVUE_MOCK_TRANSLATION=1 stages apprendre → learn. Preserve the final static translation frame omitted by simctl after the screen stops changing."
   },
   {
     "name": "chat",
@@ -42,9 +32,11 @@
   },
   {
     "name": "quiz",
-    "raw": "../../.cache/launch-v3-quiz-01.mov",
-    "in": 1,
+    "raw": "../../.cache/launch-0.3.0-20261022/takes/quiz-04.mov",
+    "in": 0.5,
     "start": 25,
-    "duration": 10
+    "duration": 10,
+    "holdLastFrame": 3,
+    "note": "Real answer and scroll at normal speed. Hold the unchanged final feedback screen to restore the static tail omitted by simctl from the 30-second take."
   }
 ]

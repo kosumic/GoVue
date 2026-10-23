@@ -1,18 +1,22 @@
 [
   {
-    "at": 0.3,
+    "at": 1,
     "command": [
       "batch",
       "--tap-style",
       "physical",
       "--step",
-      "sleep 0.6",
+      "tap -x 342 -y 614",
       "--step",
-      "tap -x 202 -y 440",
+      "sleep 2",
       "--step",
-      "sleep 4",
+      "swipe --start-x 200 --start-y 792 --end-x 200 --end-y 690 --duration 0.5",
       "--step",
-      "tap -x 202 -y 440"
+      "swipe --start-x 200 --start-y 665 --end-x 200 --end-y 695 --duration 0.6",
+      "--step",
+      "sleep 10",
+      "--step",
+      "swipe --start-x 200 --start-y 650 --end-x 200 --end-y 750 --duration 1.0"
     ]
   }
 ]

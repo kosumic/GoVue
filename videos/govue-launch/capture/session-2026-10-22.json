@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-22",
+  "host": "mini",
+  "device": "GoVue README Preview",
+  "simulator": "FB908D0D-3294-4745-BFC5-ACAF397EC3C8",
+  "model": "iPhone 17 Pro",
+  "os": "iOS 26.5",
+  "app": {
+    "version": "0.3.0",
+    "bundleIdentifier": "io.github.kaminarios.govue",
+    "configuration": "Release",
+    "commit": "05cabec",
+    "uncommittedChanges": [
+      "src/native/translation.ts"
+    ]
+  },
+  "refreshed": [
+    "browse",
+    "reader",
+    "longpress",
+    "quiz"
+  ],
+  "retained": {
+    "chat": "User requested skipping the fresh chat capture because the new install requires provider sign-in."
+  },
+  "rawDirectory": "../../.cache/launch-0.3.0-20261022/takes",
+  "quizRecordingSeconds": 30,
+  "languages": {
+    "known": [
+      {
+        "language": "English",
+        "level": "native"
+      }
+    ],
+    "learning": [
+      {
+        "language": "French",
+        "level": "A2"
+      }
+    ]
+  },
+  "wordTranslation": {
+    "staged": true,
+    "mode": "EXPO_PUBLIC_GOVUE_MOCK_TRANSLATION=1",
+    "fixture": "src/native/translation.ts",
+    "input": "apprendre",
+    "sourceLangCode": "fr",
+    "output": "learn",
+    "targetLangCode": "en",
+    "raw": "../../.cache/translation-demo-20261022/takes/translation-apprendre-01.mov",
+    "recordingSeconds": 25,
+    "reason": "User requested mock code because Apple translation is unavailable in iOS Simulator.",
+    "caption": "Aujourd'hui, vous allez apprendre à vous présenter en français. C'est parti.",
+    "captionStart": 14.96
+  }
+}

@@ -1,11 +1,11 @@
 [
   {
     "name": "browse",
-    "src": "assets/footage/browse.ff9f546cbc65.mp4",
+    "src": "assets/footage/browse.249882e71175.mp4",
     "start": 0,
     "duration": 4,
-    "sha256": "ff9f546cbc65c9eec51243fe70f5fdbe3a9229ba29450226c59bbc179a48199f",
-    "raw": "launch-v3-watch-clean-01.mov",
+    "sha256": "249882e711759c38189ff028d8c1c320631c6ee581eb02d0065df729bee99f0f",
+    "raw": "browse-01.mov",
     "sourceIn": 0.5,
     "width": 1206,
     "height": 2622,
@@ -15,12 +15,12 @@
   },
   {
     "name": "reader",
-    "src": "assets/footage/reader.95d9651d0838.mp4",
+    "src": "assets/footage/reader.42248104f76b.mp4",
     "start": 4,
     "duration": 10,
-    "sha256": "95d9651d0838ed7ab141e8df06669dc316e07b4b364cf424f53be45742af2fce",
-    "raw": "launch-v3-reader-01.mov",
-    "sourceIn": 8.5,
+    "sha256": "42248104f76bedde93f4a0c1dc2830ac643d47b584289989e181fbd57b3beed0",
+    "raw": "reader-01.mov",
+    "sourceIn": 7,
     "width": 1206,
     "height": 2622,
     "fps": 30,
@@ -29,29 +29,19 @@
   },
   {
     "name": "longpress",
-    "src": "assets/footage/longpress.40a5ca82059c.mp4",
+    "src": "assets/footage/longpress.90980500bfff.mp4",
     "start": 14,
     "duration": 5,
-    "sha256": "40a5ca82059c2e30e62d5b37bfcea035bd2ac43a009478bce8684dd735aa2797",
-    "raw": "launch-v3-longpress-02.mov",
-    "sourceIn": 4.1,
+    "sha256": "90980500bfffb750b7b3078fd5a22f786b54d01cdf6320412017f7106b4856fa",
+    "raw": "translation-apprendre-01.mov",
+    "sourceIn": 7.366666666666666,
     "width": 1206,
     "height": 2622,
     "fps": 30,
     "sourceDuration": 5,
     "speed": 1,
-    "segments": [
-      {
-        "in": 4.1,
-        "duration": 1.4666666666666666
-      },
-      {
-        "raw": "../../.cache/launch-v3-longpress-save-01.mov",
-        "in": 8.5,
-        "duration": 3.533333333333333
-      }
-    ],
-    "editNote": "Real physical long press followed by an editorial cut to Save word. Omit Apple translation, which is unavailable in iOS Simulator; retain real app pixels and normal gesture speed."
+    "holdLastFrame": 4,
+    "editNote": "Real physical hold and actual app card; EXPO_PUBLIC_GOVUE_MOCK_TRANSLATION=1 stages apprendre → learn. Preserve the final static translation frame omitted by simctl after the screen stops changing."
   },
   {
     "name": "chat",
@@ -69,16 +59,18 @@
   },
   {
     "name": "quiz",
-    "src": "assets/footage/quiz.0307ad183e35.mp4",
+    "src": "assets/footage/quiz.a706fed4d529.mp4",
     "start": 25,
     "duration": 10,
-    "sha256": "0307ad183e35ce40dc3ceb042d585aaaa1d3fadb6c11b560fc018743698c61f8",
-    "raw": "launch-v3-quiz-01.mov",
-    "sourceIn": 1,
+    "sha256": "a706fed4d529beb94b882df4a36daeb3a7a1f23122f95f7eb0e649bdc92d5e00",
+    "raw": "quiz-04.mov",
+    "sourceIn": 0.5,
     "width": 1206,
     "height": 2622,
     "fps": 30,
     "sourceDuration": 10,
-    "speed": 1
+    "speed": 1,
+    "holdLastFrame": 3,
+    "editNote": "Real answer and scroll at normal speed. Hold the unchanged final feedback screen to restore the static tail omitted by simctl from the 30-second take."
   }
 ]

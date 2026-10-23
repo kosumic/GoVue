@@ -196,12 +196,12 @@ export async function buildStage(THREE) {
       brand.scale.setScalar(.24 * (1 - smooth((t - 2.55) / .45)));
     }
     const gesture = t - cuts.word;
-    contact.visible = gesture >= .75 && gesture < 44 / 30;
+    contact.visible = gesture >= .65 && gesture < 1.75;
     if (contact.visible) {
-      const appear = out((gesture - .75) / .067), lift = 1 - clamp((gesture - 1.3) / .2);
+      const appear = out((gesture - .65) / .067), lift = 1 - clamp((gesture - 1.55) / .2);
       contact.position.copy(main.display.position).add(new THREE.Vector3(
-        (211 / 402 - .5) * main.display.geometry.parameters.width,
-        (.5 - 612 / 874) * main.display.geometry.parameters.height, .018));
+        (291 / 402 - .5) * main.display.geometry.parameters.width,
+        (.5 - 550 / 874) * main.display.geometry.parameters.height, .018));
       contact.scale.setScalar(mix(.9, 1, appear)); contactCore.material.opacity = .35 * appear * lift;
       contactEdge.material.opacity = .6 * appear * lift;
     }

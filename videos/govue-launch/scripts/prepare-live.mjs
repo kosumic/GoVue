@@ -18,7 +18,8 @@ for (const e of edits) {
   const filter = e.segments ? ['-filter_complex',
     e.segments.map((s, i) => `[${i}:v]fps=30,trim=start=${s.in}:duration=${s.duration},setpts=PTS-STARTPTS[part${i}]`).join(';') +
       ';' + e.segments.map((_, i) => `[part${i}]`).join('') + `concat=n=${e.segments.length}:v=1:a=0,${tail}[out]`, '-map', '[out]'] :
-    ['-vf', `fps=30,trim=start=${e.in}:duration=${sourceDuration},${tail}`];
+    // Pad before resampling so a final VFR frame shorter than 1/30s is retained.
+    ['-vf', `${e.holdLastFrame ? `tpad=stop_mode=clone:stop_duration=${e.holdLastFrame},` : ''}fps=30,trim=start=${e.in}:duration=${sourceDuration},${tail}`];
   execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', ...inputs.flatMap(input => ['-i', input]), '-an', ...filter,
     '-c:v', 'libx264', '-crf', '18', '-preset', 'fast', '-pix_fmt', 'yuv420p', '-g', '10', '-movflags', '+faststart', temp]);
   const probe = JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-count_frames', '-show_entries', 'stream=width,height,nb_read_frames:format=duration', '-of', 'json', temp], { encoding: 'utf8' }));
@@ -27,7 +28,9 @@ for (const e of edits) {
   const src = `assets/footage/${e.name}.${hash.slice(0, 12)}.mp4`; fs.renameSync(temp, path.join(root, src));
   clips.push({ name: e.name, src, start: e.start, duration: e.duration, sha256: hash, raw: path.basename(source), sourceIn: e.in,
     width: probe.streams[0].width, height: probe.streams[0].height, fps: 30, sourceDuration, speed: sourceDuration / e.duration,
-    ...(e.segments ? { segments: e.segments, editNote: e.note } : {}) });
+    ...(e.segments ? { segments: e.segments } : {}),
+    ...(e.holdLastFrame ? { holdLastFrame: e.holdLastFrame } : {}),
+    ...(e.note ? { editNote: e.note } : {}) });
   console.log(`${e.name}: ${e.duration}s real recording → ${src}`);
 }
 fs.writeFileSync(path.join(root, 'capture/footage.json'), JSON.stringify(clips, null, 2) + '\n');
