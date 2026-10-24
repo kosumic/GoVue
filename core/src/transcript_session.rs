@@ -52,6 +52,41 @@ pub(crate) fn snapshot(command: &Value, root: &str) -> Result<Value> {
     Ok(state)
 }
 
+fn document(
+    reader: &Reader,
+    root: &str,
+    video: &str,
+    audio: &str,
+    track: &str,
+    fresh: bool,
+    documents: &[Value],
+) -> Result<Value> {
+    check(reader)?;
+    if let Some(retained) = documents
+        .iter()
+        .find(|d| track == "default" || d["data"]["trackId"] == track)
+    {
+        return Ok(retained.clone());
+    }
+    let saved = if fresh {
+        Value::Null
+    } else {
+        crate::request(
+            &json!({"op":"restore","videoId":video,"audioKey":audio,
+                "trackId":if track=="default" {None}else{Some(track)}}),
+            root,
+        )
+        .unwrap_or(Value::Null)
+    };
+    check(reader)?;
+    if !saved.is_null() {
+        return Ok(json!({"data":saved,"cached":true}));
+    }
+    Ok(
+        json!({"data":crate::extraction::resolve(root,"transcript",video,track,audio,fresh,&||check(reader))?,"cached":false}),
+    )
+}
+
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let id = SessionId::parse(crate::string(command, "sessionId")?, 100)
         .map_err(|_| "Invalid reader session.")?;
@@ -116,6 +151,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         .as_array()
         .filter(|t| !t.is_empty() && t.len() <= 2)
         .ok_or("Select one or two transcript languages.")?;
+    let restore_preferences = tracks.len() == 1 && tracks[0] == "default";
     if !crate::video_id(video)
         || audio.len() > 512
         || tracks
@@ -140,7 +176,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|d| tracks.contains(&d["data"]["trackId"]))
+                .filter(|d| restore_preferences || tracks.contains(&d["data"]["trackId"]))
                 .cloned()
                 .collect();
         }
@@ -149,7 +185,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         && let Ok(mut seed) =
             serde_json::from_value::<crate::Transcript>(command["initial"].clone())
         && seed.video_id == video
-        && tracks.contains(&json!(seed.track_id))
+        && (restore_preferences || tracks.contains(&json!(seed.track_id)))
         && !documents
             .iter()
             .any(|d| d["data"]["trackId"] == seed.track_id)
@@ -162,7 +198,8 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         version,
         cancelled: AtomicBool::new(false),
         state: Mutex::new(json!({
-            "version":version,"videoId":video,"audioKey":audio,"trackIds":tracks,"documents":documents,"loading":true,"error":null
+            "version":version,"videoId":video,"audioKey":audio,"trackIds":tracks,
+            "documents":if restore_preferences {Vec::new()} else {documents.clone()},"loading":true,"error":null
         })),
     });
     readers.insert(key, reader.clone());
@@ -181,31 +218,35 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     );
     thread::spawn(move || {
         let result = (|| -> Result<()> {
+            let mut tracks = tracks;
+            if restore_preferences {
+                // Resolve portable language preferences from this video's track
+                // metadata, including when its cached document is a translation.
+                let base = document(&reader, &root, &video, &audio, "default", fresh, &documents)?;
+                let data = serde_json::from_value::<crate::Transcript>(base["data"].clone())
+                    .map_err(|_| "Invalid transcript metadata.")?;
+                tracks = crate::transcript::preferences::resolve(&root, &data)
+                    .into_iter()
+                    .map(Value::String)
+                    .collect();
+                documents.push(base);
+                check(&reader)?;
+                reader
+                    .state
+                    .lock()
+                    .map_err(|_| "Transcript reader is busy.")?["trackIds"] = json!(tracks);
+            }
             let mut loaded = Vec::new();
             for track in &tracks {
-                check(&reader)?;
-                let retained = documents
-                    .iter()
-                    .find(|d| d["data"]["trackId"] == *track)
-                    .cloned();
-                let saved = if fresh || retained.is_some() {
-                    Value::Null
-                } else {
-                    crate::request(
-                        &json!({"op":"restore","videoId":video,"audioKey":audio,
-                        "trackId":if track=="default" {Value::Null}else{track.clone()}}),
-                        &root,
-                    )
-                    .unwrap_or(Value::Null)
-                };
-                check(&reader)?;
-                let document = if let Some(retained) = retained {
-                    retained
-                } else if !saved.is_null() {
-                    json!({"data":saved,"cached":true})
-                } else {
-                    json!({"data":crate::extraction::resolve(&root,"transcript",&video,track.as_str().ok_or("Invalid transcript track.")?,&audio,fresh,&||check(&reader))?,"cached":false})
-                };
+                let document = document(
+                    &reader,
+                    &root,
+                    &video,
+                    &audio,
+                    track.as_str().ok_or("Invalid transcript track.")?,
+                    fresh,
+                    &documents,
+                )?;
                 check(&reader)?;
                 loaded.push(document);
                 let mut state = reader

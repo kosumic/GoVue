@@ -133,6 +133,8 @@ mockup as Whip, using Easy French's
 - Keep authored line breaks, emphasis, and Japanese pronunciation readings.
 - Choose available caption tracks or YouTube machine translations, inspect
   caption details, and reuse normalized transcripts from the on-device cache.
+- Keep your selected transcript languages, including translations turned off,
+  across videos and app restarts.
 
 ### Build vocabulary from what you watch
 

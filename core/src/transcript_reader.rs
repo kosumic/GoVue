@@ -132,15 +132,19 @@ pub(super) fn dispatch(
             .iter()
             .find(|t| t.id == toggle)
             .ok_or("This caption language is unavailable.")?;
-        if selected.contains(&toggle) {
+        let added = !selected.contains(&toggle);
+        if !added {
             if selected.len() > 1 {
                 selected.retain(|id| *id != toggle);
             }
         } else if selected.len() < 2 {
             selected.push(toggle);
-            remember_language(root, &track.language);
         } else {
             return Err("Select up to two languages. Remove a language first.".into());
+        }
+        transcript::preferences::save(root, primary, &selected)?;
+        if added {
+            remember_language(root, &track.language);
         }
         return Ok(json!(selected));
     }

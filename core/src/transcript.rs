@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
+pub(crate) mod preferences;
 mod store;
 pub(crate) use store::{load, remember, remember_shared, save, with_transcript};
 

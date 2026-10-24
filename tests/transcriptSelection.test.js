@@ -34,7 +34,7 @@ async function harness() {
       coreRequest: async command => {
         commands.push(command);
         if (command.op === 'transcript_session_load') {
-          snapshot = { version: command.version, documents: [], loading: true, error: null };
+          snapshot = { version: command.version, trackIds: command.trackIds, documents: [], loading: true, error: null };
           return snapshot;
         }
         if (command.op === 'transcript_session_snapshot') return snapshot;
@@ -72,6 +72,23 @@ test('adding and removing a comparison renders the native snapshot without repla
   await env.publish([primary]);
   await env.publish([primary, transcript(first, '.ja')], { version: oldVersion });
   assert.equal(env.reader().comparison, null, 'a snapshot from the removed selection is stale');
+});
+
+test('restored native languages control comparison loading and remain removable from a default request', async t => {
+  const env = await harness(); t.after(env.unmount);
+  const primary = transcript(first), comparison = transcript(first, '.ja');
+  assert.deepEqual(env.load().trackIds, ['default']);
+  await env.publish([primary], { trackIds: ['.en', '.ja'], loading: true });
+  assert.deepEqual(env.reader().trackIds, ['.en', '.ja']);
+  assert.deepEqual(env.reader().data, primary);
+  assert.equal(env.reader().comparisonLoading, true);
+  await env.publish([primary, comparison]);
+  assert.deepEqual(env.reader().comparison, comparison);
+  env.replies.push(['.en']); await act(() => env.reader().selectTrack('.ja'));
+  assert.deepEqual(env.selections[0][1], ['.en', '.ja']);
+  assert.deepEqual(env.load().trackIds, ['.en']);
+  await env.publish([primary]);
+  assert.equal(env.reader().comparison, null);
 });
 
 test('a failed comparison preserves the primary and retry requests only the selected tracks', async t => {
