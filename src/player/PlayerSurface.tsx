@@ -10,6 +10,7 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type ViewInstance,
 } from 'react-native';
 import { VideoView } from 'expo-video';
 import { useEvent } from 'expo';
@@ -247,15 +248,15 @@ export function PlayerSurface({
   }).videoTrack;
   const [menu, setMenu] = useState<Menu>(null);
   const [anchor, setAnchor] = useState<MenuAnchor | undefined>();
-  const subtitleAnchor = useRef<View | null>(null),
-    speedAnchor = useRef<View | null>(null),
-    moreAnchor = useRef<View | null>(null);
+  const subtitleAnchor = useRef<ViewInstance | null>(null),
+    speedAnchor = useRef<ViewInstance | null>(null),
+    moreAnchor = useRef<ViewInstance | null>(null);
   const [visible, setVisible] = useState(true);
   const [hint, setHint] = useState('');
   const [gestureFeedback, setGestureFeedback] =
     useState<GestureFeedback | null>(null);
   const [size, setSize] = useState({ width: 1, height: 1 });
-  const surface = useRef<View | null>(null);
+  const surface = useRef<ViewInstance | null>(null);
   const [chapterSheetHeight, setChapterSheetHeight] = useState<number>();
   const [preview, setPreview] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);

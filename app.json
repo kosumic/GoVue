@@ -61,6 +61,7 @@
       ],
       "./plugins/withAndroidSplashScreenCompat.cjs",
       "./plugins/withAndroidDependencyConstraints.cjs",
+      "expo-status-bar",
       [
         "expo-video",
         {

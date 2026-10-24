@@ -20,6 +20,7 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type ScrollViewInstance,
 } from 'react-native';
 import { ArrowLeft as ChevronLeft, Check, X } from './icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -219,7 +220,7 @@ export function PlayerSheet({
     return () => drag.stopAnimation();
   }, [visible, title, drag]);
   const [contentHeight, setContentHeight] = useState(200);
-  const scroll = useRef<ScrollView | null>(null);
+  const scroll = useRef<ScrollViewInstance | null>(null);
   useEffect(() => {
     if (!visible || anchor) return;
     const listener = Keyboard.addListener('keyboardDidShow', () =>

@@ -9,6 +9,8 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type FlatListInstance,
+  type ViewInstance,
 } from 'react-native';
 import {
   Download,
@@ -63,8 +65,8 @@ export function QueueSheet({
   const vibrate = useHaptic();
   const [items, setItems] = useState(queue.queue);
   const [dragging, setDragging] = useState<string | null>(null);
-  const list = useRef<FlatList<QueueItem> | null>(null);
-  const viewport = useRef<View | null>(null);
+  const list = useRef<FlatListInstance | null>(null);
+  const viewport = useRef<ViewInstance | null>(null);
   const bounds = useRef({ top: 0, height: 1, content: 1, scroll: 0 });
   const rowHeights = useRef(new Map<string, number>());
   const drag = useRef<Drag | null>(null);

@@ -30,23 +30,23 @@ updates:
       - dependency-name: expo
         update-types: ['version-update:semver-major', 'version-update:semver-minor']
       - dependency-name: 'expo-*'
-        versions: ['>= 58.0.0']
+        versions: ['>= 59.0.0']
       - dependency-name: babel-preset-expo
-        versions: ['>= 58.0.0']
-      # Expo SDK 57 owns these versions. Refresh these bounds with
+        versions: ['>= 59.0.0']
+      # Expo SDK 58 owns these versions. Refresh these bounds with
       # `npx expo install --fix` when upgrading the SDK.
       - dependency-name: react
-        versions: ['> 19.2.3']
+        versions: ['> 19.3.0']
       - dependency-name: react-test-renderer
-        versions: ['> 19.2.3']
+        versions: ['> 19.3.0']
       - dependency-name: react-native
-        versions: ['> 0.86.3']
+        versions: ['> 0.88.0']
       - dependency-name: react-native-safe-area-context
-        versions: ['>= 5.8.0']
+        versions: ['>= 5.11.0']
       - dependency-name: react-native-svg
-        versions: ['> 15.15.4']
+        versions: ['> 15.16.0']
       - dependency-name: react-native-webview
-        versions: ['> 13.16.1']
+        versions: ['> 14.0.1']
       - dependency-name: typescript
         versions: ['>= 6.1.0']
 

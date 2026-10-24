@@ -2,8 +2,10 @@
 
 CI runs on pushes and pull requests targeting `master`, weekly, and manually.
 Rust and JavaScript checks run independently. Android generates the Rust bindings
-and Expo native project, builds an `arm64-v8a` debug APK, and lints both the app and
-the local Expo module. Module lint errors fail the build. JavaScript checks include
+and Expo native project, builds an `arm64-v8a` release APK, and lints both the app and
+the local Expo module. Release builds exercise R8; the module's consumer rules keep
+UniFFI and JNA's reflection/JNI bindings intact. Module lint errors fail the build.
+JavaScript checks include
 ESLint's recommended JavaScript and TypeScript rules and React's rules of hooks.
 `npm run lint` rejects warnings and unused ESLint disable directives; it also runs
 as part of `npm run check`. Generated and vendored sources are excluded from lint.
@@ -89,7 +91,7 @@ requires no signing secrets or EAS account, and the iOS app is only uploaded as
 an Actions artifact.
 
 Dependabot updates are squash-merged after the entire CI workflow succeeds.
-TypeScript stays within Expo SDK 57's supported `~6.0.3` range; update its
+TypeScript stays within Expo SDK 58's supported `~6.0.3` range; update its
 Dependabot bound when upgrading Expo.
 The automation verifies the author, repository, base branch, and tested commit,
 then merges with `--match-head-commit`. It skips updates when the base branch has

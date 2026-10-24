@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, type ReactElement } from 'react';
-import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputInstance } from 'react-native';
 import { ArrowDown, ArrowUp, Brain, Captions, Check, ChevronDown, ChevronRight, Copy, MessageCircle, Mic, Pencil, Plus, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats';
@@ -127,7 +127,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
 }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
-  const input = useRef<TextInput>(null);
+  const input = useRef<TextInputInstance>(null);
   const localViewports = useRef<ChatViewportStore>(new Map());
   const [jumpRequest, setJumpRequest] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(false);

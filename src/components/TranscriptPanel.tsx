@@ -1,5 +1,5 @@
 import { memo, type ComponentProps, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View, type ScrollViewInstance, type ViewInstance } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { Copy, Download, Info, LocateFixed, RotateCw, Search, Share2, Sparkles, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -49,7 +49,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
   const [wordSelection, setWordSelection] = useState<(WordSelection & { anchor?: { x: number; y: number } }) | null>(null);
   const [selectionSeed, setSelectionSeed] = useState<WordSelection | null>(null);
   const [selectionPending, setSelectionPending] = useState(false);
-  const panel = useRef<View>(null);
+  const panel = useRef<ViewInstance>(null);
   const [selectionFrame, setSelectionFrame] = useState<{ x: number; y: number; width: number; height: number }>();
   const captionHeights = useRef(new Map<string, number>());
   function clearSelection() { setWordSelection(null); setSelectionSeed(null); setSelectionPending(false); }
@@ -74,7 +74,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
   const [searchError, setSearchError] = useState<string | null>(null);
   const [followPlayback, setFollowPlayback] = useState(true);
   const [followRevision, setFollowRevision] = useState(0);
-  const trackList = useRef<ScrollView>(null);
+  const trackList = useRef<ScrollViewInstance>(null);
   const { fontScale } = useWindowDimensions();
   useEffect(() => {
     let active = true;

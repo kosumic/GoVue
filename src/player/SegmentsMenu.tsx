@@ -7,6 +7,7 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type FlatListInstance,
 } from 'react-native';
 import type { MediaChapter, SponsorSegment } from '../core/media';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
@@ -89,7 +90,7 @@ export function SegmentsMenu({
   const s = useThemeStyles(makeStyles);
   const vibrate = useHaptic();
   const [preview, setPreview] = useState<MediaChapter | null>(null);
-  const list = useRef<FlatList<Row> | null>(null);
+  const list = useRef<FlatListInstance | null>(null);
   const positioned = useRef(false);
   const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attempts = useRef(0);

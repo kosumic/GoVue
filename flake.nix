@@ -16,8 +16,9 @@
         config.android_sdk.accept_license = true;
       };
       androidSdk = (pkgs.androidenv.composeAndroidPackages {
-        platformVersions = [ "36" ];
-        buildToolsVersions = [ "35.0.0" "36.0.0" ];
+        platformVersions = [ "36" "37" ];
+        # SDK 58 uses 37; community modules also need AGP's default build-tools 36.
+        buildToolsVersions = [ "36.0.0" "37.0.0" ];
         cmakeVersions = [ "3.22.1" ];
         includeNDK = true;
         ndkVersions = [ "27.1.12297006" ];
@@ -41,7 +42,7 @@
         ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
         ANDROID_NDK_ROOT = "${androidSdk}/libexec/android-sdk/ndk-bundle";
         JAVA_HOME = pkgs.jdk17_headless.home;
-        GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/36.0.0/aapt2";
+        GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/37.0.0/aapt2";
         ORG_GRADLE_PROJECT_reactNativeArchitectures = "arm64-v8a";
         CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = "${androidNdkTools}/aarch64-linux-android24-clang";
         CC_aarch64_linux_android = "${androidNdkTools}/aarch64-linux-android24-clang";

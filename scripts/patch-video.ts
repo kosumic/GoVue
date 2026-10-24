@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
-// Expo Video 57 captures currentActivity when its module starts. On a cold
+// Expo Video 58 captures currentActivity when its module starts. On a cold
 // start that can be null; manual PiP then silently returns without entering.
 // Keep the last live host weakly: currentActivity can become null again while
 // backgrounding, when PiP still needs to update the activity's native layout.

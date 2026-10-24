@@ -8,7 +8,11 @@ version = '0.1.0'
 
 android {
   namespace 'io.github.kaminarios.govue.coremodule'
-  defaultConfig { versionCode 1; versionName '0.1.0' }
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+    consumerProguardFiles 'consumer-rules.pro'
+  }
   sourceSets.main.java.srcDir '../generated/kotlin'
   lint { abortOnError true }
 }

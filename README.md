@@ -327,7 +327,7 @@ remain in memory; local playback receives scoped routes from Rust's media server
 
 ## Development
 
-GoVue uses React Native 0.86 and Expo SDK 57 with custom native builds. The
+GoVue uses React Native 0.88 and Expo SDK 58 with custom native builds. The
 [Nix flake](flake.nix) supplies Node.js 24, **Rust 1.99.0**, and the platform
 dependencies. Rust is pinned in [rust-toolchain.toml](rust-toolchain.toml);
 Node.js 24.15 or newer is required for the TypeScript build scripts. Enter the
@@ -335,7 +335,7 @@ development shell before installing dependencies.
 
 ### Android
 
-On Linux, the shell includes JDK 17, Android SDK Platform 36, NDK, and CMake.
+On Linux, the shell includes JDK 17, Android SDK Platforms 36/37, NDK, and CMake.
 Connect an ARM64 device with USB debugging enabled:
 
 ```sh
@@ -413,8 +413,16 @@ including Android, iOS, About, and diagnostics. Bump it with
 version). Release tags must match that version; `npm run check:app-version`
 checks the Expo configuration.
 
-Android builds `expo-video` from source to include `scripts/patch-video.ts`;
+Android and iOS build `expo-video` from source to include `scripts/patch-video.ts`;
 keep its postinstall patch and autolinking override together.
+`fingerprint.config.cjs` includes native package sources in fingerprints so local
+patches remain part of native compatibility checks under SDK 58.
+
+Android release builds enable R8 shrinking; the Rust module's consumer rules
+preserve the generated UniFFI/JNA bindings that are accessed through reflection.
+After an SDK upgrade, regenerate
+the ignored native projects with a clean Expo prebuild. On iOS, run
+`npm run prebuild:ios -- --clean` so the Rust XCFramework is available first.
 
 ### Validation
 

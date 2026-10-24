@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, View, type StyleProp, type ViewStyle } from 'react-native';
+import { FlatList, View, type FlatListInstance, type StyleProp, type ViewInstance, type ViewStyle } from 'react-native';
 import type { TranscriptRow } from '../core/transcripts';
 
 export type TranscriptFocus = { node: { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => void }; y: number; height: number };
@@ -20,14 +20,14 @@ export function TranscriptList({ rows, activeIndex, following, followRevision, e
   renderRow: (row: TranscriptRow, active: boolean, follow: (focus: TranscriptFocus) => void) => ReactNode;
 }) {
   const [window, setWindow] = useState<{ rows: TranscriptRow[]; index: number; version: number } | null>(null);
-  const list = useRef<FlatList<TranscriptRow>>(null);
+  const list = useRef<FlatListInstance>(null);
   const target = useRef<{ index: number; recovering: boolean; aligned: boolean } | null>(null);
   const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollOffset = useRef(0);
-  const rowNodes = useRef(new Map<number, View>());
+  const rowNodes = useRef(new Map<number, ViewInstance>());
   const focus = useRef<{ rows: TranscriptRow[]; index: number; value: TranscriptFocus } | null>(null);
   const measurement = useRef(0);
-  const mountList = useCallback((node: FlatList<TranscriptRow> | null) => {
+  const mountList = useCallback((node: FlatListInstance | null) => {
     list.current = node;
     scrollOffset.current = 0;
     focus.current = null;
@@ -106,7 +106,7 @@ export function TranscriptList({ rows, activeIndex, following, followRevision, e
     };
   }, [activeIndex, rows, following, followRevision, enabled, scrollToCurrent]);
   if (window?.rows !== rows) return null;
-  return <FlatList key={window.version} ref={mountList} data={rows} initialScrollIndex={window.index}
+  return <FlatList<TranscriptRow> key={window.version} ref={mountList} data={rows} initialScrollIndex={window.index}
     style={style} extraData={extraData} keyExtractor={item => item.lines.map(line => `${line.track}:${line.index}`).join('/')}
     contentContainerStyle={contentContainerStyle}
     onScrollBeginDrag={() => {

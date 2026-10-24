@@ -34,7 +34,7 @@ export function useAi(visible: boolean, contextId: string) {
     setBusy('');
   }
   useEffect(() => {
-    const foreground = (active: string) => { void aiRequest({ op: 'ai_foreground', active: active === 'active' }).catch(() => {}); };
+    const foreground = (active: typeof AppState.currentState) => { void aiRequest({ op: 'ai_foreground', active: active === 'active' }).catch(() => {}); };
     foreground(AppState.currentState);
     const subscription = AppState.addEventListener('change', foreground);
     return () => { subscription.remove(); stop(); };

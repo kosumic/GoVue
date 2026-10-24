@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Alert, Text, type StyleProp, type TextStyle } from 'react-native';
+import { Alert, Text, type StyleProp, type TextInstance, type TextStyle } from 'react-native';
 import { captionLineStarts, captionWords, type WordToken } from '../core/vocabulary';
 import type { Transcript } from '../youtube/transcript';
 import { idleTranscriptClock, type TranscriptClock } from '../media/transcriptClock';
@@ -31,7 +31,7 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
   const [parsed, setParsed] = useState<{ source: Transcript; segmentIndex: number; tokens: WordToken[] } | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
-  const node = useRef<Text>(null);
+  const node = useRef<TextInstance>(null);
   const [layout, setLayout] = useState<Layout | null>(null);
   const [plan, setPlan] = useState<{ layout: Layout; starts: number[] } | null>(null);
   const following = !!onFollow;
@@ -98,7 +98,7 @@ export function TranscriptWords({ source, segmentIndex, position, clock, style, 
 }
 
 function TranscriptLineFollow({ node, lines, starts, position, clock, onFollow }: {
-  node: React.RefObject<Text | null>; lines: VisualLine[]; starts: number[];
+  node: React.RefObject<TextInstance | null>; lines: VisualLine[]; starts: number[];
   position: number | null; clock?: TranscriptClock; onFollow: (focus: TranscriptFocus) => void;
 }) {
   const line = useSyncExternalStore(clock?.subscribe ?? idleTranscriptClock, () => {

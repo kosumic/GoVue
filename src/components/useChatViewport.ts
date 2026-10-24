@@ -1,6 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { createElement } from 'react';
-import { View, type CellRendererProps, type FlatList, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { View, type FlatListInstance, type FlatListProps, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import type { ChatMessage } from '../ai/useChats';
 
 export type ChatViewportState = {
@@ -14,6 +14,7 @@ const FOLLOW_THRESHOLD = 72;
 const POSITION_EPSILON = 2;
 const SCROLL_IDLE_MS = 200;
 type Expansion = { expanded: ReadonlySet<string>; setExpanded: (id: string, value: boolean) => void };
+type ChatCellProps = ComponentProps<NonNullable<FlatListProps<ChatMessage>['CellRendererComponent']>>;
 export const ChatExpansionContext = createContext<Expansion | null>(null);
 
 export function useChatExpansion(id: string): [boolean, (value: boolean) => void] {
@@ -24,7 +25,7 @@ export function useChatExpansion(id: string): [boolean, (value: boolean) => void
 
 /** One mounted conversation owns this hook; the small checkpoints survive its list. */
 export function useChatViewport(chatId: string, messages: ChatMessage[], store: ChatViewportStore, searching = false) {
-  const list = useRef<FlatList<ChatMessage>>(null);
+  const list = useRef<FlatListInstance>(null);
   const saved = useRef(store.get(chatId));
   const followEnd = useRef(saved.current?.followEnd ?? true);
   const geometry = useRef({ offset: 0, height: 0, viewport: 0 });
@@ -112,7 +113,7 @@ export function useChatViewport(chatId: string, messages: ChatMessage[], store: 
     }
   };
 
-  const CellRendererComponent = useMemo(() => function ChatCell({ item, children, onLayout, onFocusCapture, style }: CellRendererProps<ChatMessage>) {
+  const CellRendererComponent = useMemo(() => function ChatCell({ item, children, onLayout, onFocusCapture, style }: ChatCellProps) {
     return createElement(View, { ...{ onFocusCapture }, collapsable: false, style, onLayout: event => {
       layouts.current.set(item.id, event.nativeEvent.layout);
       onLayout?.(event);
