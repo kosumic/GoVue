@@ -85,7 +85,8 @@ pub fn state_execute(request: String) -> String {
 }
 pub use ai::{
     AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, ChatNotificationPlatform,
-    ai_execute, install_ai_platform, install_chat_notification_platform,
+    ai_attachment_source_limit, ai_execute, ai_import_attachment, install_ai_platform,
+    install_chat_notification_platform,
 };
 pub use extraction::{
     ExtractionHeader, ExtractionHttp, ExtractionReply, ExtractionRequest, install_extraction_http,

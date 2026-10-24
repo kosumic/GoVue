@@ -5,6 +5,12 @@ const native = requireNativeModule<{
   state?(request: string): string;
   execute(request: string): Promise<string>;
   ai(request: string): Promise<string>;
+  importChatAttachment?(request: string): Promise<string>;
+  hasChatClipboardAttachment?(): Promise<boolean>;
+  copyChatClipboardAttachment?(): Promise<ChatAttachmentSource | null>;
+  bindChatImagePaste?(tag: number, token: string): Promise<void>;
+  unbindChatImagePaste?(token: string): Promise<void>;
+  takeChatImagePaste?(token: string, uri: string): Promise<boolean>;
   dictation?(request: string): string;
   supportedMediaFormats?(formats: string): Promise<string>;
   getSystemVolume?(): Promise<number>;
@@ -75,6 +81,21 @@ export async function aiRequest<T>(
 
 export const saveFileToDevice = (uri: string, name: string, mime: string) =>
   native.saveFile?.(uri, name, mime) ?? Promise.resolve(null);
+
+export type ChatAttachmentSource = { uri: string; name: string; mimeType?: string };
+export async function importChatAttachment<T>(source: ChatAttachmentSource): Promise<T> {
+  if (!native.importChatAttachment) throw Error('Install an updated GoVue build to attach files.');
+  const reply = JSON.parse(await native.importChatAttachment(JSON.stringify(source)));
+  if (reply?.ok !== true) throw Error(reply?.error || 'Could not attach this file.');
+  return reply.value as T;
+}
+export const hasChatClipboardAttachment = () => native.hasChatClipboardAttachment?.() ?? Promise.resolve(false);
+export const copyChatClipboardAttachment = () => native.copyChatClipboardAttachment?.() ?? Promise.resolve(null);
+export const bindChatImagePaste = (tag: number, token: string) => native.bindChatImagePaste?.(tag, token) ?? Promise.resolve();
+export const unbindChatImagePaste = (token: string) => native.unbindChatImagePaste?.(token) ?? Promise.resolve();
+export const takeChatImagePaste = (token: string, uri: string) => native.takeChatImagePaste?.(token, uri) ?? Promise.resolve(false);
+export const observeChatImagePaste = (listener: (event: Record<string, unknown>) => void) =>
+  native.addListener?.('chatImagePaste', sample => { if (sample) listener(sample); });
 export const getBrowserUserAgent = () =>
   native.getBrowserUserAgent?.() ?? Promise.resolve(null);
 export const takeBrowserLaunches = () =>

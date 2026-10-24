@@ -363,6 +363,35 @@ pub(super) fn append_user(body: &mut Value, protocol: &str, content: &str) -> Re
     Ok(())
 }
 
+pub(super) fn append_attachment_message(
+    body: &mut Value,
+    protocol: &str,
+    message: Value,
+) -> Result<()> {
+    let rows = body[super::replay::field(protocol)]
+        .as_array_mut()
+        .ok_or("Invalid chat continuation.")?;
+    let field = if protocol == "gemini" {
+        "parts"
+    } else {
+        "content"
+    };
+    if matches!(protocol, "gemini" | "anthropic")
+        && let Some(last) = rows.last_mut().filter(|last| last["role"] == "user")
+        && let Some(parts) = last[field].as_array_mut()
+    {
+        parts.extend(
+            message[field]
+                .as_array()
+                .ok_or("Missing attachment content.")?
+                .clone(),
+        );
+    } else {
+        rows.push(message);
+    }
+    Ok(())
+}
+
 pub(super) fn continue_with(
     body: &mut Value,
     protocol: &str,

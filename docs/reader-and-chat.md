@@ -145,6 +145,32 @@ Long press a conversation to pin, archive, rename, or delete it. Pinned chats
 stay at the top. **Archived chats** lets you browse, search, and restore archived
 chats.
 
+## Attach files in chat
+
+Tap **Attach files** beside the message field, then choose **Take photo**,
+**Photos**, **Files**, or **Paste from clipboard** when a file or image is
+available. Camera access is requested when you take a photo. You can also paste
+an image directly into the message field using your keyboard or its paste menu.
+
+Attach up to four JPEG, PNG, or WebP images; PDFs; and UTF-8 text/code files,
+including Markdown, CSV, JSON, and source code. Tap an attachment to preview it
+or its **×** to remove it before sending. Image previews support pinch zoom,
+panning, and double-tap zoom. You can add a question or send the files alone.
+
+Text/code files work as readable reference material with every chat protocol.
+Images require image input, and PDFs require a model with PDF or vision support.
+GoVue uses declared capabilities when available; model groups skip incompatible
+members. PDF previews use your device's document viewer.
+
+Each source image may be up to 12 MiB and 32 megapixels. GoVue corrects its
+orientation, resizes it to at most 1600 pixels per side, and removes source
+metadata before sending it. PDFs may be up to 8 MiB; text/code files may be up
+to 128 KiB. Other binary formats are rejected with an explanation.
+
+Attachments stay in the app's private storage so they remain available in
+history, follow-up questions, edits, regenerated replies, and branches.
+Deleting a chat removes attachments that no other chat uses.
+
 ## Configure providers and instructions
 
 Open **Extensions → AI** to manage providers, accounts, models, and model groups.

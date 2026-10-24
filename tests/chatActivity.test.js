@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import React, { createElement as h, forwardRef, useImperativeHandle } from 'react';
+import React, { createElement as h, forwardRef, useImperativeHandle, useState } from 'react';
 import { act, create } from 'react-test-renderer';
 import { build } from 'esbuild';
 
@@ -14,7 +14,8 @@ const copiedTexts = [], hapticEvents = [];
 const colors = new Proxy({}, { get: () => '#777777' });
 const native = {
   Platform: { OS: 'android' },
-  View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ScrollView: 'ScrollView', ActivityIndicator: 'ActivityIndicator',
+  findNodeHandle: () => null,
+  View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ScrollView: 'ScrollView', ActivityIndicator: 'ActivityIndicator', Image: 'Image', Modal: 'Modal',
   StyleSheet: { create: value => value, hairlineWidth: 1 },
   useWindowDimensions: () => ({ width: 400, height: 800 }),
   AccessibilityInfo: { isReduceMotionEnabled: async () => true, addEventListener: () => ({ remove: noop }) },
@@ -26,6 +27,8 @@ const native = {
 };
 const mocks = {
   'react-native': native,
+  'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) },
+  'expo-file-system': { File: class { static preview() { return Promise.resolve(); } } },
   'react-native-enriched-markdown': { EnrichedMarkdownText: props => h('SelectableText', props) },
   'lucide-react-native': new Proxy({}, { get: (_, name) => props => h(`Icon${String(name)}`, props) }),
   '@react-native-clipboard/clipboard': { setString: value => copiedTexts.push(value) },
@@ -38,11 +41,13 @@ const mocks = {
   useGameAudio: { stopCaptionAudio: noop },
   PlayerSheet: { PlayerSheet: ({ visible, children, title }) => visible ? h('Sheet', { title }, children) : null },
   Haptics: { useHaptic: () => () => hapticEvents.push('copy') },
+  chatAttachmentSources: { discardChatAttachment: noop },
+  'expo-image-picker': {},
   'govue-core': { aiRequest: noop },
 };
 const bundled = await build({ entryPoints: ['src/components/AiChat.tsx'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external',
   plugins: [{ name: 'activity-ui', setup(builder) {
-    builder.onResolve({ filter: /^(react-native|react-native-enriched-markdown|lucide-react-native|@react-native-clipboard\/clipboard)$|\/(theme|AiMarkdown|AiReasoning|LearningGameCard|useVoiceInput|useExampleSpeech|useGameAudio|PlayerSheet|Haptics|govue-core)$/ }, args => {
+    builder.onResolve({ filter: /^(react-native|react-native-safe-area-context|react-native-enriched-markdown|lucide-react-native|expo-file-system|expo-image-picker|@react-native-clipboard\/clipboard)$|\/(chatAttachmentSources|theme|AiMarkdown|AiReasoning|LearningGameCard|useVoiceInput|useExampleSpeech|useGameAudio|PlayerSheet|Haptics|govue-core)$/ }, args => {
       const key = mocks[args.path] ? args.path : args.path.split('/').at(-1);
       return { path: `mock:${key}`, external: true };
     });
@@ -63,7 +68,35 @@ const reply = blocks => ({ id: 'reply', role: 'assistant', content: 'BeforeAfter
 const props = (message, busy = false) => ({
   chat: { conversation: { id: 'chat', messages: [message] }, busy, settingsBusy: false, error: '', gameAction: noop, stop: noop },
   draft: '', onDraftChange: noop, attachment: null, availableTranscript: null, connected: true, loading: false, voiceEnabled: false,
+  attachmentDraft: { attachments: [], busy: false, error: '', pick: noop, change: noop, paste: noop, reportError: noop },
   onSend: noop, onRetry: noop, onBranch: noop, onAttach: noop, onOpenTranscript: noop, onSummarize: noop, onModels: noop, reasoning: 'Low',
+});
+
+test('file-only drafts can send and canceling an edit restores the original draft files', async t => {
+  const savedFile = { id: 'saved', kind: 'pdf', name: 'notes.pdf', mimeType: 'application/pdf', uri: 'file:///notes.pdf', width: 0, height: 0, bytes: 20 };
+  const draftFile = { ...savedFile, id: 'draft', name: 'draft.pdf', uri: 'file:///draft.pdf' };
+  const value = props({ id: 'user', role: 'user', content: '', status: 'completed', attachments: [savedFile] });
+  let sends = 0;
+  function Harness() {
+    const [draft, changeDraft] = useState('');
+    const [attachments, change] = useState([draftFile]);
+    return h(AiChat, { ...value, draft, onDraftChange: changeDraft,
+      attachmentDraft: { ...value.attachmentDraft, attachments, change }, onSend: async () => { sends++; return true; } });
+  }
+  let root;
+  await act(async () => { root = create(h(Harness)); });
+  t.after(() => act(async () => root.unmount()));
+  const button = label => root.root.findAllByType('Pressable').find(n => n.props.accessibilityLabel === label);
+  assert.equal(button('Send message').props.disabled, false);
+  assert.equal(button('Copy prompt'), undefined, 'file-only messages have no empty copy action');
+  await act(() => button('Edit message').props.onPress());
+  assert.ok(button('Remove notes.pdf')); assert.equal(button('Remove draft.pdf'), undefined);
+  await act(() => button('Cancel edit').props.onPress());
+  assert.ok(button('Remove draft.pdf')); assert.equal(button('Remove notes.pdf'), undefined);
+  await act(async () => button('Send message').props.onPress());
+  assert.equal(sends, 1);
+  await act(() => button('Remove draft.pdf').props.onPress());
+  assert.equal(button('Send message').props.disabled, true);
 });
 async function render(t, message, busy = false) {
   let root;

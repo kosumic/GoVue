@@ -12,6 +12,7 @@ import { AiModels } from './AiModels';
 import { AiUsageSheet } from './AiUsageSheet';
 import { reasoningName } from './AiReasoning';
 import { useChats, type ChatTranscript, type SavedChat } from '../ai/useChats';
+import { useChatAttachments } from '../ai/useChatAttachments';
 import { AiHistoryDrawer } from './AiHistoryDrawer';
 import { GamePractice } from './GamePractice';
 import { extractTranscript, restoreTranscript } from '../core/transcripts';
@@ -85,6 +86,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, notificationTar
   useEffect(() => { setTranscriptVisible(false); }, [chatVideoId]);
   const [prompt, setPrompt] = useState('');
   const [newChatVersion, setNewChatVersion] = useState(0);
+  const attachmentDraft = useChatAttachments(`${newChatVersion}:${chats.conversation?.id ?? 'new'}`);
   const [attachment, setAttachment] = useState<ChatTranscript | null>(null);
   const targets = [...ai.providers, ...ai.groups.map(g => ({ id: g.id, label: g.name, model: g.name, connected: !!g.connected, enabled: true, needsReauth: false }))];
   const selected = targets.find(p => p.id === (chats.conversation?.providerId || ai.activeId));
@@ -174,9 +176,10 @@ export function AiSheet({ visible, onClose, transcript, videoId, notificationTar
     Alert.alert('Delete chat?', chat.title, [{ text: 'Keep', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { if (chats.conversation?.id === chat.id) newChat(); void chats.remove(chat.id).then(() => chatViewports.current.delete(chat.id)); } }]);
   }
   async function sendMessage(editMessageId?: string) {
-    if (!contextReady || !selected?.connected || !selected.enabled || selected.needsReauth || !selectedModel || !prompt.trim()) return false;
+    if (!contextReady || !selected?.connected || !selected.enabled || selected.needsReauth || !selectedModel || attachmentDraft.busy || !prompt.trim() && !attachmentDraft.attachments.length) return false;
     const message = prompt.trim(); setPrompt('');
-    const sent = await chats.send(selected.id, message, attachment, undefined, false, undefined, editMessageId);
+    const sent = await chats.send(selected.id, message, attachment, undefined, false, undefined, editMessageId, undefined, undefined, attachmentDraft.attachments);
+    if (sent) attachmentDraft.change([]);
     if (!sent) setPrompt(current => current || message);
     return sent;
   }
@@ -215,7 +218,7 @@ export function AiSheet({ visible, onClose, transcript, videoId, notificationTar
         {page === 'chat' ? <>
           {!!contextError && <View style={styles.banner}><Text accessibilityRole="alert" style={styles.help}>{contextError}</Text><Button title="Retry transcript" onPress={() => setContextRetry(value => value + 1)} /></View>}
           {chats.conversation?.providerId && ai.ready && !selected?.connected && <View style={styles.banner}><Text style={styles.help}>Reconnect {chats.conversation.providerLabel} to continue this chat.</Text><Button title="Providers" onPress={() => showPage('providers')} /></View>}
-          <AiChat key={newChatVersion} viewports={chatViewports.current} chat={chats} draft={prompt} onDraftChange={setPrompt} attachment={attachment} availableTranscript={availableTranscript} voiceEnabled={visible && !historyVisible && !usageVisible && !transcriptVisible && !find}
+          <AiChat key={newChatVersion} viewports={chatViewports.current} chat={chats} draft={prompt} onDraftChange={setPrompt} attachmentDraft={attachmentDraft} attachment={attachment} availableTranscript={availableTranscript} voiceEnabled={visible && !historyVisible && !usageVisible && !transcriptVisible && !find}
             findQuery={find?.chatId === chats.conversation?.id ? find?.query : undefined} onCloseFind={closeFind}
             onBeforeGameAudio={onBeforeGameAudio}
             connected={!!selected?.connected && !!selected?.enabled && !selected?.needsReauth && !!selectedModel && !ai.busy} loading={!ai.ready || !chats.ready || chats.loading || contextLoading} contextReady={contextReady}

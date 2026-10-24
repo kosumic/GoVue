@@ -2,8 +2,8 @@
 use crate::Result;
 use crate::ai::providers::{CONFIG_LOCK, Provider};
 use crate::ai::{
-    accounts, activity, audio_requests, catalog, chat_sessions, client, connections, conversations,
-    credentials, games, jobs, providers, usage, word_assistance,
+    accounts, activity, attachments, audio_requests, catalog, chat_sessions, client, connections,
+    conversations, credentials, games, jobs, providers, usage, word_assistance,
 };
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -32,6 +32,16 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         return catalog::dispatch(c, root);
     }
     match crate::string(&c, "op")? {
+        "ai_chat_attachment_limits" => Ok(
+            json!({"maxAttachments":attachments::MAX_ATTACHMENTS,"maxSourceBytes":attachments::MAX_SOURCE}),
+        ),
+        "ai_chat_attachment_preview" => attachments::preview(&root, crate::string(&c, "id")?),
+        "ai_chat_attachment_release" => {
+            let ids = attachments::ids(&c["attachments"])?;
+            let _guard = conversations::attachment_storage_lock()?;
+            conversations::release_attachments(&root, &ids)?;
+            Ok(Value::Null)
+        }
         "ai_word_assistance" => word_assistance::start(c, root),
         "ai_word_audio" => word_assistance::audio(&c, &root),
         "ai_game_audio_release" => games::audio::release(crate::string(&c, "token")?),
@@ -198,10 +208,38 @@ pub fn ai_execute(request: String, storage_path: String) -> String {
     } else {
         serde_json::from_str(&request)
             .map_err(|_| "Unreadable AI command.".into())
-            .and_then(|v| dispatch(v, PathBuf::from(storage_path)))
+            .and_then(|v: Value| dispatch(v, PathBuf::from(storage_path)))
     };
     match result {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
         Err(error) => json!({"ok":false,"error":error}).to_string(),
     }
+}
+
+/// Native adapters supply the app cache root; JavaScript supplies only file metadata.
+#[uniffi::export]
+pub fn ai_import_attachment(request: String, storage_path: String, cache_path: String) -> String {
+    let result = if request.len() > 16_384 {
+        Err("Attachment metadata is too large.".into())
+    } else {
+        serde_json::from_str(&request)
+            .map_err(|_| "Unreadable attachment metadata.".into())
+            .and_then(|command| {
+                attachments::import(
+                    std::path::Path::new(&storage_path),
+                    std::path::Path::new(&cache_path),
+                    &command,
+                )
+            })
+    };
+    match result {
+        Ok(value) => json!({"ok":true,"value":value}).to_string(),
+        Err(error) => json!({"ok":false,"error":error}).to_string(),
+    }
+}
+
+/// Bound platform content-URI copies before Rust opens their staged files.
+#[uniffi::export]
+pub fn ai_attachment_source_limit() -> u64 {
+    attachments::MAX_SOURCE as u64
 }

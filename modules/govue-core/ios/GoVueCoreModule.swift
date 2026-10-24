@@ -6,6 +6,7 @@ import UIKit
 import WebKit
 
 public final class GoVueCoreModule: Module {
+  private lazy var attachments = ChatAttachments { [weak self] in self?.sendEvent("chatImagePaste", $0) }
   private var pendingExport: FileExport?
   private var preparingExport = false
   private let galleryLock = NSLock()
@@ -13,7 +14,22 @@ public final class GoVueCoreModule: Module {
   private var chatNotificationObserver: NSObjectProtocol?
   public func definition() -> ModuleDefinition {
     Name("GoVueCore")
-    Events("coreUpdate", "chatNotification")
+    Events("coreUpdate", "chatNotification", "chatImagePaste")
+    AsyncFunction("hasChatClipboardAttachment") { () -> Bool in attachments.available() }.runOnQueue(.main)
+    AsyncFunction("copyChatClipboardAttachment") { (promise: Promise) in attachments.clipboard(promise) }.runOnQueue(.main)
+    AsyncFunction("bindChatImagePaste") { (tag: Int, token: String) in
+      guard let view = appContext?.findView(withTag: tag, ofType: UIView.self) else {
+        throw NSError(domain: "GoVue", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not find the chat input."])
+      }
+      try attachments.bind(view, token: token)
+    }.runOnQueue(.main)
+    AsyncFunction("unbindChatImagePaste") { (token: String) in attachments.unbind(token) }.runOnQueue(.main)
+    AsyncFunction("takeChatImagePaste") { (token: String, uri: String) -> Bool in attachments.take(token, uri: uri) }.runOnQueue(.main)
+    AsyncFunction("importChatAttachment") { (request: String) -> String in
+      let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("LingoPlay/transcripts", isDirectory: true)
+      let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+      return aiImportAttachment(request: request, storagePath: root.path, cachePath: cache.path)
+    }.runOnQueue(.global(qos: .userInitiated))
     AsyncFunction("prepareChatNotifications") { (promise: Promise) in
       NativeChatNotifications.shared.prepare(promise)
     }
@@ -135,6 +151,7 @@ public final class GoVueCoreModule: Module {
       installAiPlatform(platform: NativeAiPlatform())
     }
     OnDestroy {
+      DispatchQueue.main.async { [self] in attachments.close() }
       if let observer = chatNotificationObserver { NotificationCenter.default.removeObserver(observer) }
       chatNotificationObserver = nil
     }

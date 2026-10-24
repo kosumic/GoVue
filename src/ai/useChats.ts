@@ -5,6 +5,7 @@ import type { MessageUsageDetails, TokenUsage } from './usage';
 import type { GameAction, LearningGame } from './games';
 import { applyChatUpdate, type ChatStream, type ChatUpdate } from './chatUpdates';
 import type { ChatSearchHit } from './useChatFind';
+import type { ChatAttachment } from './useChatAttachments';
 
 export type ActivityStatus = 'preparing' | 'running' | 'completed' | 'failed' | 'stopped';
 export type PlanStep = { step: string; status: 'pending' | 'in_progress' | 'completed' };
@@ -15,8 +16,8 @@ export type ChatBlock =
   | { id: string; kind: 'tool'; callId: string; name: string; status: ActivityStatus; startedAt: number; durationMs: number; gameId?: string; title?: string; error?: string };
 
 export type ChatTranscript = { videoId: string; trackId: string; title: string; language: string };
-export type QueuedMessage = { id: string; content: string };
-export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; games?: LearningGame[]; blocks?: ChatBlock[]; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; usageDetails?: MessageUsageDetails; model?: string; modelName?: string; providerLabel?: string; completedAt?: number };
+export type QueuedMessage = { id: string; content: string; attachments?: ChatAttachment[] };
+export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; attachments?: ChatAttachment[]; games?: LearningGame[]; blocks?: ChatBlock[]; status: 'completed' | 'streaming' | 'failed' | 'stopped'; error?: string; reasoning?: string; reasoningEffort?: string; usage?: TokenUsage; usageDetails?: MessageUsageDetails; model?: string; modelName?: string; providerLabel?: string; completedAt?: number };
 export type Conversation = { id: string; branchedFrom?: { chatId: string; messageId: string }; videoId?: string | null; title: string; pinned?: boolean; archived?: boolean; providerId: string; providerLabel: string; model: string; createdAt: number; updatedAt: number; transcript: ChatTranscript | null; messages: ChatMessage[]; activeTask: string | null; reasoningEffort?: string | null; pendingMessages?: QueuedMessage[] };
 export type SavedChat = Pick<Conversation, 'id' | 'videoId' | 'title' | 'pinned' | 'archived' | 'providerId' | 'providerLabel' | 'model' | 'updatedAt'> & { videoTitle?: string; searchMatch?: ChatSearchHit | null };
 type Started = { taskId: string; conversation: Conversation };
@@ -146,7 +147,7 @@ export function useChats(visible: boolean, contextId: string) {
       if (mounted.current) void refresh().catch(() => {});
     }
   }
-  async function queue(prompt: string) {
+  async function queue(prompt: string, attachments?: ChatAttachment[]) {
     const version = epoch.current;
     try {
       if (starting.current) await starting.current;
@@ -154,7 +155,7 @@ export function useChats(visible: boolean, contextId: string) {
       const chat = current.current;
       const previousTask = task.current;
       const started = await aiRequest<Started>({ op: 'ai_chat_session_send', sessionId, version, queue: true,
-        command: { chatId: chat.id, prompt } });
+        command: { chatId: chat.id, prompt, ...(attachments ? { attachments: attachments.map(image => image.id) } : {}) } });
       if (!mounted.current || version !== epoch.current) return false;
       if (started.taskId === previousTask) {
         if (task.current === previousTask && current.current?.id === chat.id && current.current.messages.at(-1)?.id === started.conversation.messages.at(-1)?.id) update({ ...current.current, pendingMessages: started.conversation.pendingMessages });
@@ -168,15 +169,15 @@ export function useChats(visible: boolean, contextId: string) {
       return false;
     }
   }
-  async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false, focusGameId?: string, editMessageId?: string, retryMessageId?: string, queuedMessageId?: string) {
+  async function send(id: string, prompt: string, transcript: ChatTranscript | null, intent?: 'summary', retry = false, focusGameId?: string, editMessageId?: string, retryMessageId?: string, queuedMessageId?: string, attachments?: ChatAttachment[]) {
     if (settingsPending.current || branching.current) return false;
-    if (sending.current) return !retry && !editMessageId && !retryMessageId && !intent && !focusGameId && !queuedMessageId ? queue(prompt) : false;
+    if (sending.current) return !retry && !editMessageId && !retryMessageId && !intent && !focusGameId && !queuedMessageId ? queue(prompt, attachments) : false;
     cancel(!!editMessageId || !!retryMessageId); const version = epoch.current;
     sending.current = true; setBusy(true); setError('');
     let pending: Promise<Started> | null = null;
     try {
       if (!mounted.current || version !== epoch.current) return false;
-      pending = aiRequest<Started>({ op: 'ai_chat_session_send', sessionId, version, clearFeedback: !!editMessageId || !!retryMessageId, command: { id, prompt, transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}), ...(focusGameId ? { focusGameId } : {}), ...(editMessageId ? { editMessageId } : {}), ...(retryMessageId ? { retryMessageId } : {}), ...(queuedMessageId ? { queuedMessageId } : {}) } });
+      pending = aiRequest<Started>({ op: 'ai_chat_session_send', sessionId, version, clearFeedback: !!editMessageId || !!retryMessageId, command: { id, prompt, ...(attachments ? { attachments: attachments.map(image => image.id) } : {}), transcript: transcript ? { videoId: transcript.videoId, trackId: transcript.trackId } : null, reasoningEffort: current.current ? current.current.reasoningEffort ?? null : reasoningDraft.current, ...(current.current ? { chatId: current.current.id } : {}), ...(intent ? { intent } : {}), ...(retry ? { retry: true } : {}), ...(focusGameId ? { focusGameId } : {}), ...(editMessageId ? { editMessageId } : {}), ...(retryMessageId ? { retryMessageId } : {}), ...(queuedMessageId ? { queuedMessageId } : {}) } });
       starting.current = pending;
       const started = await pending;
       if (starting.current === pending) starting.current = null;

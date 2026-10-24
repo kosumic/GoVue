@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState, type ReactElement } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Animated, FlatList, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputInstance } from 'react-native';
-import { ArrowDown, ArrowUp, Brain, Captions, Check, ChevronDown, ChevronRight, Copy, MessageCircle, Mic, Pencil, Plus, Square, X } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Brain, Captions, Check, ChevronDown, ChevronRight, Copy, Paperclip, MessageCircle, Mic, Pencil, Plus, Square, X } from 'lucide-react-native';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import type { ChatController, ChatMessage, ChatTranscript } from '../ai/useChats';
 import { AiMarkdown } from './AiMarkdown';
@@ -18,18 +18,24 @@ import { ChatInputSelection } from './ChatInputSelection';
 import { SelectableChatText } from './SelectableChatText';
 import { useChatFind, type ChatFindController } from '../ai/useChatFind';
 import { ChatFindBar } from './ChatSearch';
+import { ChatAttachments } from './ChatAttachments';
+import type { ChatAttachment, ChatAttachmentsController } from '../ai/useChatAttachments';
+import { ChatAttachmentActions } from './ChatAttachmentActions';
+import { useChatImagePaste } from '../ai/useChatImagePaste';
+import type { AttachmentSource } from '../ai/chatAttachmentSources';
 
-function UserPrompt({ content, onEdit, disabled }: { content: string; onEdit: () => void; disabled: boolean }) {
+function UserPrompt({ content, attachments = [], onEdit, disabled }: { content: string; attachments?: ChatAttachment[]; onEdit: () => void; disabled: boolean }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
   const { copied, copyText } = useCopyFeedback();
   return <View style={[styles.message, styles.userMessage]}>
-    <View style={styles.userBubble}><SelectableChatText text={content} /></View>
+    <ChatAttachments attachments={attachments} />
+    {!!content && <View style={styles.userBubble}><SelectableChatText text={content} /></View>}
     <View style={styles.userActions}>
     <Pressable accessibilityRole="button" accessibilityLabel="Edit message" disabled={disabled} onPress={onEdit} style={[styles.messageAction, disabled && styles.disabled]}><Pencil size={16} color={colors.muted} /></Pressable>
-    <Pressable accessibilityRole="button" accessibilityLabel={copied ? 'Prompt copied' : 'Copy prompt'} accessibilityLiveRegion="polite" onPress={() => copyText(content)} style={styles.messageAction}>
+    {!!content && <Pressable accessibilityRole="button" accessibilityLabel={copied ? 'Prompt copied' : 'Copy prompt'} accessibilityLiveRegion="polite" onPress={() => copyText(content)} style={styles.messageAction}>
       {copied ? <Check size={16} color={colors.action} /> : <Copy size={16} color={colors.muted} />}
-    </Pressable>
+    </Pressable>}
     </View>
   </View>;
 }
@@ -49,7 +55,7 @@ const Message = memo(function Message({ message, last, busy, onRetry, retryDisab
   const gameCard = (game: NonNullable<ChatMessage['games']>[number]) => <LearningGameCard key={game.id} game={game} chatId={chatId} messageId={message.id} active={game.id === activeGameId}
     enabled={gamesEnabled} onActivate={() => onActiveGame(game.id)} onDeactivate={() => onActiveGame(null)} onAction={onGameAction} onBeforeAudio={onBeforeGameAudio} />;
   return <Animated.View style={[styles.message, user && styles.userMessage, { opacity: entrance, transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }] }]}>
-    {user ? <UserPrompt content={message.content} onEdit={onEdit} disabled={editDisabled} /> : <>
+    {user ? <UserPrompt content={message.content} attachments={message.attachments} onEdit={onEdit} disabled={editDisabled} /> : <>
       {blocks.length ? blocks.map(block => <View key={block.id}>
         {block.kind === 'text' ? <AiMarkdown content={block.content} streaming={streaming && block.status === 'running'} />
           : block.kind === 'reasoning' ? <ReasoningActivity id={`${message.id}:${block.id}`} content={block.content} active={streaming && block.status === 'running'} />
@@ -99,9 +105,10 @@ function ChatThread({ chatId, messages, viewports, jumpRequest, reduceMotion, em
   </ChatExpansionContext.Provider>;
 }
 
-export function AiChat({ chat, draft, onDraftChange, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, viewports, findQuery, onCloseFind = () => {}, onBeforeGameAudio, onSend, onRetry, onBranch, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
+export function AiChat({ chat, draft, onDraftChange, attachmentDraft, attachment, availableTranscript, connected, loading, contextReady = true, voiceEnabled = true, viewports, findQuery, onCloseFind = () => {}, onBeforeGameAudio, onSend, onRetry, onBranch, onAttach, onDetach, onOpenTranscript, onSummarize, onModels, reasoning, providerId, model }: {
   chat: ChatController;
   draft: string;
+  attachmentDraft: ChatAttachmentsController;
   onDraftChange: (value: string) => void;
   attachment: ChatTranscript | null;
   availableTranscript: ChatTranscript | null;
@@ -132,10 +139,15 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   const [jumpRequest, setJumpRequest] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
-  const [editing, setEditing] = useState<{ id: string; originalDraft: string } | null>(null);
+  const [editing, setEditing] = useState<{ id: string; originalDraft: string; originalAttachments: ChatAttachment[] } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [attachmentActions, setAttachmentActions] = useState(false);
+  const attachmentPicker = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (attachmentPicker.current) clearTimeout(attachmentPicker.current); }, [chat.conversation?.id, voiceEnabled]);
   const [activeGameId, setActiveGameId] = useState<string | null>(null);
   const messages = chat.conversation?.messages ?? [];
   const findOpen = findQuery !== undefined;
+  useChatImagePaste(input, voiceEnabled && !loading && contextReady && !findOpen && !submitting, chat.conversation?.id ?? 'new', attachmentDraft.paste, attachmentDraft.reportError);
   const search = useChatFind(chat.conversation?.id, messages, findOpen && !chat.loading, findQuery ?? '');
   const latestGameId = messages.flatMap(message => message.games ?? []).at(-1)?.id ?? null;
   useEffect(() => { setActiveGameId(latestGameId); }, [chat.conversation?.id, latestGameId]);
@@ -154,21 +166,29 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
   useEffect(() => { setShowReasoning(false); }, [chat.conversation?.id, providerId, model]);
   useEffect(() => { setEditing(null); }, [chat.conversation?.id]);
   function edit(message: ChatMessage) {
-    setEditing(current => ({ id: message.id, originalDraft: current?.originalDraft ?? draft }));
+    setEditing(current => ({ id: message.id, originalDraft: current?.originalDraft ?? draft, originalAttachments: current?.originalAttachments ?? attachmentDraft.attachments }));
+    attachmentDraft.change(message.attachments ?? []);
     onDraftChange(message.content); setShowReasoning(false); input.current?.focus();
   }
-  function cancelEdit() { if (editing) onDraftChange(editing.originalDraft); setEditing(null); }
+  function cancelEdit() { if (editing) { onDraftChange(editing.originalDraft); attachmentDraft.change(editing.originalAttachments); } setEditing(null); }
   function addSelectionToInput(text: string) {
     if (loading || !text.trim()) return;
     voice.changeDraft(`${draft}${draft && !draft.endsWith('\n') ? '\n\n' : ''}${text}`.slice(0, 8000));
     setShowReasoning(false); input.current?.focus();
   }
   function send() {
+    if (submitting || attachmentDraft.busy) return;
+    setSubmitting(true);
     setJumpRequest(value => value + 1); setShowReasoning(false);
     const id = editing?.id;
-    void Promise.resolve(onSend(id)).then(sent => { if (sent !== false) setEditing(current => current?.id === id ? null : current); });
+    void Promise.resolve(onSend(id)).then(sent => { if (sent !== false) setEditing(current => current?.id === id ? null : current); }).finally(() => setSubmitting(false));
   }
-  const canSend = contextReady && connected && !!draft.trim() && !loading && !chat.settingsBusy && !voice.active;
+  const canSend = contextReady && connected && (!!draft.trim() || !!attachmentDraft.attachments.length) && !loading && !chat.settingsBusy && !voice.active && !attachmentDraft.busy && !submitting;
+  function pickAttachment(source: AttachmentSource) {
+    setAttachmentActions(false);
+    // Let the RN sheet dismiss before presenting the system picker on iOS.
+    attachmentPicker.current = setTimeout(() => { void attachmentDraft.pick(source); }, 250);
+  }
   return <View style={styles.workspace}>
     <ChatInputSelection.Provider value={loading ? undefined : addSelectionToInput}>
     <ChatThread key={chat.conversation?.id ?? 'new'} chatId={chat.conversation?.id ?? 'new'} messages={messages} viewports={viewports ?? localViewports.current} jumpRequest={jumpRequest} reduceMotion={reduceMotion}
@@ -181,7 +201,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
             <Pressable accessibilityRole="button" onPress={() => { voice.changeDraft('Explain this phrase: '); input.current?.focus(); }} style={styles.suggestion}><MessageCircle size={17} color={colors.muted} /><Text style={styles.suggestionText}>Explain a phrase</Text></Pressable>
           </View> : <Pressable accessibilityRole="button" onPress={onModels} style={styles.connect}><Text style={styles.connectText}>Choose a model</Text></Pressable>}
         </View>}
-        renderMessage={(item, index) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={() => onRetry(item.id)} retryDisabled={chat.busy || loading || chat.settingsBusy || !connected || !contextReady} onEdit={() => edit(item)} editDisabled={chat.busy || loading || chat.settingsBusy} reduceMotion={reduceMotion}
+        renderMessage={(item, index) => <Message message={item} last={index === messages.length - 1} busy={chat.busy} onRetry={() => onRetry(item.id)} retryDisabled={chat.busy || loading || chat.settingsBusy || !connected || !contextReady} onEdit={() => edit(item)} editDisabled={chat.busy || loading || chat.settingsBusy || attachmentDraft.busy || submitting} reduceMotion={reduceMotion}
           onBranch={() => onBranch(item.id)} branchDisabled={chat.busy || loading || chat.settingsBusy || voice.active}
           chatId={chat.conversation?.id ?? ''} activeGameId={activeGameId} onActiveGame={setActiveGameId} gamesEnabled={voiceEnabled && contextReady && !loading && !voice.active}
           onGameAction={chat.gameAction} onBeforeGameAudio={beforeGameAudio} reading={speech.active === item.id} readDisabled={!readEnabled}
@@ -193,7 +213,7 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
     {!findOpen && <View style={styles.composerDock}>
       {!!chat.conversation?.pendingMessages?.length && <ScrollView style={styles.pendingMessages} contentContainerStyle={styles.pendingContent} keyboardShouldPersistTaps="handled">{chat.conversation.pendingMessages.map(message => <Pressable key={message.id} accessibilityRole="button" accessibilityLabel={chat.busy ? 'Queued message' : 'Send queued message'}
         disabled={chat.busy || loading || !contextReady || !connected || chat.settingsBusy} onPress={() => { const current = chat.conversation; if (current) void chat.send(current.providerId, message.content, current.transcript, undefined, false, undefined, undefined, undefined, message.id); }} style={styles.attachment}>
-        <View style={styles.attachmentText}><Text style={styles.attachmentTitle}>{chat.busy ? 'Queued · steers after tool results' : 'Not sent · tap to send'}</Text><Text numberOfLines={2} style={styles.attachmentHelp}>{message.content}</Text></View>
+        <View style={styles.attachmentText}><Text style={styles.attachmentTitle}>{chat.busy ? 'Queued · steers after tool results' : 'Not sent · tap to send'}</Text><Text numberOfLines={2} style={styles.attachmentHelp}>{message.content || `${message.attachments?.length ?? 0} attached files`}</Text></View>
       </Pressable>)}</ScrollView>}
       {editing && <View style={styles.editing}>
         <View style={styles.attachmentText}><Text style={styles.attachmentTitle}>Editing message</Text><Text style={styles.attachmentHelp}>Sending replaces later messages and replies.</Text></View>
@@ -206,11 +226,15 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
         {onDetach && <Pressable accessibilityRole="button" accessibilityLabel="Remove transcript attachment" disabled={chat.busy} onPress={onDetach} style={styles.messageAction}><X size={17} color={colors.muted} /></Pressable>}
       </View>}
       <View style={styles.composer}>
+        <ChatAttachments attachments={attachmentDraft.attachments} onRemove={id => attachmentDraft.change(attachmentDraft.attachments.filter(image => image.id !== id))} disabled={attachmentDraft.busy || submitting} />
         <TextInput ref={input} accessibilityLabel="Message GoVue" placeholder={attachment ? 'Ask about this video…' : 'Ask anything…'} placeholderTextColor={colors.muted}
           value={draft} onChangeText={voice.changeDraft} multiline maxLength={8000} style={styles.input} selectionColor={colors.accent} editable={!loading} />
         {!!voice.interimText && <Text accessibilityLabel="Speech preview" accessibilityLiveRegion="polite" numberOfLines={3} style={styles.voicePreview}>{voice.interimText}</Text>}
         {showReasoning && providerId && model && <AiReasoning id={providerId} model={model} value={chat.reasoningEffort} busy={chat.settingsBusy} deferred={chat.busy} onSelect={level => { void chat.setReasoning(level).then(saved => { if (saved) setShowReasoning(false); }); }} />}
         <View style={styles.composerTools}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Attach files" disabled={loading || attachmentDraft.busy || submitting || !contextReady} onPress={() => { input.current?.blur(); setAttachmentActions(true); }} style={[styles.attachButton, (loading || attachmentDraft.busy || submitting || !contextReady) && styles.disabled]}>
+            {attachmentDraft.busy ? <ActivityIndicator size="small" color={colors.accent} /> : <Paperclip size={22} color={colors.ink} />}
+          </Pressable>
           {availableTranscript && !attachment && <Pressable accessibilityRole="button" accessibilityLabel="Attach current transcript" disabled={chat.busy || loading} onPress={onAttach} style={[styles.attachButton, chat.busy && styles.disabled]}><Plus size={22} color={colors.ink} /></Pressable>}
           <Pressable accessibilityRole="button" accessibilityLabel={`Reasoning effort: ${reasoning}`} accessibilityHint="Changes apply to your next message" accessibilityState={{ expanded: showReasoning, disabled: !connected || loading || chat.settingsBusy }} disabled={!connected || loading || chat.settingsBusy} onPress={() => setShowReasoning(!showReasoning)} style={[styles.reasoningButton, (!connected || loading || chat.settingsBusy) && styles.disabled]}><Brain size={16} color={colors.accent} /><Text numberOfLines={1} style={styles.reasoningText}>{reasoning}</Text><ChevronDown size={12} color={colors.muted} style={showReasoning ? styles.expanded : undefined} /></Pressable>
           <View style={styles.spacer} />
@@ -227,6 +251,8 @@ export function AiChat({ chat, draft, onDraftChange, attachment, availableTransc
         {voice.active && <Text accessibilityLiveRegion="polite" style={styles.voiceStatus}>{voice.phase === 'preparing' ? 'Starting voice input…' : voice.phase === 'finishing' ? 'Finishing voice input…' : 'Listening… Tap the microphone to finish.'}</Text>}
       </View>
       {!!voice.error && <Text accessibilityRole="alert" style={styles.error}>{voice.error}</Text>}
+      {!!attachmentDraft.error && <Text accessibilityRole="alert" style={styles.error}>{attachmentDraft.error}</Text>}
+      <ChatAttachmentActions visible={attachmentActions} onClose={() => setAttachmentActions(false)} onPick={pickAttachment} />
       {voice.needsSettings && <Pressable accessibilityRole="button" onPress={() => { void Linking.openSettings(); }} style={styles.messageAction}><Text style={styles.actionText}>Open Settings</Text></Pressable>}
     </View>}
   </View>;

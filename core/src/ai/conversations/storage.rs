@@ -3,7 +3,7 @@ use super::index;
 use super::index::Metadata;
 use super::model::{Conversation, MAX_CHAT, MAX_CHATS};
 use crate::ai::http::MAX_OUTPUT;
-use crate::ai::{activity, catalog, games, jobs, practice, providers, usage};
+use crate::ai::{activity, attachments, catalog, games, jobs, practice, providers, usage};
 use crate::{Error, Result};
 use std::fs;
 use std::io::{Read as _, Write as _};
@@ -61,7 +61,11 @@ pub(super) fn read(root: &Path, id: &str) -> Result<Conversation> {
             .is_some_and(|v| !catalog::valid_reasoning(v))
         || chat.pending_messages.len() > 8
         || chat.pending_messages.iter().any(|m| {
-            !providers::valid_id(&m.id) || m.content.trim().is_empty() || m.content.len() > 16000
+            !providers::valid_id(&m.id)
+                || m.content.trim().is_empty() && m.attachments.is_empty()
+                || m.content.len() > 16000
+                || m.attachments.len() > attachments::MAX_ATTACHMENTS
+                || m.attachments.iter().any(|image| !image.valid())
         })
         || chat
             .pending_messages
@@ -82,6 +86,9 @@ pub(super) fn read(root: &Path, id: &str) -> Result<Conversation> {
                     "completed" | "streaming" | "failed" | "stopped"
                 )
                 || m.content.len() > MAX_OUTPUT
+                || m.attachments.len() > attachments::MAX_ATTACHMENTS
+                || m.attachments.iter().any(|image| !image.valid())
+                || m.role != "user" && !m.attachments.is_empty()
                 || m.prepared_input.as_ref().is_some_and(|input| {
                     m.role != "user"
                         || input.content.len() > 480_000

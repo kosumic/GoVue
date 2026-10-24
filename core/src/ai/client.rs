@@ -3,8 +3,8 @@ use crate::Result;
 use crate::ai::jobs::Job;
 use crate::ai::providers::{CONFIG_LOCK, Provider};
 use crate::ai::{
-    accounts, activity, catalog, connections, conversations, credentials, games, http, identity,
-    plan, providers, replay, tools,
+    accounts, activity, attachments, catalog, connections, conversations, credentials, games, http,
+    identity, plan, providers, replay, tools,
 };
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -160,6 +160,17 @@ pub(super) fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value>
                     .or_else(|| m["top_provider"]["max_completion_tokens"].as_u64())
                     .filter(|n| (1..=2_000_000).contains(n)),
                 reasoning_efforts: efforts,
+                input_modalities: m["input_modalities"]
+                    .as_array()
+                    .or_else(|| m["architecture"]["input_modalities"].as_array())
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(Value::as_str)
+                            .filter(|s| matches!(*s, "text" | "image" | "audio" | "video" | "pdf"))
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 ..Default::default()
             };
             rows.push(model);
@@ -218,6 +229,11 @@ pub(super) fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value>
                 existing
                     .reasoning_efforts
                     .clone_from(&model.reasoning_efforts);
+            }
+            if existing.input_modalities.is_empty() {
+                existing
+                    .input_modalities
+                    .clone_from(&model.input_modalities);
             }
         } else if saved.models.len() < 512 {
             saved.models.push(model.clone());
@@ -280,6 +296,10 @@ pub(super) fn chat(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) -> Resu
     let mut error = crate::Error::from("No model in this group could answer.");
     for candidate in candidates {
         job.pending()?;
+        if let Err(e) = attachments::check_request(root, &candidate, c) {
+            error = e;
+            continue;
+        }
         let mut wire = c.clone();
         wire["groupReasoning"] = json!(group.reasoning);
         wire["contextLimit"] = json!(group.context_limit);
@@ -334,7 +354,8 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
         return Err("Choose a model in Providers first.".into());
     }
     let prompt = crate::string(c, "prompt")?.trim();
-    if prompt.is_empty() || prompt.len() > 16000 {
+    let attached = attachments::ids(&c["attachments"])?;
+    if prompt.is_empty() && attached.is_empty() || prompt.len() > 16000 {
         return Err("Enter a question of up to 16,000 bytes.".into());
     }
     let mut context = String::new();
@@ -402,8 +423,11 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
         }
     }
     let mut messages = conversations::history(&c["history"])?;
+    attachments::check_request(root, p, c)?;
     let question = if c["intent"] == "summary" {
         "Summarize this video using the attached transcript. Start with a concise overview, then list the key points with timestamps. Use only information supported by the transcript."
+    } else if prompt.is_empty() {
+        "Explain the attached files."
     } else {
         prompt
     };
@@ -415,7 +439,7 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
             transcript: transcript_hash,
         },
     )?;
-    messages.push(json!({"role":"user","content":content}));
+    messages.push(json!({"role":"user","content":content,"attachments":attached}));
     if messages
         .iter()
         .map(|m| m["content"].as_str().unwrap_or_default().len())
@@ -426,7 +450,29 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
             "This conversation has reached its context limit. Start a new chat to continue.".into(),
         );
     }
-    let (suffix, protocol, mut body) = match catalog::protocol(p) {
+    let wire_protocol = catalog::protocol(p);
+    let mut wire_bytes = 0;
+    let messages = messages
+        .iter()
+        .map(|m| {
+            let row = attachments::message(
+                root,
+                wire_protocol,
+                m["role"].as_str().unwrap_or_default(),
+                m["content"].as_str().unwrap_or_default(),
+                &m["attachments"],
+            )?;
+            wire_bytes += row.to_string().len();
+            if wire_bytes > attachments::MAX_REQUEST {
+                return Err(
+                    "This chat has too many attachments for one request. Start a new chat to continue."
+                        .into(),
+                );
+            }
+            Ok(row)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (suffix, protocol, mut body) = match wire_protocol {
         "responses" => (
             "/responses".into(),
             "responses",
@@ -449,7 +495,7 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
             (
                 u.to_string(),
                 "gemini",
-                json!({"systemInstruction":{"parts":[{"text":instructions}]},"contents":messages.iter().map(|m| json!({"role":if m["role"]=="assistant" {"model"} else {"user"},"parts":[{"text":m["content"]}]})).collect::<Vec<_>>()}),
+                json!({"systemInstruction":{"parts":[{"text":instructions}]},"contents":messages}),
             )
         }
         _ => (
@@ -497,7 +543,7 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
     };
-    let input_bytes = body.to_string().len();
+    let input_bytes = attachments::context_cost(&body);
     // Conservative Unicode-safe upper bound: each UTF-8 byte may be a token.
     if limit.is_some_and(|n| input_bytes as u64 + model.max_output_tokens.unwrap_or(4096) > n) {
         return Err("This message exceeds the selected model's context limit. Start a new chat or raise its configured limit.".into());
@@ -653,8 +699,11 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
     let mut round = 0;
     loop {
         job.pending()?;
-        if body.to_string().len() > 900_000
-            || limit.is_some_and(|n| body.to_string().len() as u64 + max_output.unwrap_or(4096) > n)
+        if body.to_string().len() > attachments::MAX_REQUEST
+            || attachments::context_cost(&body) > 900_000
+            || limit.is_some_and(|n| {
+                attachments::context_cost(&body) as u64 + max_output.unwrap_or(4096) > n
+            })
         {
             return Err(
                 "This tool conversation exceeds the selected model's context limit.".into(),
@@ -712,10 +761,17 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
             results.push(json!({"id":call["id"],"providerId":call["providerId"],"name":call["name"],"output":result.unwrap_or_else(|error| json!({"error":error}))}));
         }
         tools::continue_with(&mut body, protocol, &response, results)?;
-        if let Some((content, reply_id)) =
+        if let Some((content, attachment_ids, reply_id)) =
             conversations::steer(job, calls.is_empty() && !commentary)?
         {
-            tools::append_user(&mut body, protocol, &content)?;
+            if attachment_ids.is_empty() {
+                tools::append_user(&mut body, protocol, &content)?;
+            } else {
+                attachments::check_request(root, p, &json!({"attachments":attachment_ids}))?;
+                let message =
+                    attachments::message(root, protocol, "user", &content, &json!(attachment_ids))?;
+                tools::append_attachment_message(&mut body, protocol, message)?;
+            }
             turn["replyId"] = json!(reply_id);
             round = 0;
             continue;

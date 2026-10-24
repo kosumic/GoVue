@@ -1,6 +1,6 @@
 //! Saved conversation, message and transcript reference data.
 use crate::Result;
-use crate::ai::{activity, games, identity};
+use crate::ai::{activity, attachments, games, identity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -29,6 +29,8 @@ pub(super) struct Message {
     pub(super) usage_chat_id: Option<String>,
     pub(super) role: String,
     pub(super) content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) attachments: Vec<attachments::Attachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) prepared_input: Option<PreparedInput>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -69,6 +71,7 @@ impl Message {
             usage_chat_id: None,
             role: role.into(),
             content,
+            attachments: Vec::new(),
             prepared_input: None,
             games: Vec::new(),
             blocks: Vec::new(),
@@ -98,6 +101,8 @@ impl Message {
 pub(super) struct QueuedMessage {
     pub(super) id: String,
     pub(super) content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) attachments: Vec<attachments::Attachment>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

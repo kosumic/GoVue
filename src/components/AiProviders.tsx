@@ -180,6 +180,8 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
       <Text style={s.label}>Reasoning effort</Text><Choices value={model.reasoning || ''} items={(model.reasoningEfforts?.length ? ['', ...model.reasoningEfforts] : levels).map(v => [v, v || 'Provider default'])} onChange={reasoning => setModel({ ...model, reasoning })} />
       <Field label="Temperature" numeric value={temperature} onChange={setTemperature} placeholder="Provider default (0–2)" />
       <Field label="Top P" numeric value={topP} onChange={setTopP} placeholder="Provider default (0–1)" />
+      <Toggle label="Image input" value={!model.inputModalities?.length || model.inputModalities.includes('image')} onChange={enabled => setModel({ ...model, inputModalities: [...new Set(['text', ...(model.inputModalities?.filter(m => m !== 'image') ?? []), ...(enabled ? ['image'] : [])])] })} />
+      <Text style={s.help}>Enable only if this model can understand images. Undeclared capabilities use the provider's support.</Text>
       <Text style={s.help}>{[model.inputModalities?.length ? `Input: ${model.inputModalities.join(', ')}` : '', model.outputModalities?.length ? `Output: ${model.outputModalities.join(', ')}` : ''].filter(Boolean).join(' · ')}</Text>
       <Field label="Custom headers (JSON)" value={headers} onChange={setHeaders} multiline />
       <Field label="Extra request parameters (JSON)" value={body} onChange={setBody} multiline />

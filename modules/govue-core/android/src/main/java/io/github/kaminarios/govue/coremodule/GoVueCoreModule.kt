@@ -155,6 +155,11 @@ internal class NativeMediaCapabilities {
 }
 
 class GoVueCoreModule : Module() {
+  private var chatAttachments: ChatAttachments? = null
+  private fun attachments(): ChatAttachments {
+    if (chatAttachments == null) chatAttachments = ChatAttachments(requireNotNull(appContext.reactContext) as com.facebook.react.bridge.ReactContext) { sendEvent("chatImagePaste", it) }
+    return requireNotNull(chatAttachments)
+  }
   private val main = android.os.Handler(android.os.Looper.getMainLooper())
   private var physicalOrientation: PhysicalOrientation? = null
   private var castDiscovery: CastDiscovery? = null
@@ -215,7 +220,21 @@ class GoVueCoreModule : Module() {
   private val imageClient=OkHttpClient.Builder().connectTimeout(15,TimeUnit.SECONDS).readTimeout(15,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
   override fun definition() = ModuleDefinition {
     Name("GoVueCore")
-    Events("browserLaunch", "deviceOrientation", "pipAction", "coreUpdate", "chatNotification")
+    Events("browserLaunch", "deviceOrientation", "pipAction", "coreUpdate", "chatNotification", "chatImagePaste")
+    AsyncFunction("hasChatClipboardAttachment") { attachments().available() }.runOnQueue(Queues.MAIN)
+    AsyncFunction("copyChatClipboardAttachment") Coroutine { ->
+      val adapter = withContext(Dispatchers.Main) { attachments() }
+      withContext(Dispatchers.IO) { adapter.copyClipboard() }
+    }
+    AsyncFunction("bindChatImagePaste") { tag: Int, token: String -> attachments().bind(tag, token) }.runOnQueue(Queues.MAIN)
+    AsyncFunction("unbindChatImagePaste") { token: String -> chatAttachments?.unbind(token); Unit }.runOnQueue(Queues.MAIN)
+    AsyncFunction("takeChatImagePaste") { token: String, uri: String -> chatAttachments?.take(token, uri) ?: false }.runOnQueue(Queues.MAIN)
+    AsyncFunction("importChatAttachment") Coroutine { request: String ->
+      withContext(Dispatchers.IO) {
+        val context = requireNotNull(appContext.reactContext)
+        io.github.kaminarios.govue.core.aiImportAttachment(request, File(context.filesDir, "transcripts").path, context.cacheDir.path)
+      }
+    }
     AsyncFunction("prepareChatNotifications") { promise: Promise ->
       chatNotifications?.prepare()
       if (Build.VERSION.SDK_INT >= 33) {
@@ -266,6 +285,7 @@ class GoVueCoreModule : Module() {
     } }
     OnActivityEntersBackground { main.post { chatForeground(false); physicalOrientation?.foreground(false); castDiscovery?.snapshot(false) } }
     OnDestroy {
+      main.post { chatAttachments?.close(); chatAttachments = null }
       main.post { physicalOrientation?.close(); physicalOrientation = null; castDiscovery?.close(); castDiscovery = null; if (Build.VERSION.SDK_INT >= 26) pipControls?.close(); pipControls = null }
     }
     AsyncFunction("castDiscoverySnapshot") { enabled: Boolean ->

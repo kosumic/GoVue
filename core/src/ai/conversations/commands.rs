@@ -69,7 +69,7 @@ pub(in crate::ai) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                 chat.archived = value.as_bool().ok_or("Invalid archive setting.")?;
             }
             storage::save(&root, &chat)?;
-            library::presentation(&chat)
+            library::presentation(&root, &chat)
         }
         "ai_chat_find" => {
             let mut chat = storage::read(&root, crate::string(&c, "chatId")?)?;
@@ -99,7 +99,7 @@ pub(in crate::ai) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
                     .map(|m| (m.id.as_str(), m.role.as_str(), m.content.as_str())),
             )
         }
-        "ai_chat_video_open" => library::presentation(&library::open_video(&root, &c)?),
+        "ai_chat_video_open" => library::presentation(&root, &library::open_video(&root, &c)?),
         "ai_chat_branch" => library::branch(&root, &c),
         "ai_chat_model" => {
             let mut chat = storage::read(&root, crate::string(&c, "chatId")?)?;
@@ -112,12 +112,12 @@ pub(in crate::ai) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             chat.provider_label = selected.label;
             chat.model = selected.model;
             storage::save(&root, &chat)?;
-            library::presentation(&chat)
+            library::presentation(&root, &chat)
         }
         "ai_chat_get" => {
             let mut chat = storage::read(&root, crate::string(&c, "chatId")?)?;
             storage::recover(&root, &mut chat)?;
-            library::presentation(&chat)
+            library::presentation(&root, &chat)
         }
         "ai_chat_reasoning" => {
             let mut chat = storage::read(&root, crate::string(&c, "chatId")?)?;
@@ -125,10 +125,20 @@ pub(in crate::ai) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             // Running requests own their wire settings; this preference affects the next turn.
             chat.reasoning_effort = library::parse_reasoning(&c["reasoningEffort"])?;
             storage::save(&root, &chat)?;
-            library::presentation(&chat)
+            library::presentation(&root, &chat)
         }
         "ai_chat_delete" => {
             let id = crate::string(&c, "chatId")?;
+            let attachment_ids = storage::read(&root, id)
+                .map(|chat| {
+                    chat.messages
+                        .iter()
+                        .flat_map(|m| &m.attachments)
+                        .chain(chat.pending_messages.iter().flat_map(|m| &m.attachments))
+                        .map(|image| image.id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             if let Ok(chat) = storage::read(&root, id) {
                 for game in chat.messages.iter().flat_map(|message| &message.games) {
                     practice::capture(&root, game)?;
@@ -145,6 +155,7 @@ pub(in crate::ai) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             }
             replay::forget_chat(&root, id)?;
             storage::delete(&root, id)?;
+            super::release_attachments(&root, &attachment_ids)?;
             Ok(Value::Null)
         }
         _ => Err("Unsupported conversation operation.".into()),

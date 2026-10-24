@@ -5,21 +5,32 @@ use super::storage::CHATS;
 use super::{index, storage};
 use crate::Result;
 use crate::ai::providers::CONFIG_LOCK;
-use crate::ai::{catalog, identity, jobs, providers, search, usage};
+use crate::ai::{attachments, catalog, identity, jobs, providers, search, usage};
 use serde_json::{Value, json};
 use std::path::Path;
 
-pub(super) fn presentation(chat: &Conversation) -> Result<Value> {
+pub(super) fn presentation(root: &Path, chat: &Conversation) -> Result<Value> {
     refresh_games(chat)?;
     let mut value = serde_json::to_value(chat).map_err(|_| "Could not open this chat.")?;
-    for message in value["messages"]
+    for (message, saved) in value["messages"]
         .as_array_mut()
         .ok_or("Invalid chat messages.")?
+        .iter_mut()
+        .zip(&chat.messages)
     {
         let fields = message.as_object_mut().ok_or("Invalid chat message.")?;
         fields.remove("preparedInput");
         fields.remove("usageChatId");
         message["usageDetails"] = usage::details(&message["usage"]);
+        if !saved.attachments.is_empty() {
+            message["attachments"] = json!(
+                saved
+                    .attachments
+                    .iter()
+                    .map(|image| attachments::presentation(root, image))
+                    .collect::<Result<Vec<_>>>()?
+            );
+        }
     }
     Ok(value)
 }
@@ -233,7 +244,7 @@ pub(super) fn branch(root: &Path, c: &Value) -> Result<Value> {
     chat.created_at = identity::now();
     chat.updated_at = chat.created_at;
     storage::save(root, &chat)?;
-    presentation(&chat)
+    presentation(root, &chat)
 }
 pub(super) fn usage_report(command: &Value, root: &Path) -> Result<Value> {
     let selected = command

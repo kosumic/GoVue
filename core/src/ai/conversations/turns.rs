@@ -4,7 +4,7 @@ use super::storage::CHATS;
 use super::{index, library, storage};
 use crate::Result;
 use crate::ai::jobs::Job;
-use crate::ai::{activity, identity, jobs, providers, usage};
+use crate::ai::{activity, attachments, identity, jobs, providers, usage};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,9 +25,11 @@ pub(in crate::ai) fn history(value: &Value) -> Result<Vec<Value>> {
     for (i, row) in rows.iter().enumerate() {
         let role = crate::string(row, "role")?;
         let content = crate::string(row, "content")?;
+        let attachment_ids = attachments::ids(&row["attachments"])?;
         total += content.len();
         if role != if i % 2 == 0 { "user" } else { "assistant" }
-            || content.trim().is_empty()
+            || content.trim().is_empty() && attachment_ids.is_empty()
+            || role != "user" && !attachment_ids.is_empty()
             || total > 300_000
         {
             return Err(
@@ -35,7 +37,11 @@ pub(in crate::ai) fn history(value: &Value) -> Result<Vec<Value>> {
                     .into(),
             );
         }
-        result.push(json!({"role":role,"content":content}));
+        let mut row = json!({"role":role,"content":content});
+        if !attachment_ids.is_empty() {
+            row["attachments"] = json!(attachment_ids);
+        }
+        result.push(row);
     }
     Ok(result)
 }
@@ -88,7 +94,7 @@ pub(super) fn finish(
                 .is_some_and(|reply| reply.status == "completed" && state["replyId"] == reply.id);
             drop(state);
             if committed {
-                return Ok(json!({"conversation":library::presentation(&chat)?}));
+                return Ok(json!({"conversation":library::presentation(root, &chat)?}));
             }
         }
         return Ok(Value::Null);
@@ -97,7 +103,7 @@ pub(super) fn finish(
     chat.active_task = None;
     chat.updated_at = identity::now();
     storage::save(root, &chat)?;
-    Ok(json!({"conversation":library::presentation(&chat)?}))
+    Ok(json!({"conversation":library::presentation(root, &chat)?}))
 }
 pub(super) fn capture_reply(
     chat: &mut Conversation,
@@ -161,7 +167,10 @@ pub(super) fn capture_reply(
 
 /// Deliver steering only after the complete tool result batch, or a text-only reply.
 /// Finalization shares the queue lock so a message arriving at completion starts a new turn.
-pub(in crate::ai) fn steer(job: &Job, terminal: bool) -> Result<Option<(String, String)>> {
+pub(in crate::ai) fn steer(
+    job: &Job,
+    terminal: bool,
+) -> Result<Option<(String, Vec<String>, String)>> {
     let Some((root, id)) = job.conversation.get() else {
         return Ok(None);
     };
@@ -192,9 +201,26 @@ pub(in crate::ai) fn steer(job: &Job, terminal: bool) -> Result<Option<(String, 
         .collect::<Vec<_>>()
         .join("\n\n");
     let mut user = Message::try_new("user", content.clone())?;
+    user.attachments = chat
+        .pending_messages
+        .iter()
+        .flat_map(|m| m.attachments.clone())
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    user.attachments
+        .retain(|image| seen.insert(image.id.clone()));
+    let attachment_ids = user
+        .attachments
+        .iter()
+        .map(|image| image.id.clone())
+        .collect();
     user.id.clone_from(&chat.pending_messages[0].id);
     user.prepared_input = Some(PreparedInput {
-        content: content.clone(),
+        content: if content.trim().is_empty() {
+            "Explain the attached files.".into()
+        } else {
+            content.clone()
+        },
         transcript: chat.messages.iter().rev().find_map(|m| {
             m.prepared_input
                 .as_ref()
@@ -228,7 +254,7 @@ pub(in crate::ai) fn steer(job: &Job, terminal: bool) -> Result<Option<(String, 
     state["steeringCommitted"] = json!(true);
     drop(state);
     job.notifications.changed();
-    Ok(Some((content, reply_id)))
+    Ok(Some((content, attachment_ids, reply_id)))
 }
 
 pub(super) fn enqueue(root: &Path, chat: &mut Conversation, c: &Value) -> Result<Value> {
@@ -240,17 +266,30 @@ pub(super) fn enqueue(root: &Path, chat: &mut Conversation, c: &Value) -> Result
         return Err("Stop this response before editing or regenerating messages.".into());
     }
     let content = crate::string(c, "prompt")?.trim();
+    let attached = attachments::resolve(root, &c["attachments"])?;
+    let mut provider = providers::provider(root, &chat.provider_id)?;
+    provider.model.clone_from(&chat.model);
+    if provider.kind != "group" {
+        attachments::check_model(&provider, attached.iter().map(|file| file.kind))?;
+    }
     let bytes = chat
         .pending_messages
         .iter()
         .map(|m| m.content.len() + 2)
         .sum::<usize>();
-    if content.is_empty() || content.len() > 16000 {
+    if content.is_empty() && attached.is_empty() || content.len() > 16000 {
         return Err("Enter a question of up to 16,000 bytes.".into());
     }
     if chat.pending_messages.len() >= 8
         || bytes + content.len() > 16000
         || chat.messages.len() >= 198
+        || chat
+            .pending_messages
+            .iter()
+            .map(|m| m.attachments.len())
+            .sum::<usize>()
+            + attached.len()
+            > attachments::MAX_ATTACHMENTS
     {
         return Err("The message queue is full. Wait for the assistant to continue.".into());
     }
@@ -268,6 +307,7 @@ pub(super) fn enqueue(root: &Path, chat: &mut Conversation, c: &Value) -> Result
     chat.pending_messages.push(QueuedMessage {
         id: identity::random()?,
         content: content.into(),
+        attachments: attached,
     });
     chat.updated_at = identity::now();
     storage::save(root, chat)?;
@@ -276,7 +316,7 @@ pub(super) fn enqueue(root: &Path, chat: &mut Conversation, c: &Value) -> Result
         .map_err(|_| "AI state is unavailable. Restart GoVue.")?["pendingMessages"] =
         json!(chat.pending_messages);
     job.notifications.changed();
-    Ok(json!({"taskId":job.id,"conversation":library::presentation(chat)?}))
+    Ok(json!({"taskId":job.id,"conversation":library::presentation(root, chat)?}))
 }
 pub(in crate::ai) fn interrupt(job: &Arc<Job>) -> Result<Value> {
     if let Some((root, id)) = job.conversation.get() {
@@ -399,7 +439,36 @@ pub(super) fn send(c: Value, root: PathBuf) -> Result<Value> {
     }
     .trim()
     .to_owned();
-    if prompt.is_empty() || prompt.len() > 16_000 {
+    let attached = if let Some(index) = retry_prompt {
+        chat.messages[index].attachments.clone()
+    } else if let Some(index) = edit.filter(|_| c.get("attachments").is_none()) {
+        chat.messages[index].attachments.clone()
+    } else if let Some(queued) = c["queuedMessageId"].as_str() {
+        chat.pending_messages
+            .iter()
+            .find(|m| m.id == queued)
+            .ok_or("This queued message is no longer available.")?
+            .attachments
+            .clone()
+    } else {
+        attachments::resolve(&root, &c["attachments"])?
+    };
+    // Reject declared text-only models before saving or replacing any messages.
+    let history_end = edit.or(retry_prompt).unwrap_or(chat.messages.len());
+    if p.kind != "group" {
+        attachments::check_model(
+            &p,
+            attached
+                .iter()
+                .chain(
+                    chat.messages[..history_end]
+                        .iter()
+                        .flat_map(|m| &m.attachments),
+                )
+                .map(|file| file.kind),
+        )?;
+    }
+    if prompt.is_empty() && attached.is_empty() || prompt.len() > 16_000 {
         return Err("Enter a message of up to 16,000 bytes.".into());
     }
     let prompt_id = edit
@@ -477,12 +546,22 @@ pub(super) fn send(c: Value, root: PathBuf) -> Result<Value> {
                 } else {
                     content
                 };
-                json!({"role":m.role,"content":content})
+                let mut row = json!({"role":m.role,"content":content});
+                if !m.attachments.is_empty() {
+                    row["attachments"] = json!(
+                        m.attachments
+                            .iter()
+                            .map(|image| &image.id)
+                            .collect::<Vec<_>>()
+                    );
+                }
+                row
             })
         })
         .collect::<Vec<_>>();
     history(&json!(history_rows))?;
     let mut wire = json!({"prompt":prompt,"history":history_rows,"intent":c["intent"],"includeTranscript":chat.transcript.is_some()});
+    wire["attachments"] = json!(attached.iter().map(|image| &image.id).collect::<Vec<_>>());
     let previous = chat
         .messages
         .as_chunks::<2>()
@@ -533,6 +612,8 @@ pub(super) fn send(c: Value, root: PathBuf) -> Result<Value> {
                 .as_ref()
                 .map(|t| t.title.chars().take(100).collect())
                 .unwrap_or_else(|| "Video summary".into())
+        } else if prompt.is_empty() {
+            "File conversation".into()
         } else {
             prompt
                 .split_whitespace()
@@ -544,6 +625,7 @@ pub(super) fn send(c: Value, root: PathBuf) -> Result<Value> {
         };
     }
     let mut user = Message::try_new("user", prompt)?;
+    user.attachments = attached;
     if let Some(id) = prompt_id {
         user.id = id;
     }
@@ -571,6 +653,7 @@ pub(super) fn send(c: Value, root: PathBuf) -> Result<Value> {
     }
     let worker = job.clone();
     let id = chat.id.clone();
+    let presented = library::presentation(&root, &chat)?;
     crate::ai::notifications::started(c["notificationSession"].as_str(), &id);
     thread::spawn(move || {
         let result = crate::ai::client::chat(&root, &p, &wire, &worker);
@@ -581,5 +664,5 @@ pub(super) fn send(c: Value, root: PathBuf) -> Result<Value> {
             Err(e) => saved.and(Err(e)),
         });
     });
-    Ok(json!({"taskId":job.id,"conversation":library::presentation(&chat)?}))
+    Ok(json!({"taskId":job.id,"conversation":presented}))
 }

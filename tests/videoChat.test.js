@@ -64,6 +64,7 @@ async function harness(videoId, restore = async id => transcript(id)) {
   Function('require', 'module', 'exports', result.outputFiles[0].text)(name => {
     if (name === 'mock-core') return core;
     if (name === 'react-native') return native;
+    if (name === 'expo-document-picker' || name === 'expo-file-system' || name === 'expo-image-picker') return {};
     if (name === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView' };
     if (name === 'lucide-react-native') return Object.fromEntries(['ChevronDown', 'ChevronLeft', 'Menu', 'Play', 'SquarePen', 'X'].map(key => [key, key]));
     if (name === 'mock-ai') return { useAi: () => ai };

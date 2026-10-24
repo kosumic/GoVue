@@ -2,6 +2,7 @@
 //! Native adapters only handle HTTPS bytes and protected credential storage.
 mod accounts;
 mod activity;
+mod attachments;
 mod audio_requests;
 mod catalog;
 mod chat_sessions;
@@ -29,7 +30,7 @@ mod word_assistance;
 #[cfg(test)]
 mod tests;
 
-pub use commands::ai_execute;
+pub use commands::{ai_attachment_source_limit, ai_execute, ai_import_attachment};
 pub use http::{AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, install_ai_platform};
 pub(crate) use notifications::foreground as chat_notification_foreground;
 pub(crate) use notifications::visible as chat_notification_visibility;
