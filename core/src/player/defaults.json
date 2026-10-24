@@ -25,7 +25,7 @@
   "useOriginalTitle": false,
   "showDislikes": true,
   "showLikes": true,
-  "hideShorts": false,
+  "hideShorts": true,
   "miniPlayer": true,
   "sponsorCountdown": true,
   "hapticStrength": 30,
