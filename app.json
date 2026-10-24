@@ -70,9 +70,15 @@
         }
       ],
       "expo-sharing",
+      ["expo-camera", {
+        "cameraPermission": "Allow GoVue to scan provider QR codes and take photos for chat messages.",
+        "recordAudioAndroid": false,
+        "barcodeScannerEnabled": true
+      }],
+      "./plugins/withProviderQr.cjs",
       ["expo-image-picker", {
-        "photosPermission": "Allow GoVue to attach photos to chat messages.",
-        "cameraPermission": "Allow GoVue to take photos for chat messages.",
+        "photosPermission": "Allow GoVue to choose provider QR images and attach photos to chat messages.",
+        "cameraPermission": "Allow GoVue to scan provider QR codes and take photos for chat messages.",
         "microphonePermission": "Allow GoVue to use the microphone for voice input in chat."
       }],
       "./plugins/withLocalMedia.cjs",

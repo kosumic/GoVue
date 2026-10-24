@@ -388,6 +388,9 @@ pub(super) fn operation(op: &str) -> bool {
             | "ai_reorder"
             | "ai_export"
             | "ai_import"
+            | "ai_provider_qr"
+            | "ai_preview_provider_qr"
+            | "ai_import_provider_qr"
     )
 }
 pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
@@ -402,6 +405,19 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
     let mut cfg = providers::config(&root)?;
     match op {
         "ai_reasoning_options" => return reasoning_options(&cfg, &c),
+        "ai_provider_qr" => {
+            let p = cfg
+                .providers
+                .iter()
+                .find(|p| c["id"] == p.id)
+                .ok_or("Provider was removed.")?;
+            return super::sharing::encode(p, c["selectedModelOnly"] == true);
+        }
+        "ai_preview_provider_qr" => {
+            let p = super::sharing::decode(crate::string(&c, "payload")?)?;
+            return Ok(super::sharing::preview(&p));
+        }
+        "ai_import_provider_qr" => super::sharing::import(&c, &mut cfg)?,
         "ai_export" => {
             return Ok(
                 json!({"format":"lingoplay.ai","version":1,"providers":cfg.providers,"groups":cfg.groups,"activeId":cfg.active_id}),

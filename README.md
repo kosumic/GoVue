@@ -188,6 +188,10 @@ conversation or expand to fill the screen.
   retry, offline playback, and file export.
 - Publish verified downloads to **Downloads/GoVue** on Android 10 and newer.
 - Export and import extension settings.
+- Share a single AI connection as a rounded QR code, scan it with the camera or
+  choose a QR image, then review the endpoint and models before importing. Keys,
+  account tokens and custom request options stay on the sending device. Large
+  model libraries can share only the selected model or use JSON export.
 
 Downloads currently target finite MP4 video and M4A audio. Live downloads and
 durable partial-download recovery after process termination remain open.
@@ -415,6 +419,9 @@ checks the Expo configuration.
 
 Android and iOS build `expo-video` from source to include `scripts/patch-video.ts`;
 keep its postinstall patch and autolinking override together.
+Android also builds `expo-camera` from source for provider QR scanning. The QR
+config plugin adds Play Store package visibility and preserves ML Kit's reflected
+scanner class in release builds.
 `fingerprint.config.cjs` includes native package sources in fingerprints so local
 patches remain part of native compatibility checks under SDK 58.
 

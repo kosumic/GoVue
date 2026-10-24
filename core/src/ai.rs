@@ -21,6 +21,7 @@ mod practice;
 mod providers;
 mod replay;
 mod search;
+mod sharing;
 mod sse;
 mod tools;
 mod updates;

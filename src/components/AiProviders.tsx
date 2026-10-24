@@ -8,6 +8,7 @@ import { aiRequest } from '../../modules/govue-core';
 import type { AiController, ConnectionPreview, Group, Model, Provider, ProviderChoice, ProviderDraft } from '../ai/useAi';
 import { useThemeColors, useThemeStyles, type ThemeColors } from '../theme';
 import { AiMarkdown } from './AiMarkdown';
+import { ProviderQr } from './ProviderQr';
 
 const protocolNames: [string, string][] = [['', 'Provider default'], ['chat', 'Chat Completions'], ['responses', 'Responses'], ['anthropic', 'Anthropic Messages'], ['gemini', 'Gemini']];
 const levels = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
@@ -51,6 +52,7 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
   const [topP, setTopP] = useState('');
   const [query, setQuery] = useState('');
   const [transfer, setTransfer] = useState<string | null>(null);
+  const [qr, setQr] = useState<{ id?: string } | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [agentDraft, setAgentDraft] = useState<string | null>(null);
   const [agentSaved, setAgentSaved] = useState(false);
@@ -230,6 +232,7 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
       {!!preview?.error && <Text accessibilityRole="alert" style={s.error}>{preview.error}</Text>}
       <Action title="Save connection" disabled={busy || !draft.label.trim()} onPress={() => { void saveProvider(); }} />
       {editing && <>
+        <Action title="Share provider QR code" disabled={busy} onPress={() => { void saveProvider().then(p => { if (p) { clear(); setQr({ id: p.id }); } }); }} />
         <Text style={s.section}>Saved models · {editing.models.length}</Text>
         <View style={s.row}><View style={s.grow}><Action title="Refresh model list" disabled={busy || !connected || !editing.enabled} onPress={() => { void saveProvider().then(p => { if (p) void ai.run('models', p.id); }); }} /></View><Action title="Add model ID" disabled={busy} onPress={() => { void editModel({ id: '', name: '', reasoning: '', hidden: false }); }} /></View>
         <Field label="Search saved models" value={query} onChange={setQuery} />
@@ -243,6 +246,7 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
         <Action title="Remove connection" disabled={busy} onPress={() => removeProvider(editing)} />
       </>}
     </> : transfer !== null ? <>
+      <Action title="Scan provider QR code" disabled={busy} onPress={() => { clear(); setQr({}); }} />
       <Text style={s.help}>Import a GoVue provider configuration. It adds separate connections and model groups. Reconnect imported accounts and keys on this device.</Text>
       <Action title="Paste configuration" onPress={() => { void Clipboard.getString().then(setTransfer).catch(() => setError('Could not read the clipboard.')); }} />
       <Field label="Provider configuration JSON" value={transfer} onChange={setTransfer} multiline />
@@ -271,8 +275,9 @@ export function AiProviders({ ai, onUsage }: { ai: AiController; onUsage?: () =>
       {ai.groups.map((g, i) => <View key={g.id} style={s.row}><Pressable accessibilityRole="button" style={s.grow} onPress={() => editGroup(g)}><Text style={s.label}>{g.name}</Text><Text style={s.help}>{g.members.length} models · {g.strategy === 'loadBalance' ? 'Round robin' : 'Fallback'}</Text></Pressable><Order up={!busy && i ? () => { void reorder(ai.groups.map(g => g.id), i, -1, { kind: 'groups' }); } : undefined} down={!busy && i < ai.groups.length - 1 ? () => { void reorder(ai.groups.map(g => g.id), i, 1, { kind: 'groups' }); } : undefined} /><ChevronRight size={18} color={colors.muted} /></View>)}
       <Action title="Create model group" onPress={() => editGroup({ id: '', name: '', members: [], strategy: 'fallback', fallbackOnAnyError: false, reasoning: '', contextLimit: null })} />
       <Text style={s.section}>Configuration</Text><Text style={s.help}>Exports contain connections, models and groups. API keys, account tokens, custom headers and extra request parameters stay on this device.</Text>
-      <View style={s.row}><Action title="Import" disabled={busy} onPress={() => { clear(); setTransfer(''); }} /><Action title="Export" disabled={busy} onPress={() => { void exportSettings(); }} /></View>
+      <View style={s.row}><Action title="Import" disabled={busy} onPress={() => { clear(); setTransfer(''); }} /><Action title="Export" disabled={busy} onPress={() => { void exportSettings(); }} /><Action title="Scan QR" disabled={busy} onPress={() => { clear(); setQr({}); }} /></View>
     </>}
+    {qr && <ProviderQr providerId={qr.id} ai={ai} onClose={() => setQr(null)} onImported={p => { setQr(null); setTransfer(null); editProvider(p); }} />}
     {busy && <View style={s.row}><ActivityIndicator color={colors.accent} /><Text style={s.help}>{ai.busy === 'login' ? 'Complete account sign-in, then return here.' : 'Saving or contacting provider…'}</Text></View>}
     {ai.busy === 'login' && <Action title="Cancel sign-in" onPress={ai.stop} />}
     {!!ai.notice && <Text accessibilityLiveRegion="polite" selectable style={s.help}>{ai.notice}</Text>}
