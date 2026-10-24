@@ -17,8 +17,8 @@ android {
   lint { abortOnError true }
 }
 
-dependencies { implementation 'net.java.dev.jna:jna:5.17.0@aar' }
-dependencies { implementation 'com.squareup.okhttp3:okhttp:4.12.0' }
+dependencies { implementation 'net.java.dev.jna:jna:5.19.1@aar' }
+dependencies { implementation 'com.squareup.okhttp3:okhttp:5.5.1' }
 dependencies { compileOnly 'com.facebook.react:react-android' }
 
 def buildRust = tasks.register('buildRust', Exec) {
