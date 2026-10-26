@@ -15,6 +15,8 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use url::Url;
 
+const CODEX_CLIENT_VERSION: &str = "0.164.0";
+
 pub(super) fn headers(p: &Provider, token: String) -> Vec<(&'static str, String)> {
     let mut hs = if p.azure {
         vec![("api-key", token.clone())]
@@ -50,8 +52,11 @@ pub(super) fn headers(p: &Provider, token: String) -> Vec<(&'static str, String)
     }
     if p.kind == "codex" {
         hs.push(("originator", "codex_cli_rs".into()));
-        hs.push(("Version", "0.153.3".into()));
-        hs.push(("User-Agent", "codex_cli_rs/0.153.3 (Android; arm64)".into()));
+        hs.push(("Version", CODEX_CLIENT_VERSION.into()));
+        hs.push((
+            "User-Agent",
+            format!("codex_cli_rs/{CODEX_CLIENT_VERSION} (Android; arm64)"),
+        ));
         hs.push(("Openai-Beta", "responses=experimental".into()));
         if let Ok(s) = credentials::read_secret(&p.id)
             && let Some(account) = s["account_id"].as_str()
@@ -76,7 +81,8 @@ pub(super) fn models(root: &Path, p: &Provider, job: &Arc<Job>) -> Result<Value>
     let base = connections::effective_base(p)?;
     let mut url = format!("{base}/models");
     if p.kind == "codex" {
-        url.push_str("?client_version=0.153.3");
+        url.push_str("?client_version=");
+        url.push_str(CODEX_CLIENT_VERSION);
     }
     let mut rows = Vec::new();
     for _ in 0..12 {
