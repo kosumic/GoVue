@@ -36,8 +36,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
             let config = Config::parse(&command["config"])?;
             let mut batch_bytes = [0u8; 8];
-            getrandom::getrandom(&mut batch_bytes)
-                .map_err(|_| "Could not create download identity.")?;
+            getrandom::fill(&mut batch_bytes).map_err(|_| "Could not create download identity.")?;
             let batch = crate::hex(&batch_bytes);
             for (index, item) in items.iter().enumerate() {
                 let id = format!("{batch}-{index}");
