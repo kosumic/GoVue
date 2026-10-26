@@ -170,7 +170,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         let directory = Path::new(root).join("media").join("transfers");
         fs::create_dir_all(&directory).map_err(|_| "Could not create transfer storage.")?;
         let mut bytes = [0u8; 8];
-        getrandom::fill(&mut bytes).map_err(|_| "Could not create transfer identity.")?;
+        getrandom::getrandom(&mut bytes).map_err(|_| "Could not create transfer identity.")?;
         let nonce = crate::hex(&bytes);
         let files = (0..parts.len())
             .map(|i| {

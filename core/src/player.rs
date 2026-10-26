@@ -365,7 +365,8 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         index.and_then(|i| i.checked_sub(1))
                     } else if library.loop_mode == 3 && library.queue.len() > 1 {
                         let mut random = [0; 4];
-                        getrandom::fill(&mut random).map_err(|_| "Could not shuffle queue.")?;
+                        getrandom::getrandom(&mut random)
+                            .map_err(|_| "Could not shuffle queue.")?;
                         let step =
                             1 + u32::from_le_bytes(random) as usize % (library.queue.len() - 1);
                         Some(index.map_or(

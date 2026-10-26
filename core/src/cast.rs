@@ -28,7 +28,7 @@ fn platform() -> Result<&'static dyn CastPlatform> {
 }
 fn random() -> Result<String> {
     let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|_| "Could not create a Cast session.")?;
+    getrandom::getrandom(&mut bytes).map_err(|_| "Could not create a Cast session.")?;
     Ok(crate::hex(&bytes))
 }
 

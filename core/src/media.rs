@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn playback_preferences_migrate_validate_and_survive_reload() {
         let mut unique = [0u8; 8];
-        getrandom::fill(&mut unique).unwrap();
+        getrandom::getrandom(&mut unique).unwrap();
         let directory =
             std::env::temp_dir().join(format!("govue-playback-{:x}", u64::from_ne_bytes(unique)));
         let root = directory.to_str().unwrap();
