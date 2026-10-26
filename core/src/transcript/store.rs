@@ -45,7 +45,7 @@ impl TranscriptKey {
     }
     fn path(&self, root: &str) -> PathBuf {
         let key = format!("{}\0{}", self.video.as_str(), self.track.as_str());
-        let hash = crate::hex(&Sha256::digest(key.as_bytes()));
+        let hash = format!("{:x}", Sha256::digest(key.as_bytes()));
         Path::new(root).join(format!("{hash}.json"))
     }
 }

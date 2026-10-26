@@ -400,7 +400,7 @@ pub(super) fn chat_once(root: &Path, p: &Provider, c: &Value, job: &Arc<Job>) ->
         context.push_str("</transcript>\n");
     }
     let transcript_hash =
-        (!context.is_empty()).then(|| crate::hex(&Sha256::digest(context.as_bytes())));
+        (!context.is_empty()).then(|| format!("{:x}", Sha256::digest(context.as_bytes())));
     if transcript_hash
         .as_deref()
         .is_some_and(|hash| c["lastTranscript"] == hash)

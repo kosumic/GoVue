@@ -2,7 +2,6 @@
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -403,11 +402,7 @@ fn collection_limit_allows_duplicates_and_removal_without_silent_eviction() {
     for i in 1..2_000 {
         let mut next = entry.clone();
         let word = format!("word{i}");
-        let mut id = String::with_capacity(64);
-        for byte in Sha256::digest(format!("en\0{word}")) {
-            write!(id, "{byte:02x}").unwrap();
-        }
-        next["id"] = json!(id);
+        next["id"] = json!(format!("{:x}", Sha256::digest(format!("en\0{word}"))));
         next["word"] = json!(word);
         full.push(next);
     }

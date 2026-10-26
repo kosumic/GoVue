@@ -30,7 +30,7 @@ fn directory(root: &str) -> PathBuf {
     Path::new(root).join("media").join("gallery")
 }
 fn key(url: &str) -> String {
-    crate::hex(&Sha256::digest(url.as_bytes()))
+    format!("{:x}", Sha256::digest(url.as_bytes()))
 }
 fn image(path: &Path) -> Result<Value> {
     let meta = fs::metadata(path).map_err(|_| "Image file is missing.")?;

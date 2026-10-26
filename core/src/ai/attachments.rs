@@ -98,7 +98,7 @@ fn digest(name: &str, kind: Kind, bytes: &[u8]) -> String {
     hash.update(name);
     hash.update([0]);
     hash.update(bytes);
-    crate::hex(&hash.finalize())
+    format!("{:x}", hash.finalize())
 }
 fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let file =
