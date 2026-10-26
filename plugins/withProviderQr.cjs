@@ -5,6 +5,13 @@ const path = require('node:path');
 module.exports = config => {
   config = withAndroidManifest(config, config => {
     const manifest = config.modResults.manifest;
+    // QR images and chat attachments also work without camera hardware.
+    const features = manifest['uses-feature'] ||= [];
+    for (const name of ['android.hardware.camera', 'android.hardware.camera.autofocus']) {
+      const feature = features.find(feature => feature.$?.['android:name'] === name);
+      if (feature) feature.$['android:required'] = 'false';
+      else features.push({ $: { 'android:name': name, 'android:required': 'false' } });
+    }
     const queries = manifest.queries ||= [];
     // Expo Camera 58 checks this package before decoding images. Android package
     // visibility otherwise makes an installed Play Store appear to be absent.
