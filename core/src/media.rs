@@ -431,7 +431,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             if !crate::video_id(id) {
                 return Err("Invalid SponsorBlock video.".into());
             }
-            let prefix = format!("{:x}", Sha256::digest(id.as_bytes()));
+            let prefix = crate::hex(&Sha256::digest(id.as_bytes()));
             let mut url = Url::parse(&format!(
                 "https://sponsor.ajay.app/api/skipSegments/{}",
                 &prefix[..4]

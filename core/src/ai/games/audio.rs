@@ -204,13 +204,10 @@ fn read_metadata(directory: &Path) -> Option<Metadata> {
     Some(data)
 }
 fn cache_key(video_id: &str, cue: &Cue) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(format!(
-            "game-audio-v1-original-aac\0{video_id}\0{}\0{}",
-            cue.start, cue.duration
-        ))
-    )
+    crate::hex(&Sha256::digest(format!(
+        "game-audio-v1-original-aac\0{video_id}\0{}\0{}",
+        cue.start, cue.duration
+    )))
 }
 fn register(directory: PathBuf, data: &mut Metadata) -> Result<Value> {
     let server = server()?;

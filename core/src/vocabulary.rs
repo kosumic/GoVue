@@ -141,14 +141,11 @@ struct SavedWord {
 }
 
 fn identity(language: &str, word: &str) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(format!(
-            "{}\0{}",
-            crate::folded(language),
-            crate::folded(word)
-        ))
-    )
+    crate::hex(&Sha256::digest(format!(
+        "{}\0{}",
+        crate::folded(language),
+        crate::folded(word)
+    )))
 }
 
 fn path(root: &str) -> PathBuf {
