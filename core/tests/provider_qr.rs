@@ -7,6 +7,7 @@ use govue_core::{AiHttpRequest, AiPlatform, AiResponse, AiSecret};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -203,7 +204,10 @@ fn reject_untrusted(receiver: &Path, payload: &str, raw: &Value) {
 fn large_libraries(sender: &Path, receiver: &Path, raw: &Value) {
     let models: Vec<_> = (0_u32..512)
         .map(|i| {
-            let id = format!("{:x}", Sha256::digest(i.to_le_bytes()));
+            let mut id = String::with_capacity(64);
+            for byte in Sha256::digest(i.to_le_bytes()) {
+                write!(id, "{byte:02x}").unwrap();
+            }
             json!({"id":id,"name":format!("Model {i}")})
         })
         .collect();

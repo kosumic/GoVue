@@ -594,7 +594,7 @@ fn token(url: &str) -> String {
     // Signed source URLs contain high-entropy session material; their hash is
     // an opaque capability. Never expose the signed URL on the loopback route.
     let unique = format!("{url}:{}", REGISTRATIONS.fetch_add(1, Ordering::SeqCst));
-    format!("{:x}", Sha256::digest(unique.as_bytes()))
+    crate::hex(&Sha256::digest(unique.as_bytes()))
 }
 
 pub(super) fn proxy(command: &Value) -> Result<Value> {
