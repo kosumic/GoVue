@@ -916,7 +916,7 @@ pub(crate) fn resolve(
     check: &impl Fn() -> Result<()>,
 ) -> Result<Value> {
     let mut nonce = [0u8; 12];
-    getrandom::getrandom(&mut nonce).map_err(|_| "Could not create extraction identity.")?;
+    getrandom::fill(&mut nonce).map_err(|_| "Could not create extraction identity.")?;
     let request = format!("worker:{}", crate::hex(&nonce));
     check()?;
     crate::request(

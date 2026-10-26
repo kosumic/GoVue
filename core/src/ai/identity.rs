@@ -12,13 +12,13 @@ pub(super) fn now() -> u64 {
 }
 pub(super) fn random() -> Result<String> {
     let mut b = [0u8; 32];
-    getrandom::getrandom(&mut b).map_err(|_| "Could not generate secure login values.")?;
+    getrandom::fill(&mut b).map_err(|_| "Could not generate secure login values.")?;
     Ok(URL_SAFE_NO_PAD.encode(b))
 }
 
 pub(super) fn uuid() -> Result<String> {
     let mut b = [0u8; 16];
-    getrandom::getrandom(&mut b).map_err(|_| "Secure random generator unavailable.")?;
+    getrandom::fill(&mut b).map_err(|_| "Secure random generator unavailable.")?;
     b[6] = (b[6] & 15) | 64;
     b[8] = (b[8] & 63) | 128;
     let h = crate::hex(&b);
