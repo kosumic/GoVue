@@ -85,7 +85,7 @@
     "jsdom": "^30.1.3",
     "react-test-renderer": "19.3.0",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.72.0"
+    "typescript-eslint": "^8.72.1"
   },
   "enriched-markdown": {
     "enableCodeHighlight": true,
