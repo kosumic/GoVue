@@ -5,7 +5,7 @@ import type { Transcript } from '../youtube/transcript';
 
 type Request = { videoId: string; audioKey: string; trackIds: string[]; fresh: boolean };
 type Document = { data: Transcript; cached: boolean };
-type Result = { request: Request; trackIds: string[]; documents: Document[]; loading: boolean; error: string | null };
+type Result = { request: Request; trackIds: string[]; documents: Document[]; loading: boolean; error: string | null; retryAfterSeconds: number | null };
 
 export function usePlayerTranscript(videoId: string | null, initial?: Transcript, audioKey = '') {
   const [sessionId] = useState(() => `reader:${Date.now()}:${Math.random().toString(36).slice(2)}`);
@@ -48,11 +48,11 @@ export function usePlayerTranscript(videoId: string | null, initial?: Transcript
     if (!request) return;
     const version = ++revision.current;
     let active = true, snapshotRevision = 0;
-    type Snapshot = { version: number; trackIds: string[]; documents: Document[]; loading: boolean; error: string | null };
+    type Snapshot = { version: number; trackIds: string[]; documents: Document[]; loading: boolean; error: string | null; retryAfterSeconds: number | null };
     const apply = (value: Snapshot | null) => {
       if (!active || !value || value.version !== version) return;
       documents.current = value.documents;
-      setResult({ request, trackIds: value.trackIds, documents: value.documents, loading: value.loading, error: value.error });
+      setResult({ request, trackIds: value.trackIds, documents: value.documents, loading: value.loading, error: value.error, retryAfterSeconds: value.retryAfterSeconds ?? null });
     };
     const refresh = async () => {
       const current = ++snapshotRevision;
@@ -61,7 +61,7 @@ export function usePlayerTranscript(videoId: string | null, initial?: Transcript
     };
     const subscription = observeCoreUpdates(`transcript:${sessionId}`, () => { void refresh().catch(() => {}); });
     void coreRequest<Snapshot>({ op: 'transcript_session_load', sessionId, version, ...request, initial }).then(refresh).catch(error => {
-      if (active) setResult({ request, trackIds: request.trackIds, documents: documents.current, loading: false,
+      if (active) setResult({ request, trackIds: request.trackIds, documents: documents.current, loading: false, retryAfterSeconds: null,
         error: error instanceof Error ? error.message : 'The transcript could not load.' });
     });
     return () => {
@@ -74,6 +74,7 @@ export function usePlayerTranscript(videoId: string | null, initial?: Transcript
     trackIds: selected[0] === 'default' && data ? [data.trackId] : selected,
     loading: !!videoId && !data && (!current || current.loading),
     comparisonLoading: !!data && !!selected[1] && !comparison && (!current || current.loading),
+    retryAfterSeconds: current?.retryAfterSeconds ?? null,
     cached: !!data && available.every(d => d.cached),
     error: !data ? current?.error ?? null : null,
     comparisonError: data ? current?.error ?? null : null,

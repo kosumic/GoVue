@@ -76,7 +76,15 @@ readiness event re-delivers pending tasks idempotently, and one caption-module
 reload handles delayed player initialization.
 Original uploaded and generated captions and machine translations use this
 adapter. Translation tasks identify the source track separately and add only
-the requested target language to its signed address. Original caption bytes or
+the requested target language to its signed address. When caption selection is
+needed, the page also asks YouTube's player for that target translation so the
+player's own request can complete the task. It enables the caption loader while
+native playback leaves the page player unstarted, then restores caption loading
+and selection when finished. When normalized metadata for the selected track is
+cached, Rust tries the page before requesting native player
+metadata. A guest playback rejection therefore does not prevent that page
+attempt. The playback error offers the cached reader alongside the web-player
+fallback. Original caption bytes or
 another translation cannot satisfy that task; transcript-panel responses are
 used only for original tracks. Standalone extraction remains the fallback when
 the page cannot retrieve the selected track.
@@ -151,7 +159,9 @@ returns 429 while the in-memory guest session is younger than 75 seconds, Rust
 waits for the remaining session age and retries that request once, following the
 [yt-dlp session-age workaround](https://github.com/yt-dlp/yt-dlp/pull/15709).
 Original captions, cached transcripts and successful translation requests have
-no artificial delay. This retry applies only to younger sessions.
+no artificial delay. This retry applies only to younger sessions. During the
+wait, Rust supplies the reader with the remaining seconds so it displays the
+YouTube limit and automatic retry countdown instead of a generic loading message.
 Refreshing player metadata reuses the cached guest cookies and their age;
 changing the visitor cookie resets that age.
 The wait is cancellable and extraction jobs allow up to 180 seconds so the wait
@@ -162,5 +172,11 @@ original transcript for Retry. Guest cookies and age remain in memory only.
 
 This initial standalone extractor uses a guest VISIONOS client. Sign-in-required
 videos and videos unavailable to that client fail explicitly. Formats requiring
-signature/throttle evaluation are not selected. The active-page caption adapter
-does not bypass the native player metadata requirement.
+signature/throttle evaluation are not selected. Uncached caption metadata still
+requires the standalone player; cached track selections can use the active page
+independently of native playback.
+
+When restoring reader preferences, every cached document uses the track catalog
+that resolved those preferences. Cached languages saved under older catalogs
+cannot leave an invisible selected track that disables the translation menu.
+Page requests for cached translations use their own source document's metadata.

@@ -9,6 +9,7 @@ use std::thread;
 
 struct Reader {
     version: u64,
+    channel: String,
     cancelled: AtomicBool,
     state: Mutex<Value>,
 }
@@ -82,9 +83,29 @@ fn document(
     if !saved.is_null() {
         return Ok(json!({"data":saved,"cached":true}));
     }
-    Ok(
-        json!({"data":crate::extraction::resolve(root,"transcript",video,track,audio,fresh,&||check(reader))?,"cached":false}),
-    )
+    let data = crate::extraction::resolve(
+        root,
+        "transcript",
+        video,
+        track,
+        audio,
+        fresh,
+        &|retry_after| {
+            check(reader)?;
+            let mut state = reader
+                .state
+                .lock()
+                .map_err(|_| "Transcript reader is busy.")?;
+            let retry_after = json!(retry_after);
+            if state["retryAfterSeconds"] != retry_after {
+                state["retryAfterSeconds"] = retry_after;
+                drop(state);
+                crate::changed(&reader.channel);
+            }
+            Ok(())
+        },
+    )?;
+    Ok(json!({"data":data,"cached":false}))
 }
 
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
@@ -196,10 +217,11 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     }
     let reader = Arc::new(Reader {
         version,
+        channel: channel(id.as_str()),
         cancelled: AtomicBool::new(false),
         state: Mutex::new(json!({
             "version":version,"videoId":video,"audioKey":audio,"trackIds":tracks,
-            "documents":if restore_preferences {Vec::new()} else {documents.clone()},"loading":true,"error":null
+            "documents":if restore_preferences {Vec::new()} else {documents.clone()},"loading":true,"error":null,"retryAfterSeconds":null
         })),
     });
     readers.insert(key, reader.clone());
@@ -219,6 +241,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     thread::spawn(move || {
         let result = (|| -> Result<()> {
             let mut tracks = tracks;
+            let mut metadata = None;
             if restore_preferences {
                 // Resolve portable language preferences from this video's track
                 // metadata, including when its cached document is a translation.
@@ -229,6 +252,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     .into_iter()
                     .map(Value::String)
                     .collect();
+                metadata = Some(data);
                 documents.push(base);
                 check(&reader)?;
                 reader
@@ -238,7 +262,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             }
             let mut loaded = Vec::new();
             for track in &tracks {
-                let document = document(
+                let mut document = document(
                     &reader,
                     &root,
                     &video,
@@ -248,6 +272,27 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     &documents,
                 )?;
                 check(&reader)?;
+                if let Some(metadata) = &metadata
+                    && (document["data"]["tracks"] != json!(metadata.tracks)
+                        || document["data"]["trackMetadata"] != json!(metadata.track_metadata))
+                {
+                    // Cached languages can come from different caption catalogs.
+                    // Display the catalog that resolved the current selection.
+                    let mut data =
+                        serde_json::from_value::<crate::Transcript>(document["data"].take())
+                            .map_err(|_| "Invalid transcript metadata.")?;
+                    data.tracks.clone_from(&metadata.tracks);
+                    data.track_metadata.clone_from(&metadata.track_metadata);
+                    crate::transcript::normalize(&mut data)?;
+                    let guard = crate::REQUEST_LOCK
+                        .lock(c"GoVue core request: transcript_session.metadata")
+                        .map_err(|_| "Core state is unavailable. Restart GoVue.")?;
+                    check(&reader)?;
+                    crate::transcript::remember(&root, &data)?;
+                    let _ = crate::transcript::save(&root, &data);
+                    drop(guard);
+                    document["data"] = json!(data);
+                }
                 loaded.push(document);
                 let mut state = reader
                     .state
@@ -266,6 +311,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             if let Ok(mut state) = reader.state.lock() {
                 state["loading"] = json!(false);
                 state["error"] = json!(error);
+                state["retryAfterSeconds"] = Value::Null;
             }
             crate::changed(&channel(id.as_str()));
         }

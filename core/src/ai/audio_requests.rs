@@ -40,7 +40,7 @@ fn resolve(command: &Value, root: &Path, job: &Preparation) -> Result<Value> {
     let mut command = command.clone();
     for fresh in [false, true] {
         let catalog =
-            crate::extraction::resolve(store, "media", video, "default", "", fresh, &|| {
+            crate::extraction::resolve(store, "media", video, "default", "", fresh, &|_| {
                 check(job)
             })?;
         check(job)?;

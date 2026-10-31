@@ -711,7 +711,9 @@ function Browser() {
         youtubeVideoId(
           browser.tabs.find((t) => t.id === browser.activeId)?.url || '',
         ) !== watch?.videoId));
-  const transcriptVisible = session.transcript.open && !session.mini && !session.pip && !page && !aiVisible && !playerHidden;
+  const transcriptVisible = session.transcript.open && !session.mini && !session.pip && !page && !aiVisible &&
+    (!playerHidden || (!media.playback && browser.activeId === watch?.id &&
+      youtubeVideoId(browser.tabs.find(t => t.id === browser.activeId)?.url || '') === watch?.videoId));
   const transcriptBottomInset = session.fullscreen ? 0 : insets.bottom;
   const transcriptBeside = workspaceSize.width > workspaceSize.height;
   const transcriptWidth = Math.min(400, workspaceSize.width * 0.4);
@@ -885,6 +887,7 @@ function Browser() {
                     trackIds={session.transcript.trackIds}
                     comparisonLoading={session.transcript.comparisonLoading}
                     comparisonError={session.transcript.comparisonError}
+                    retryAfterSeconds={session.transcript.retryAfterSeconds}
                     onSelectTrack={session.transcript.selectTrack}
                     loading={session.transcript.loading}
                     cached={session.transcript.cached}
@@ -945,6 +948,9 @@ function Browser() {
                   <Pressable style={s.retry} onPress={() => media.closePlayer()}>
                     <Text style={s.errorText}>Web player</Text>
                   </Pressable>
+                  {session.transcript.data && <Pressable style={s.retry} onPress={session.transcript.toggle}>
+                    <Text style={s.errorText}>{session.transcript.open ? 'Hide transcript' : 'Read transcript'}</Text>
+                  </Pressable>}
                 </View>
               )}
             </View>

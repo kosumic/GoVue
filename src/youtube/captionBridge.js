@@ -43,7 +43,7 @@
     const requests = new WeakMap(), listeners = new Map();
     const controller = new AbortController(), sources = new Map();
     const videoId = currentVideo();
-    let player, changed = false, previous;
+    let player, changed = false, previous, previousSticky = false;
     const deliver = (address, source, body) => {
       if (typeof source !== 'string' || !source.trim() || source.length > MAX_BYTES) return;
       for (const state of [...pending.values()]) {
@@ -98,9 +98,15 @@
       },
       select(track) {
         player = document.getElementById('movie_player');
-        if (!changed) previous = player?.getOption?.('captions', 'track');
+        if (!changed) {
+          previous = player?.getOption?.('captions', 'track');
+          previousSticky = !!player?.getOption?.('captions', 'stickyLoading');
+        }
         player?.loadModule?.('captions');
         changed = true;
+        // Native playback can leave the page player unstarted. Its caption
+        // loader otherwise accepts a selection without requesting any bytes.
+        player?.setOption?.('captions', 'stickyLoading', true);
         player?.setOption?.('captions', 'track', {});
         player?.setOption?.('captions', 'track', track);
         player?.setOption?.('captions', 'reload', true);
@@ -113,6 +119,7 @@
         for (const [xhr, listener] of listeners) xhr.removeEventListener('load', listener);
         listeners.clear();
         if (changed && currentVideo() === videoId) {
+          try { player?.setOption?.('captions', 'stickyLoading', previousSticky); } catch {}
           try { player?.setOption?.('captions', 'track', previous || {}); } catch {}
         }
         capture = null;
@@ -209,7 +216,10 @@
             if (track) {
               const tracks = player.getOption?.('captions', 'tracklist');
               const available = Array.isArray(tracks) && (tracks.find(t => (t.vss_id || t.vssId) === sourceId) || tracks.find(t => t.languageCode === track.languageCode) || tracks[0]);
-              transport.select(available || { languageCode: track.languageCode, kind: track.kind, vss_id: track.vssId, name: trackName() });
+              const selection = available || { languageCode: track.languageCode, kind: track.kind, vss_id: track.vssId, name: trackName() };
+              // Ask the player for the target language too, so its own request
+              // can supply translated bytes when replaying the source proof fails.
+              transport.select(translated ? { ...selection, translationLanguage: { languageCode: task.language } } : selection);
               selected = true;
             }
           } catch {}

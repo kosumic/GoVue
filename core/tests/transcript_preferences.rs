@@ -58,6 +58,10 @@ impl Store {
     }
 
     fn read_with_initial(&mut self, video: &str, initial: Value) -> Value {
+        self.read_state_with_initial(video, initial)["trackIds"].clone()
+    }
+
+    fn read_state_with_initial(&mut self, video: &str, initial: Value) -> Value {
         self.version += 1;
         self.call(
             json!({"op":"transcript_session_load","sessionId":"preferences","version":self.version,
@@ -77,7 +81,7 @@ impl Store {
                     .collect();
                 assert_eq!(json!(ids), state["trackIds"]);
                 self.call(json!({"op":"transcript_session_dispose","sessionId":"preferences","version":self.version}));
-                return state["trackIds"].clone();
+                return state;
             }
             assert!(Instant::now() < deadline, "Reader stalled: {state}");
             std::thread::sleep(Duration::from_millis(5));
@@ -103,6 +107,44 @@ fn tracks(source: &str, language: &str) -> Value {
         {"id":source,"language":language,"label":language,"automatic":false,"translatable":true},
         {"id":format!("translate:ja:{source}"),"language":"ja","label":"Japanese","automatic":false,"translatedFrom":source}
     ])
+}
+
+#[test]
+fn restored_languages_can_be_removed_when_cached_documents_have_different_catalogs() {
+    let mut store = Store::new();
+    store.seed(FIRST, tracks(".en", "en"));
+    store.select(FIRST, json!([".en"]), "translate:ja:.en");
+    let updated = json!([
+        {"id":".en","language":"en","label":"English","automatic":false,"translatable":true},
+        {"id":"a.en","language":"en","label":"English auto","automatic":true,"translatable":true},
+        {"id":"translate:ja:a.en","language":"ja","label":"Japanese","automatic":true,"translatedFrom":"a.en"}
+    ]);
+    let data = json!({"videoId":FIRST,"title":"Updated catalog","trackId":"translate:ja:a.en",
+        "language":"Japanese","tracks":updated,"segments":[{"start":0,"duration":1,"text":"Japanese caption"}]});
+    let raw = json!({"type":"transcript","requestId":"updated","videoId":FIRST,"ok":true,"transcript":data});
+    store.call(json!({"op":"accept","videoId":FIRST,"requestId":"updated",
+        "origin":"https://www.youtube.com","raw":raw.to_string()}));
+    for entry in fs::read_dir(&store.path).unwrap().flatten() {
+        if !entry.file_type().unwrap().is_file() {
+            continue;
+        }
+        let data: Value = serde_json::from_slice(&fs::read(entry.path()).unwrap()).unwrap();
+        if data["trackId"] == "translate:ja:a.en" {
+            fs::File::open(entry.path())
+                .unwrap()
+                .set_times(
+                    fs::FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(10)),
+                )
+                .unwrap();
+        }
+    }
+    let state = store.read_state_with_initial(FIRST, Value::Null);
+    assert_eq!(state["trackIds"], json!([".en", "translate:ja:a.en"]));
+    assert_eq!(
+        store.select(FIRST, state["trackIds"].clone(), "translate:ja:a.en"),
+        json!([".en"])
+    );
+    assert_eq!(store.preferences(), json!([{"type":"source"}]));
 }
 
 #[test]

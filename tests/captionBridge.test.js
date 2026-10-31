@@ -24,7 +24,7 @@ function setup(t, fetch = async () => ({ ok: true, clone: () => ({ text: async (
   const player = window.document.getElementById('movie_player');
   player.getPlayerResponse = () => window.ytInitialPlayerResponse;
   player.loadModule = () => {};
-  player.getOption = () => previous;
+  player.getOption = (_module, option) => option === 'stickyLoading' ? false : previous;
   player.setOption = (module, option, value) => { selections.push({ module, option, value }); };
   const original = { fetch: window.fetch, open: window.XMLHttpRequest.prototype.open, send: window.XMLHttpRequest.prototype.send };
   window.eval(CAPTION_BRIDGE);
@@ -264,6 +264,34 @@ test('parallel consumers share one replay and cancelling one does not abort the 
   assert.equal(env.messages[1].ok, true);
   assert.equal(signal.aborted, true);
   assert.equal(env.window.fetch, env.original.fetch);
+});
+
+test('translated captions load when native playback has left the page player unstarted', async t => {
+  const french = JSON.stringify({ events: [{ tStartMs: 1500, segs: [{ utf8: 'Bonjour' }] }] });
+  const env = setup(t, async () => ({ ok: true, clone: () => ({ text: async () => french }) }));
+  const player = env.window.document.getElementById('movie_player');
+  let sticky = false, selected = env.previous;
+  player.getOption = (_module, option) => option === 'stickyLoading' ? sticky : option === 'tracklist'
+    ? [{ languageCode: 'en', kind: 'asr', vss_id: 'a.en' }] : selected;
+  player.setOption = (_module, option, value) => {
+    if (option === 'stickyLoading') sticky = value;
+    if (option === 'track') {
+      selected = value;
+      // An unstarted page player accepts the selection but only its explicit
+      // caption loader can issue the request, as observed on Android.
+      if (sticky && value.translationLanguage?.languageCode === 'fr') void env.window.fetch(address + '&tlang=fr');
+    }
+  };
+  env.window.__govueCaptions.request('reader:unstarted', {
+    ...task, trackId: 'translate:fr:a.en', sourceTrackId: 'a.en', language: 'fr',
+  });
+  await settle();
+  assert.equal(env.messages.length, 1);
+  assert.equal(env.messages[0].ok, true);
+  assert.equal(env.messages[0].source, french);
+  assert.equal(env.messages[0].trackId, 'translate:fr:a.en');
+  assert.equal(sticky, false, 'caption loading returns to its previous state');
+  assert.equal(selected, env.previous, 'the previous caption selection is restored');
 });
 
 test('a second language uses the ASR source with the requested translation and the active video proof', async t => {

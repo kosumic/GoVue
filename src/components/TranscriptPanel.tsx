@@ -14,12 +14,13 @@ import { WordTranslationSheet } from './WordTranslationSheet';
 import { CaptionSelection } from './CaptionSelection';
 import { captionDetails, saveWord, type WordSelection } from '../core/vocabulary';
 
-function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, onSelectTrack, loading, error, cached, position, clock, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, onBeforeWordAudio, audio, onSummarize, onDownload, downloadDisabled, bottomInset = 0 }: {
+function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonLoading = false, comparisonError, retryAfterSeconds, onSelectTrack, loading, error, cached, position, clock, pauseAfterLine, onPauseAfterLine, onClose, onExtract, onSeek, onPlayLine, onBeforeWordAudio, audio, onSummarize, onDownload, downloadDisabled, bottomInset = 0 }: {
   data: Transcript | null;
   comparison?: Transcript | null;
   trackIds?: string[];
   comparisonLoading?: boolean;
   comparisonError?: string | null;
+  retryAfterSeconds?: number | null;
   onSelectTrack?: (trackId: string) => void;
   loading: boolean;
   error: string | null;
@@ -41,6 +42,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
 }) {
   const colors = useThemeColors();
   const styles = useThemeStyles(makeStyles);
+  const retryMessage = retryAfterSeconds != null ? `YouTube is limiting this translation. Retrying in ${retryAfterSeconds}s…` : null;
   const [query, setQuery] = useState('');
   const [searchVisible, setSearchVisible] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -166,7 +168,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
         <IconButton compact icon={Square} label="Stop line audio" onPress={audio.stop} />
       </View>}
       {!!audio?.error && <Text accessibilityRole="alert" style={styles.feedback}>{audio.error}</Text>}
-      {loading ? <View style={styles.empty}><ActivityIndicator color={colors.accent} /><Text style={styles.emptyTitle}>Extracting captions…</Text><Text style={styles.help}>You can keep watching while this loads.</Text></View> : error ? (
+      {loading ? <View style={styles.empty}><ActivityIndicator color={colors.accent} /><Text style={styles.emptyTitle}>{retryMessage ? 'Waiting for YouTube…' : 'Extracting captions…'}</Text><Text accessibilityLiveRegion="polite" style={styles.help}>{retryMessage ?? 'You can keep watching while this loads.'}</Text></View> : error ? (
         <View style={styles.empty}><Text style={styles.emptyTitle}>Transcript unavailable</Text><Text accessibilityRole="alert" style={styles.help}>{error}</Text>
           {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable>}</View>
       ) : data ? <>
@@ -201,7 +203,7 @@ function TranscriptPanelContent({ data, comparison = null, trackIds, comparisonL
           </ScrollView>
           <TranscriptTranslations visible={languageMenu !== null} kind={languageMenu ?? 'machine'} tracks={languageMenu === 'captions' ? captions : translations} selected={selectedTracks} onSelect={onSelectTrack} onClose={() => setLanguageMenu(null)} />
         </>}
-        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={[styles.trackText, styles.comparisonMessage]}>{data?.tracks.some(track => track.id === selectedTracks[1] && !!track.translatedFrom) ? 'Loading YouTube translation…' : 'Loading comparison…'}</Text></View>}
+        {comparisonLoading && <View style={styles.comparisonStatus}><ActivityIndicator size="small" color={colors.accent} /><Text accessibilityLiveRegion="polite" style={[styles.trackText, styles.comparisonMessage]}>{retryMessage ?? (data?.tracks.some(track => track.id === selectedTracks[1] && !!track.translatedFrom) ? 'Loading YouTube translation…' : 'Loading comparison…')}</Text></View>}
         {!!comparisonError && <View style={styles.comparisonStatus}><Text accessibilityRole="alert" style={styles.comparisonError}>{comparisonError}</Text>
           {onExtract && <Pressable accessibilityRole="button" onPress={() => onExtract()}><Text style={styles.selectedText}>Retry</Text></Pressable>}</View>}
         {searchVisible && <View style={styles.search}><Search size={16} color={colors.muted} /><TextInput autoFocus accessibilityLabel="Search transcript" placeholder="Find in transcript" placeholderTextColor={colors.muted}

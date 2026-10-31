@@ -351,7 +351,7 @@ fn run(root: &str, value: &Value, work: &Work) -> Result<()> {
         "default",
         "",
         false,
-        &check,
+        &|_| check(),
     )?;
     let formats: Vec<_> = catalog["streams"]
         .as_array()
@@ -384,7 +384,7 @@ fn run(root: &str, value: &Value, work: &Work) -> Result<()> {
             crate::string(&plan["subtitle"], "id")?,
             "",
             false,
-            &check,
+            &|_| check(),
         )?;
         Some(crate::request(
             &json!({"op":"downloads_subtitles","videoId":value["videoId"],"trackId":transcript["trackId"]}),

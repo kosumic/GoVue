@@ -91,6 +91,7 @@ struct Runtime {
     sequence: u32,
     task: Option<Value>,
     reply: Option<Result<String>>,
+    retry_at: Option<Instant>,
 }
 struct Job {
     at: Instant,
@@ -121,10 +122,12 @@ impl Job {
             .runtime
             .lock()
             .map_err(|_| "Token runtime unavailable.")?;
+        state.retry_at = Some(until);
         loop {
             self.check()?;
             let remaining = until.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                state.retry_at = None;
                 return Ok(());
             }
             state = self
@@ -400,6 +403,7 @@ fn transcript(
     audio_key: &str,
     fresh: bool,
 ) -> Result<Value> {
+    let mut page_attempted = false;
     if !fresh {
         let mut command = json!({"op":"restore","videoId":id,"audioKey":audio_key});
         if track != "default" {
@@ -408,6 +412,35 @@ fn transcript(
         let saved = crate::transcript::restore(&command, root)?;
         if !saved.is_null() && (track == "default" || saved["trackId"] == track) {
             return Ok(saved);
+        }
+        // Cached, normalized metadata already identifies this video's selected
+        // language. The active page can retrieve it without a guest media
+        // request, which may require verification even when the page plays.
+        let mut metadata_request = json!({"op":"restore","videoId":id,"audioKey":audio_key});
+        if let Some((_, source)) = track
+            .strip_prefix("translate:")
+            .and_then(|id| id.split_once(':'))
+        {
+            metadata_request["trackId"] = json!(source);
+        }
+        if track != "default"
+            && let Ok(mut cached) = serde_json::from_value::<Transcript>(
+                crate::transcript::restore(&metadata_request, root)?,
+            )
+            && let Some(selected) = cached.tracks.iter().find(|t| t.id == track).cloned()
+        {
+            match page::captions(job, root, id, &selected) {
+                Ok(Some((segments, metadata))) => {
+                    cached.track_id = selected.id;
+                    cached.language = selected.label;
+                    cached.segments = segments;
+                    cached.caption_metadata = Some(metadata);
+                    return persist_transcript(job, root, cached);
+                }
+                Ok(None) => {}
+                Err(_) => page_attempted = true,
+            }
+            job.check()?;
         }
     }
     let player = player_cache::player(job, root, id, fresh, true)?;
@@ -441,7 +474,11 @@ fn transcript(
     };
     // Protected caption tracks can return HTTP 200 with no bytes even after a
     // standalone token challenge. Let the active player supply its own proof.
-    let from_page = page::captions(job, root, id, selected).ok().flatten();
+    let from_page = if page_attempted {
+        None
+    } else {
+        page::captions(job, root, id, selected).ok().flatten()
+    };
     job.check()?;
     let (segments, caption_metadata) = if let Some(captions) = from_page {
         captions
@@ -497,7 +534,7 @@ fn transcript(
             Ok(result) => result,
         }
     };
-    let mut data = Transcript {
+    let data = Transcript {
         video_id: id.into(),
         title: text(&player.data["videoDetails"]["title"]),
         language: selected.label.clone(),
@@ -507,6 +544,10 @@ fn transcript(
         caption_metadata: Some(caption_metadata),
         track_metadata: Some(track_metadata),
     };
+    persist_transcript(job, root, data)
+}
+
+fn persist_transcript(job: &Job, root: &str, mut data: Transcript) -> Result<Value> {
     crate::transcript::normalize(&mut data)?;
     job.check()?;
     let guard = crate::REQUEST_LOCK
@@ -804,6 +845,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                     sequence: 0,
                     task: None,
                     reply: None,
+                    retry_at: None,
                 }),
                 wake: Condvar::new(),
             });
@@ -860,7 +902,8 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 .lock()
                 .map_err(|_| "Token runtime unavailable.")?;
             Ok(
-                json!({"done":false,"task":runtime.task.as_ref().filter(|task| task["stage"] != page::STAGE)}),
+                json!({"done":false,"task":runtime.task.as_ref().filter(|task| task["stage"] != page::STAGE),
+                    "retryAfterSeconds":runtime.retry_at.map(|at| at.saturating_duration_since(Instant::now()).as_millis().div_ceil(1000))}),
             )
         }
         "extract_page" => {
@@ -906,6 +949,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
 }
 
 /// Shared workflows own extraction and cancellation; JS only executes token tasks.
+/// The observer checks cancellation and receives any translation retry countdown.
 pub(crate) fn resolve(
     root: &str,
     kind: &str,
@@ -913,12 +957,12 @@ pub(crate) fn resolve(
     track: &str,
     audio: &str,
     fresh: bool,
-    check: &impl Fn() -> Result<()>,
+    observe: &impl Fn(Option<u64>) -> Result<()>,
 ) -> Result<Value> {
     let mut nonce = [0u8; 12];
     getrandom::getrandom(&mut nonce).map_err(|_| "Could not create extraction identity.")?;
     let request = format!("worker:{}", crate::hex(&nonce));
-    check()?;
+    observe(None)?;
     crate::request(
         &json!({"op":"extract_start","requestId":request,"kind":kind,
         "videoId":id,"trackId":track,"audioKey":audio,"fresh":fresh}),
@@ -926,8 +970,8 @@ pub(crate) fn resolve(
     )?;
     let result = (|| {
         loop {
-            check()?;
             let result = crate::request(&json!({"op":"extract_poll","requestId":request}), root)?;
+            observe(result["retryAfterSeconds"].as_u64())?;
             if result["done"] == true {
                 return if let Some(error) = result["error"].as_str() {
                     Err(error.into())
@@ -969,6 +1013,7 @@ mod tests {
                 sequence: 0,
                 task: None,
                 reply: None,
+                retry_at: None,
             }),
             wake: Condvar::new(),
         });

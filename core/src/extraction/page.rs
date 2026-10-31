@@ -206,6 +206,7 @@ mod tests {
                 sequence: 1,
                 task,
                 reply: None,
+                retry_at: None,
             }),
             wake: Condvar::new(),
         }
