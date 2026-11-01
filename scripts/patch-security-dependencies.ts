@@ -68,7 +68,7 @@ for (const directory of locations('braces', '3.0.3')) {
 // GHSA-86w9-cpqp-85rv: reject extra nested DigestAlgorithm elements.
 // https://github.com/digitalbazaar/forge/pull/1152
 // Backported from ceba34402e329f0365134f23fe19898756527d65.
-for (const directory of locations('node-forge', '1.4.0')) {
+for (const directory of locations('node-forge', '1.4.2')) {
   patch(`${directory}/lib/rsa.js`,
     '            obj.value.length !== 2) {',
     `            obj.value.length !== 2 ||

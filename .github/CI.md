@@ -12,6 +12,8 @@ as part of `npm run check`. Generated and vendored sources are excluded from lin
 The Android job removes the hosted runner's preinstalled Android SDK and unused
 language runtimes before installing the Nix toolchain to leave room for native
 builds. Disk usage is logged before and after cleanup.
+`plugins/withAndroidBuildMemory.cjs` gives Gradle 1 GiB of metaspace so release
+R8 and lint do not exhaust Expo's default 512 MiB limit after native compilation.
 After Android passes, an Apple Silicon macOS runner builds the iOS XCFramework,
 installs CocoaPods dependencies, and compiles an unsigned arm64 release app.
 `CI complete` requires every applicable job to succeed and can be used as a
@@ -31,7 +33,7 @@ Both analyses upload results to GitHub code scanning.
 `scripts/patch-security-dependencies.ts`. `braces` 3.0.3 bounds parser nesting
 and validates supplied AST depth/cycles using
 [upstream PR #88](https://github.com/micromatch/braces/pull/88).
-`node-forge` 1.4.0 rejects surplus nested RSA DigestAlgorithm elements using
+`node-forge` 1.4.2 rejects surplus nested RSA DigestAlgorithm elements using
 [upstream PR #1152](https://github.com/digitalbazaar/forge/pull/1152).
 Behavioral regressions run in `npm test`. Remove each backport after upgrading
 to an upstream release that fixes its advisory; installation fails on version

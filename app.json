@@ -60,6 +60,7 @@
         }
       ],
       "./plugins/withAndroidSplashScreenCompat.cjs",
+      "./plugins/withAndroidBuildMemory.cjs",
       "./plugins/withAndroidDependencyConstraints.cjs",
       "expo-status-bar",
       [
