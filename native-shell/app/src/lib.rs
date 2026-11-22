@@ -28,6 +28,8 @@ mod now_playing;
 #[cfg(target_os = "ios")]
 mod now_playing_ios;
 mod pip;
+#[cfg(target_os = "ios")]
+mod pip_ios;
 mod player_view;
 mod player_window;
 #[cfg(target_os = "ios")]
@@ -78,6 +80,7 @@ pub fn run_ios() {
         now_playing_ios::register(components);
         ios_runtimes::register(components);
         player_window_ios::register(components);
+        pip_ios::register(components);
     });
     ios_host::run(nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"));
 }
@@ -148,6 +151,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         move |url| browser.open(url)
     });
     let pip_mode = pip.mode;
+    let pip_window = computed(move || cfg!(target_os = "android") && pip_mode.get());
     let now_playing = now_playing::now_playing(watch.clone(), queue.clone(), settings, pip_mode, {
         let browser = browser.clone();
         move |url| browser.open(url)
@@ -158,7 +162,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             let watch = watch.clone();
             move || watch.video().is_some()
         },
-        move || can_present.get() && !pip_mode.get(),
+        move || can_present.get() && !pip_window.get(),
     );
     let library = DownloadLibrary::new(
         downloads.clone(),
@@ -314,13 +318,13 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let width = signal(0_f32);
     let height = signal(0_f32);
     let fullscreen = player_window.presented;
-    let immersive = computed(move || fullscreen.get() || pip_mode.get());
+    let immersive = computed(move || fullscreen.get() || pip_window.get());
     let beside = computed(move || fullscreen.get() && width.get() > height.get());
     effect({
         let watch = watch.clone();
         let window = player_window.clone();
         move || {
-            if pip_mode.get() {
+            if pip_window.get() {
                 watch_reader.close();
                 watch.present(Some(govue_shell_runtime::EmbeddedVideoFrame {
                     left: 0.0,
@@ -484,13 +488,11 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(pip.notice()),
         );
     #[cfg(target_os = "android")]
+    let root = root.child(browser.launches());
     let root = root
-        .child(browser.launches())
         .child(now_playing)
         .child(player_window.view())
         .child(pip.view(move || watch.frame(width.get()), move || can_present.get()));
-    #[cfg(target_os = "ios")]
-    let root = root.child(now_playing).child(player_window.view());
     root.child(chat_view.camera())
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())

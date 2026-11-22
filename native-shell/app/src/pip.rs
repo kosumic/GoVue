@@ -34,6 +34,14 @@ struct Action {
     handoff: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Playing {
+    video_id: String,
+    generation: u64,
+    playing: bool,
+}
+
 struct Request {
     owner: Option<Owner>,
     action: String,
@@ -268,6 +276,15 @@ impl Pip {
                 "supported" => events.supported.set(event.data == true),
                 "mode" => events.mode.set(event.data == true),
                 "error" => events.error.set(event.data.as_str().map(str::to_owned)),
+                "playing" => {
+                    if let Ok(status) = Playing::deserialize(&event.data)
+                        && events.mode.get_untracked()
+                        && events.scope.get_untracked().is_some_and(|owner| owner.id == status.video_id && owner.generation == status.generation)
+                    {
+                        if status.playing { events.watch.player().play(status.generation); }
+                        else { events.watch.player().pause(status.generation); }
+                    }
+                }
                 "action" => {
                     if let Ok(action) = Action::deserialize(&event.data)
                         && events.scope.get_untracked().is_some_and(|owner|owner.id == action.video_id && owner.generation == action.generation)

@@ -138,6 +138,7 @@ fn clip(
     });
     let seek = player.element.clone();
     video(uri)
+        .test_id(&format!("govue-video-{generation}"))
         .element_ref(&player.element)
         .absolute()
         .left(move || px(decoded.get().0))
