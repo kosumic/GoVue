@@ -2,6 +2,7 @@ use nsh_core::{PointerEvents, prelude::*};
 
 use crate::{
     chat::{Chat, ChatBlock, Message},
+    chat_game::Games,
     chat_markdown::chat_markdown,
     ui::{self, Palette, press},
 };
@@ -21,10 +22,14 @@ pub fn reply(
     message: ReadSignal<Message>,
     chat: Chat,
     selected: ToolSelection,
+    games: Games,
 ) -> View {
     let busy =
         computed(move || chat.busy() && message.with(|message| message.status == "streaming"));
     let blocks = computed(move || message.with(|message| message.blocks.clone()));
+    let linked = games.clone();
+    let owner = message.with_untracked(|message| message.id.clone());
+    let footer_owner = owner.clone();
     view()
         .child(each(
             blocks,
@@ -48,7 +53,27 @@ pub fn reply(
                         active,
                     ),
                     "plan" => plan(p, block, message, active),
-                    "tool" => tool(p, block, message, active, selected),
+                    "tool" => {
+                        let games = linked.clone();
+                        let owner = owner.clone();
+                        view()
+                            .child(tool(p, block, message, active, selected))
+                            .child(each(
+                                move || {
+                                    let linked = block.with(|block| block.game_id.clone());
+                                    message.with(|message| {
+                                        message
+                                            .games
+                                            .iter()
+                                            .filter(|game| linked.as_deref() == Some(&game.id))
+                                            .cloned()
+                                            .collect::<Vec<_>>()
+                                    })
+                                },
+                                |game| game.id.clone(),
+                                move |game, _| games.card(p, game, owner.clone()),
+                            ))
+                    }
                     _ => view(),
                 }
             },
@@ -97,6 +122,25 @@ pub fn reply(
                     })
             },
             move || muted(p, "Thinking…"),
+        ))
+        .child(each(
+            move || {
+                message.with(|message| {
+                    message
+                        .games
+                        .iter()
+                        .filter(|game| {
+                            !message
+                                .blocks
+                                .iter()
+                                .any(|block| block.game_id.as_deref() == Some(&game.id))
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+            },
+            |game| game.id.clone(),
+            move |game, _| games.card(p, game, footer_owner.clone()),
         ))
         .child(when(
             move || message.with(|message| message.status == "stopped" && message.error.is_none()),

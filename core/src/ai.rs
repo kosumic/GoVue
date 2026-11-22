@@ -12,6 +12,14 @@ mod commands;
 pub(crate) fn foreground(active: bool) {
     commands::FOREGROUND.store(active, std::sync::atomic::Ordering::Relaxed);
 }
+
+pub(crate) fn game_session() -> crate::Result<serde_json::Value> {
+    identity::random().map(serde_json::Value::String)
+}
+
+pub(crate) fn release_caption_audio(token: &str) {
+    let _ = games::audio::release(token);
+}
 mod connections;
 mod conversations;
 mod credentials;

@@ -28,6 +28,7 @@ fn main() {
         "../ios/PlayerSample.swift",
         "../ios/NowPlaying.swift",
         "../ios/IsolatedRuntime.swift",
+        "../ios/GameRenderer.swift",
         "../../modules/govue-core/ios/DownloadMux.swift",
         "../../modules/govue-core/ios/FileExport.swift",
         "../../modules/govue-core/ios/IosDownloadHttp.swift",

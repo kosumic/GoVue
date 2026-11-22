@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use nsh_core::{
     KeyboardDismissMode, KeyboardTaps,
     element::{ElementRef, input},
@@ -13,6 +15,13 @@ const PIN: &str = "m16 3 5 5-3 1-3 3v4l-2 2-7-7 2-2h4l3-3zM9 15l-6 6";
 const TRASH: &str = "M3 6h18M5 6l1 14h12l1-14M9 6V3h6v3m-5 4v6m4-6v6";
 const SETTINGS: &str = "M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4";
 const GAUGE: &str = "M4 19a9 9 0 1 1 16 0zM12 15l4-4";
+const PRACTICE: &str = "m12 3 9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 16l9 5 9-5";
+
+pub struct HistoryNavigation {
+    pub practice: Rc<dyn Fn()>,
+    pub providers: Rc<dyn Fn()>,
+    pub usage: Rc<dyn Fn()>,
+}
 
 #[derive(Clone, PartialEq)]
 enum Action {
@@ -102,8 +111,7 @@ impl ChatHistory {
         close: impl Fn() + Clone + 'static,
         open: impl Fn(String, Option<String>) + Clone + 'static,
         new: impl Fn() + 'static,
-        providers: impl Fn() + 'static,
-        usage: impl Fn() + 'static,
+        navigation: HistoryNavigation,
     ) -> View {
         let list = self.chat.clone();
         let status = self.chat.clone();
@@ -117,6 +125,11 @@ impl ChatHistory {
         let manage = self.clone();
         let search = self.search;
         let action = self.action;
+        let HistoryNavigation {
+            practice,
+            providers,
+            usage,
+        } = navigation;
         let manage_sheet = self.clone();
         let backdrop = close.clone();
         view()
@@ -161,6 +174,10 @@ impl ChatHistory {
                             .bg(move || p.raised())
                             .on_press(new),
                     )
+                    .child(row(p, PRACTICE, || "Practice".into()).on_press(move || {
+                        search.blur();
+                        practice();
+                    }))
                     .child(
                         view()
                             .flex_row()
@@ -170,6 +187,7 @@ impl ChatHistory {
                             .pl(px(12.0))
                             .pr(px(2.0))
                             .mb(px(18.0))
+                            .mt(px(4.0))
                             .rounded(px(12.0))
                             .bg(move || p.raised())
                             .child(ui::icon(ui::SEARCH, 18.0, move || p.muted()))

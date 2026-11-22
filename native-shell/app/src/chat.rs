@@ -11,6 +11,8 @@ use nsh_core::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::chat_game::LearningGame;
+
 const SESSION: &str = "native:chat";
 static REVISION: AtomicU64 = AtomicU64::new(1);
 
@@ -60,6 +62,8 @@ pub struct Message {
     #[serde(default)]
     pub blocks: Vec<ChatBlock>,
     #[serde(default)]
+    pub games: Vec<LearningGame>,
+    #[serde(default)]
     pub reasoning: String,
     #[serde(default)]
     pub model: String,
@@ -87,6 +91,7 @@ pub struct ChatBlock {
     pub title: Option<String>,
     pub error: Option<String>,
     pub duration_ms: Option<u64>,
+    pub game_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -172,6 +177,7 @@ struct Progress {
     status: String,
     reasoning: Option<String>,
     blocks: Option<Vec<ChatBlock>>,
+    games: Option<Vec<LearningGame>>,
     model: Option<String>,
     provider_label: Option<String>,
     usage: Value,
@@ -509,6 +515,37 @@ impl Chat {
         Ok(())
     }
 
+    pub async fn apply_game(
+        &self,
+        command: Value,
+        thread: Option<(&str, &str)>,
+    ) -> Result<LearningGame, CoreError> {
+        #[derive(Deserialize)]
+        struct Outcome {
+            game: LearningGame,
+        }
+        let result: Outcome = self.core.ai(command).await?;
+        self.merge_game(thread, &result.game);
+        Ok(result.game)
+    }
+
+    pub fn merge_game(&self, thread: Option<(&str, &str)>, update: &LearningGame) {
+        self.current.update(|current| {
+            if let Some(current) = current
+                .as_mut()
+                .filter(|chat| thread.is_none_or(|(id, _)| chat.id == id))
+                && let Some(game) = Rc::make_mut(current)
+                    .messages
+                    .iter_mut()
+                    .filter(|message| thread.is_none_or(|(_, id)| message.id == id))
+                    .flat_map(|message| &mut message.games)
+                    .find(|game| game.id == update.id && game.revision <= update.revision)
+            {
+                *game = update.clone();
+            }
+        });
+    }
+
     pub async fn delete_saved(&self, id: String) -> Result<(), CoreError> {
         let _: Value = self
             .core
@@ -844,6 +881,16 @@ impl Chat {
                 message.reasoning = status.state.reasoning.unwrap_or_default();
                 if let Some(blocks) = status.state.blocks {
                     message.blocks = blocks;
+                }
+                if let Some(mut games) = status.state.games {
+                    for game in &mut games {
+                        if let Some(current) = message.games.iter().find(|current| {
+                            current.id == game.id && current.revision > game.revision
+                        }) {
+                            *game = current.clone();
+                        }
+                    }
+                    message.games = games;
                 }
                 if let Some(model) = status.state.model {
                     message.model = model;

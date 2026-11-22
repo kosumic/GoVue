@@ -14,10 +14,12 @@ use crate::ai_usage::UsageView;
 use crate::attachments_view::{AttachmentsView, PAPERCLIP};
 use crate::chat::{Chat, ChatTranscript, Message};
 use crate::chat_activity::{self, ToolSelection};
-use crate::chat_history::ChatHistory;
+use crate::chat_game::Games;
+use crate::chat_history::{ChatHistory, HistoryNavigation};
 use crate::chat_read_aloud::ReadAloud;
 use crate::chat_viewport::ChatViewports;
 use crate::chat_voice::ChatVoice;
+use crate::practice_view::PracticeView;
 use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
 
@@ -29,6 +31,7 @@ enum Layer {
     History,
     Models,
     Providers,
+    Practice,
     Find,
 }
 
@@ -59,6 +62,8 @@ pub struct ChatView {
     usage_open: Signal<bool>,
     attachments: AttachmentsView,
     tool_selection: ToolSelection,
+    games: Games,
+    practice: PracticeView,
     voice: ChatVoice,
     reading: ReadAloud,
     viewports: ChatViewports,
@@ -70,7 +75,22 @@ impl ChatView {
         let draft = signal(String::new());
         let layer = signal(Layer::Thread);
         let voice = ChatVoice::new(chat.core(), draft);
-        let reading = ReadAloud::new(chat.core(), watch);
+        let reading = ReadAloud::new(chat.core(), watch.clone());
+        let games = Games::new(chat.clone(), watch, {
+            let reading = reading.clone();
+            move || reading.stop()
+        });
+        effect({
+            let games = games.clone();
+            let reading = reading.clone();
+            move || {
+                if !matches!(layer.get(), Layer::Thread | Layer::Find) {
+                    games.close();
+                } else if reading.active().is_some() {
+                    games.audio.stop();
+                }
+            }
+        });
         let editing = signal(None);
         let tool_selection = signal(None);
         effect({
@@ -136,6 +156,7 @@ impl ChatView {
             }
         });
         Self {
+            practice: PracticeView::new(chat.core(), games.clone()),
             providers: ProviderView::new(chat.clone(), palette),
             providers_back: signal(Layer::Models),
             usage: UsageView::new(chat.core()),
@@ -143,6 +164,7 @@ impl ChatView {
             history: ChatHistory::new(chat.clone()),
             attachments,
             tool_selection,
+            games,
             chat,
             palette,
             layer,
@@ -169,6 +191,10 @@ impl ChatView {
         self.reading.native()
     }
 
+    pub fn game_audio(&self) -> View {
+        self.games.audio.view()
+    }
+
     fn edit(&self, message: Message) {
         self.reasoning_open.set(false);
         let original = self
@@ -193,6 +219,9 @@ impl ChatView {
         if !self.chat.visible() {
             return false;
         }
+        if self.games.back() {
+            return true;
+        }
         if self.tool_selection.with_untracked(Option::is_some) {
             self.tool_selection.set(None);
             return true;
@@ -214,6 +243,12 @@ impl ChatView {
             Layer::Providers => {
                 if !self.providers.back() {
                     self.layer.set(self.providers_back.get_untracked());
+                }
+            }
+            Layer::Practice => {
+                if !self.practice.back() {
+                    self.games.set_practice_game(None);
+                    self.layer.set(Layer::Thread);
                 }
             }
             Layer::Find => {
@@ -245,6 +280,8 @@ impl ChatView {
                 let providers = panel.clone();
                 let history = panel.clone();
                 let overlay = panel.clone();
+                let practice = panel.clone();
+                let practice_video = open_video.clone();
                 let usage_open = panel.usage_open;
                 let usage = panel.usage.clone();
                 let open_video = open_video.clone();
@@ -256,7 +293,12 @@ impl ChatView {
                     .flex_col()
                     .bg(move || theme.background())
                     .child(when(
-                        move || !matches!(layer.get(), Layer::Models | Layer::Providers),
+                        move || {
+                            !matches!(
+                                layer.get(),
+                                Layer::Models | Layer::Providers | Layer::Practice
+                            )
+                        },
                         move || thread.thread(open_video.clone(), open_transcript.clone()),
                     ))
                     .child(when(
@@ -312,6 +354,27 @@ impl ChatView {
                         move || history.history(),
                     ))
                     .child(when(
+                        move || layer.get() == Layer::Practice,
+                        move || {
+                            let back = practice.clone();
+                            let chat = practice.chat.clone();
+                            let games = practice.games.clone();
+                            let open = practice_video.clone();
+                            practice.practice.view(
+                                theme,
+                                move || {
+                                    back.back();
+                                },
+                                Rc::new(move |address| {
+                                    games.set_practice_game(None);
+                                    layer.set(Layer::Thread);
+                                    chat.close();
+                                    open(address);
+                                }),
+                            )
+                        },
+                    ))
+                    .child(when(
                         move || layer.get() == Layer::Find,
                         move || overlay.find_bar(),
                     ))
@@ -325,6 +388,7 @@ impl ChatView {
                         panel.chat.clone(),
                         panel.tool_selection,
                     ))
+                    .child(panel.games.fullscreen(theme))
             },
         )
     }
@@ -361,6 +425,7 @@ impl ChatView {
             move || !voice.active() && !chat.loading()
         });
         let tool_selection = self.tool_selection;
+        let games = self.games.clone();
         let viewports = self.viewports.clone();
         let finding = computed(move || layer.get() == Layer::Find);
         let sent = self.chat.sent_revision;
@@ -394,7 +459,7 @@ impl ChatView {
                                 chat.current().and_then(|thread| thread.video_id.clone())
                             {
                                 chat.close();
-                                callback(video);
+                                callback(format!("https://m.youtube.com/watch?v={video}"));
                             }
                         })
                         .child(ui::icon(ui::PLAY, 16.0, move || p.ink()))
@@ -420,6 +485,7 @@ impl ChatView {
                             let search = find.clone();
                             let files = files.clone();
                             let assistant = assistant.clone();
+                            let games = games.clone();
                             let reading = reading.clone();
                             let edit = edit.clone();
                             let viewport = viewports.thread(
@@ -558,6 +624,7 @@ impl ChatView {
                                                                     message,
                                                                     assistant.clone(),
                                                                     tool_selection,
+                                                                    games.clone(),
                                                                 )
                                                             };
                                                         let actions = if user {
@@ -1235,6 +1302,7 @@ impl ChatView {
         let new = self.chat.clone();
         let providers_back = self.providers_back;
         let usage = self.clone();
+        let practice = self.practice.clone();
         self.history.view(
             self.palette,
             move || layer.set(Layer::Thread),
@@ -1253,13 +1321,19 @@ impl ChatView {
                 new.new_chat();
                 layer.set(Layer::Thread);
             },
-            move || {
-                providers_back.set(Layer::Thread);
-                layer.set(Layer::Providers);
-            },
-            move || {
-                layer.set(Layer::Thread);
-                usage.show_usage();
+            HistoryNavigation {
+                practice: Rc::new(move || {
+                    practice.open();
+                    layer.set(Layer::Practice);
+                }),
+                providers: Rc::new(move || {
+                    providers_back.set(Layer::Thread);
+                    layer.set(Layer::Providers);
+                }),
+                usage: Rc::new(move || {
+                    layer.set(Layer::Thread);
+                    usage.show_usage();
+                }),
             },
         )
     }

@@ -27,11 +27,15 @@ struct Source {
     startup_height: u32,
     #[serde(default)]
     headers: BTreeMap<String, Option<String>>,
+    #[serde(skip)]
+    caption_token: Option<String>,
 }
 
 impl Drop for Source {
     fn drop(&mut self) {
-        if self.uri.starts_with("http://127.0.0.1:") {
+        if let Some(token) = &self.caption_token {
+            govue_core::release_caption_audio(token);
+        } else if self.uri.starts_with("http://127.0.0.1:") {
             govue_core::release_playback_route(&self.uri);
         }
     }
@@ -95,6 +99,38 @@ impl PlaybackSource {
             quality_fps: 0,
             startup_height: 0,
             headers: BTreeMap::new(),
+            caption_token: None,
+        })))
+    }
+
+    /// Plays a scoped GoVue caption route and keeps the clip alive while the player owns it.
+    pub fn caption_audio(uri: String, token: String) -> Result<Self, CoreError> {
+        let valid = token.len() == 43
+            && token
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            && Url::parse(&uri).is_ok_and(|url| {
+                url.scheme() == "http"
+                    && url.host_str() == Some("127.0.0.1")
+                    && url.port().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+                    && url.path() == format!("/{token}/index.m3u8")
+            });
+        if !valid {
+            govue_core::release_caption_audio(&token);
+            return Err(CoreError::Request("Invalid caption audio source.".into()));
+        }
+        Ok(Self(Rc::new(Source {
+            uri,
+            content_type: "hls".into(),
+            quality_height: 0,
+            quality_fps: 0,
+            startup_height: 0,
+            headers: BTreeMap::new(),
+            caption_token: Some(token),
         })))
     }
 

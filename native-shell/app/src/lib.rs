@@ -13,9 +13,11 @@ mod browser;
 mod browser_card;
 #[cfg(target_os = "ios")]
 mod camera_ios;
+mod caption_audio;
 mod cast_view;
 mod chat;
 mod chat_activity;
+mod chat_game;
 mod chat_history;
 mod chat_markdown;
 mod chat_read_aloud;
@@ -28,6 +30,8 @@ mod downloads;
 #[cfg(target_os = "ios")]
 mod downloads_ios;
 mod gallery_view;
+#[cfg(target_os = "ios")]
+mod game_ios;
 #[cfg(target_os = "ios")]
 mod ios_browser;
 #[cfg(target_os = "ios")]
@@ -48,6 +52,7 @@ mod player_view;
 mod player_window;
 #[cfg(target_os = "ios")]
 mod player_window_ios;
+mod practice_view;
 mod provider_group;
 mod provider_jobs;
 mod provider_model;
@@ -97,6 +102,7 @@ pub fn run_ios() {
         speech_ios::register(components);
         ios_browser::register(components);
         downloads_ios::register(components);
+        game_ios::register(components);
         now_playing_ios::register(components);
         ios_runtimes::register(components);
         player_window_ios::register(components);
@@ -385,7 +391,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let chat_panel = chat_view.view(
         {
             let browser = browser.clone();
-            move |video| browser.open(format!("https://m.youtube.com/watch?v={video}"))
+            move |address| browser.open(address)
         },
         move |context| {
             chat_reader.select_track(&context.video_id, &context.track_id);
@@ -587,6 +593,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let root = root.child(browser.launches()).child(casting.discovery());
     let root = root
         .child(now_playing)
+        .child(chat_view.game_audio())
         .child(player_window.view())
         .child(pip.view(
             move || watch.frame(width.get()),

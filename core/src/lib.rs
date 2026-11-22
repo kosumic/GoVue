@@ -81,6 +81,8 @@ pub fn state_execute(request: String) -> String {
                     player::gestures::double_tap(&command)
                 } else if command["op"] == "player_diagnostics" {
                     player::diagnostics::sample(&command)
+                } else if command["op"] == "ai_game_session" {
+                    ai::game_session()
                 } else if command["op"]
                     .as_str()
                     .is_some_and(|op| op.starts_with("player_session_"))
@@ -95,6 +97,10 @@ pub fn state_execute(request: String) -> String {
         Ok(value) => json!({"ok":true,"value":value}).to_string(),
         Err(error) => json!({"ok":false,"error":error}).to_string(),
     }
+}
+
+pub fn release_caption_audio(token: &str) {
+    ai::release_caption_audio(token);
 }
 pub use ai::{
     AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, ChatNotificationPlatform,

@@ -86,6 +86,7 @@ fn clip(
 ) -> Video {
     let source = load.source.expect("a mounted video has a source");
     let uri = source.uri.clone();
+    let caption = source.caption_token.is_some();
     // The AVPlayer instance may still be reading this generation's loopback
     // route while the watch owner is preparing a replacement.
     cleanup(move || drop(source));
@@ -144,13 +145,16 @@ fn clip(
             let mut video_bitrate = -1.0;
             let mut audio_bitrate = -1.0;
             // SAFETY: The native playback effect runs on the UI thread. Swift only writes these out parameters during the call.
-            unsafe {
-                govue_ios_player_sample(
-                    generation,
-                    &raw mut live_offset,
-                    &raw mut video_bitrate,
-                    &raw mut audio_bitrate,
-                );
+            if !caption {
+                // SAFETY: This effect runs on the UI thread and Swift only writes the out parameters.
+                unsafe {
+                    govue_ios_player_sample(
+                        generation,
+                        &raw mut live_offset,
+                        &raw mut video_bitrate,
+                        &raw mut audio_bitrate,
+                    );
+                }
             }
             emit(PlaybackEvent::Status {
                 generation,
@@ -177,7 +181,10 @@ fn clip(
     });
     let seek = player.element.clone();
     video(uri)
-        .test_id(&format!("govue-video-{generation}"))
+        .test_id(&format!(
+            "govue-{}-{generation}",
+            if caption { "caption" } else { "video" }
+        ))
         .element_ref(&player.element)
         .absolute()
         .left(move || px(decoded.get().0))

@@ -14,6 +14,7 @@ import io.github.kaminarios.govue.shell.ChatCamera;
 import io.github.kaminarios.govue.shell.ChatSpeech;
 import io.github.kaminarios.govue.shell.ChatReadAloud;
 import io.github.kaminarios.govue.shell.DownloadExport;
+import io.github.kaminarios.govue.shell.GameRenderer;
 import io.github.kaminarios.govue.shell.DownloadTransport;
 import io.github.kaminarios.govue.shell.NowPlaying;
 import io.github.kaminarios.govue.shell.PlayerRuntime;
@@ -50,6 +51,7 @@ public final class GoVueActivity extends Activity {
         });
         view.registerComponent("govue/chat-read-aloud", context -> new ChatReadAloud(this, context));
         VideoPlayer.register(view);
+        GameRenderer.register(view);
         NowPlaying.register(view);
         playerWindow.register(view, this);
         pip.register(view, this);
