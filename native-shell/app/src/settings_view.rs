@@ -157,6 +157,8 @@ impl SettingsView {
         let panel = self.clone();
         let reset = self.preferences.clone();
         let error = self.preferences.error;
+        let languages = signal(false);
+        let language_core = self.preferences.core.clone();
         view()
             .absolute()
             .inset(px(0.0))
@@ -208,7 +210,12 @@ impl SettingsView {
                         });
                     })),
             )
-            .child(scroll().flex_1().child(view().child(each(
+            .child(scroll().flex_1().child(view()
+                .child(row(p, "Languages", None, 0, move || languages.update(|value| *value = !*value))
+                    .child(ui::icon("M3 5h12M9 3v2m1 2c0 5-2 8-6 10m2-8c1 3 4 6 7 7m-1 5 5-11 5 11m-8-4h6", 24.0, move || p.ink()))
+                    .child(dynamic(move || ui::icon(if languages.get() { ui::DOWN } else { ui::NEXT }, 24.0, move || p.muted()))))
+                .child(when(languages, move || crate::language_view::Languages::new(language_core.clone(), p).view()))
+                .child(each(
                 move || {
                     nodes.with(|nodes| {
                         nodes

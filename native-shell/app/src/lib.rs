@@ -24,6 +24,7 @@ mod ios_browser;
 mod ios_host;
 #[cfg(target_os = "ios")]
 mod ios_runtimes;
+mod language_view;
 mod mini_player;
 mod now_playing;
 #[cfg(target_os = "ios")]
