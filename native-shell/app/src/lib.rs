@@ -7,6 +7,7 @@ extern crate nsh as _;
 mod ai_ios;
 mod browser;
 mod chat;
+mod chat_markdown;
 mod chat_view;
 mod download_confirm;
 mod download_library;

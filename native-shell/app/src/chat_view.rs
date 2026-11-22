@@ -4,6 +4,7 @@ use nsh_core::{element::input, prelude::*};
 use serde_json::Value;
 
 use crate::chat::{Chat, ChatTranscript};
+use crate::chat_markdown::chat_markdown;
 use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
 
@@ -269,10 +270,6 @@ impl ChatView {
                                                     }
                                                 })
                                             };
-                                            let message_body = text(value)
-                                                .text_size(px(16.0))
-                                                .line_height(px(24.0))
-                                                .text_color(move || p.ink());
                                             let bubble = if user {
                                                 view()
                                                     .w(percentage(0.88))
@@ -281,9 +278,19 @@ impl ChatView {
                                                     .bg(move || p.raised())
                                                     .px(px(18.0))
                                                     .py(px(12.0))
-                                                    .child(message_body)
+                                                    .child(
+                                                        text(value)
+                                                            .selectable(true)
+                                                            .text_size(px(16.0))
+                                                            .line_height(px(24.0))
+                                                            .text_color(move || p.ink()),
+                                                    )
                                             } else {
-                                                view().child(message_body)
+                                                view().child(chat_markdown(p, value, move || {
+                                                    message.with(|message| {
+                                                        message.status == "streaming"
+                                                    })
+                                                }))
                                             };
                                             view()
                                                 .element_ref(&row)
