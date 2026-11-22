@@ -166,6 +166,44 @@ impl Chat {
         self.config.get()
     }
 
+    pub async fn update_config(&self, request: Value) -> Result<Value, CoreError> {
+        let config: Value = self.core.ai(request).await?;
+        self.config.set(config.clone());
+        Ok(config)
+    }
+
+    pub async fn refresh_models(&self, provider: &str) -> Result<(), CoreError> {
+        let started: Value = self
+            .core
+            .ai(json!({"op":"ai_start","kind":"models","id":provider}))
+            .await?;
+        let task = started["taskId"]
+            .as_str()
+            .ok_or_else(|| CoreError::Request("Could not start model discovery.".into()))?;
+        let result = self.wait_for_provider(task).await;
+        let _ = self
+            .core
+            .ai::<Value>(json!({"op":"ai_forget","taskId":task}))
+            .await;
+        result?;
+        self.update_config(json!({"op":"ai_config"})).await?;
+        Ok(())
+    }
+
+    async fn wait_for_provider(&self, task: &str) -> Result<(), CoreError> {
+        loop {
+            let state: Value = self.core.ai(json!({"op":"ai_poll","taskId":task})).await?;
+            if state["status"] != "running" {
+                return if let Some(error) = state["error"].as_str() {
+                    Err(CoreError::Request(error.into()))
+                } else {
+                    Ok(())
+                };
+            }
+            timer(Duration::from_millis(250)).await;
+        }
+    }
+
     pub fn matches(&self) -> Option<Rc<Matches>> {
         self.matches.get()
     }
@@ -336,7 +374,7 @@ impl Chat {
         self.owner.run(|| {
             spawn(async move {
                 let mut request = json!({"op":"ai_select","id":id});
-                if let Some(model) = model {
+                if let Some(model) = &model {
                     request["model"] = json!(model);
                 }
                 let config = chat.core.ai(request).await;
@@ -348,9 +386,15 @@ impl Chat {
                 if !chat.is_current(epoch) {
                     return;
                 }
-                if let Some(current) =
-                    current.filter(|c| c.video_id.is_some() && c.active_task.is_none())
-                {
+                if let Some(current) = current.filter(|c| c.active_task.is_none()) {
+                    if current.video_id.is_none() {
+                        if current.provider_id != id
+                            || model.as_ref().is_some_and(|model| *model != current.model)
+                        {
+                            chat.new_chat();
+                        }
+                        return;
+                    }
                     match chat
                         .core
                         .ai::<Conversation>(

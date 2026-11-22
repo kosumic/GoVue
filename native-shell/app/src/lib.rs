@@ -6,6 +6,7 @@ mod browser;
 mod chat;
 mod chat_view;
 mod player_view;
+mod provider_view;
 mod reader_clock;
 mod reader_view;
 mod ui;

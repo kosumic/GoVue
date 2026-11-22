@@ -4,6 +4,7 @@ use nsh_core::{element::input, prelude::*};
 use serde_json::Value;
 
 use crate::chat::{Chat, ChatTranscript};
+use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -11,6 +12,7 @@ enum Layer {
     Thread,
     History,
     Models,
+    Providers,
     Find,
 }
 
@@ -20,6 +22,8 @@ struct Model {
     id: String,
     label: String,
     provider_label: String,
+    connected: bool,
+    group: bool,
 }
 
 #[derive(Clone)]
@@ -30,11 +34,13 @@ pub struct ChatView {
     query: Signal<String>,
     find_query: Signal<String>,
     palette: Palette,
+    providers: ProviderView,
 }
 
 impl ChatView {
     pub fn new(chat: Chat, palette: Palette) -> Self {
         Self {
+            providers: ProviderView::new(chat.clone(), palette),
             chat,
             palette,
             layer: signal(Layer::Thread),
@@ -48,14 +54,19 @@ impl ChatView {
         if !self.chat.visible() {
             return false;
         }
-        if self.layer.get_untracked() == Layer::Thread {
-            self.chat.close();
-        } else {
-            if self.layer.get_untracked() == Layer::Find {
+        match self.layer.get_untracked() {
+            Layer::Thread => self.chat.close(),
+            Layer::Providers => {
+                if !self.providers.back() {
+                    self.layer.set(Layer::Models);
+                }
+            }
+            Layer::Find => {
                 self.find_query.set(String::new());
                 self.chat.find_messages(String::new(), None);
+                self.layer.set(Layer::Thread);
             }
-            self.layer.set(Layer::Thread);
+            Layer::History | Layer::Models => self.layer.set(Layer::Thread),
         }
         true
     }
@@ -76,6 +87,7 @@ impl ChatView {
                 let layer = panel.layer;
                 let thread = panel.clone();
                 let models = panel.clone();
+                let providers = panel.clone();
                 let history = panel.clone();
                 let overlay = panel.clone();
                 let open_video = open_video.clone();
@@ -86,12 +98,42 @@ impl ChatView {
                     .flex_col()
                     .bg(move || theme.background())
                     .child(when(
-                        move || layer.get() != Layer::Models,
+                        move || !matches!(layer.get(), Layer::Models | Layer::Providers),
                         move || thread.thread(open_video.clone(), open_transcript.clone()),
                     ))
                     .child(when(
                         move || layer.get() == Layer::Models,
                         move || models.models(),
+                    ))
+                    .child(when(
+                        move || layer.get() == Layer::Providers,
+                        move || {
+                            let close = providers.clone();
+                            view()
+                                .flex_1()
+                                .child(
+                                    view()
+                                        .flex_row()
+                                        .items_center()
+                                        .px(px(6.0))
+                                        .py(px(5.0))
+                                        .child(ui::icon_button(
+                                            theme,
+                                            ui::BACK,
+                                            "Back",
+                                            move || {
+                                                close.back();
+                                            },
+                                        ))
+                                        .child(
+                                            text("Providers")
+                                                .text_size(px(19.0))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(move || theme.ink()),
+                                        ),
+                                )
+                                .child(providers.providers.view())
+                        },
                     ))
                     .child(when(
                         move || layer.get() == Layer::History,
@@ -255,6 +297,24 @@ impl ChatView {
                                                     }
                                                 })
                                                 .child(bubble)
+                                                .child(when(
+                                                    move || {
+                                                        message
+                                                            .with(|message| message.error.is_some())
+                                                    },
+                                                    move || {
+                                                        text(move || {
+                                                            message.with(|message| {
+                                                                message
+                                                                    .error
+                                                                    .clone()
+                                                                    .unwrap_or_default()
+                                                            })
+                                                        })
+                                                        .text_size(px(13.0))
+                                                        .text_color(rgb(0xff0000))
+                                                    },
+                                                ))
                                                 .child(view().self_end().child(ui::icon_button(
                                                     p,
                                                     ui::COPY,
@@ -554,7 +614,18 @@ impl ChatView {
         let layer = self.layer;
         let chat = self.chat.clone();
         let read = self.chat.clone();
-        let models = move || provider_models(&read.config());
+        let query = signal(String::new());
+        let models = computed(move || {
+            let query = query.get().trim().to_lowercase();
+            provider_models(&read.config())
+                .into_iter()
+                .filter(|model| {
+                    format!("{} {} {}", model.label, model.id, model.provider_label)
+                        .to_lowercase()
+                        .contains(&query)
+                })
+                .collect::<Vec<_>>()
+        });
         view()
             .flex_1()
             .child(
@@ -573,7 +644,21 @@ impl ChatView {
                             .text_color(move || p.ink()),
                     ),
             )
-            .child(scroll().flex_1().child(view().px(px(14.0)).child(each(
+            .child(input().label("Search AI models").placeholder("Search models or connections…")
+                .value(move ||query.get()).on_change(move |value: &str|query.set(value.into()))
+                .mx(px(20.0)).my(px(8.0)).h(px(43.0)).px(px(12.0)).rounded(px(12.0)).border(px(0.5))
+                .border_color(move ||p.muted()).text_size(px(14.0))
+                .text_color(move ||p.ink()).placeholder_color(move ||p.muted()))
+            .child(scroll().flex_1().child(view().px(px(20.0))
+                .child(text("Choose a saved model or group.").text_size(px(12.0)).text_color(move ||p.muted()))
+                .child(when(move || models.with(Vec::is_empty), move || {
+                    view().py(px(32.0)).gap(px(8.0))
+                        .child(text(move || if query.with(String::is_empty) {"Connect your first provider"} else {"No matching visible models"})
+                            .text_size(px(15.0)).text_color(move ||p.ink()))
+                        .child(text("Add a connection and refresh its models, or save a model ID.")
+                            .text_size(px(12.0)).text_color(move ||p.muted()))
+                }))
+                .child(each(
                 models,
                 |row| (row.provider.clone(), row.id.clone()),
                 move |row, _| {
@@ -585,8 +670,12 @@ impl ChatView {
                         .justify_center()
                         .gap(px(2.0))
                         .on_press(move || {
-                            chat.choose_provider(model.provider.clone(), Some(model.id.clone()));
-                            layer.set(Layer::Thread);
+                            if model.connected {
+                                chat.choose_provider(model.provider.clone(), (!model.group).then(||model.id.clone()));
+                                layer.set(Layer::Thread);
+                            } else {
+                                layer.set(Layer::Providers);
+                            }
                         })
                         .child(
                             text(move || row.with(|row| row.label.clone()))
@@ -600,6 +689,9 @@ impl ChatView {
                         )
                 },
             ))))
+            .child(press().h(px(54.0)).px(px(20.0)).justify_center()
+                .label("Manage providers and models").on_press(move ||layer.set(Layer::Providers))
+                .child(text("Manage providers and models").text_size(px(14.0)).text_color(move ||p.ink())))
     }
 
     fn history(&self) -> View {
@@ -791,16 +883,40 @@ fn model_name(name: &str) -> String {
 }
 
 fn provider_models(config: &Value) -> Vec<Model> {
-    config["providers"]
+    let groups = config["groups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|group| {
+            let name = group["name"].as_str()?;
+            Some(Model {
+                provider: group["id"].as_str()?.into(),
+                id: name.into(),
+                label: name.into(),
+                provider_label: format!(
+                    "{} models · {}",
+                    group["members"].as_array().map_or(0, Vec::len),
+                    if group["strategy"] == "loadBalance" {
+                        "Round robin"
+                    } else {
+                        "Fallback"
+                    }
+                ),
+                group: true,
+                connected: group["connected"] == true,
+            })
+        });
+    let models = config["providers"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|provider| {
-            if provider["connected"] != true || provider["enabled"] == false {
+            if provider["enabled"] == false {
                 return None;
             }
             let id = provider["id"].as_str()?;
             let label = provider["label"].as_str()?;
+            let connected = provider["connected"] == true && provider["needsReauth"] != true;
             Some(
                 provider["models"]
                     .as_array()
@@ -817,11 +933,17 @@ fn provider_models(config: &Value) -> Vec<Model> {
                                     .filter(|name| !name.is_empty())
                                     .unwrap_or(model_id),
                             ),
-                            provider_label: label.into(),
+                            provider_label: if connected {
+                                label.into()
+                            } else {
+                                format!("{label} · Reconnect")
+                            },
+                            connected,
+                            group: false,
                         })
                     }),
             )
         })
-        .flatten()
-        .collect()
+        .flatten();
+    groups.chain(models).collect()
 }
