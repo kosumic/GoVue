@@ -270,6 +270,13 @@ impl Browser {
                 && settings_screen.with(Option::is_none)
                 && download_screen.with(Option::is_none)
         });
+        let bottom_inset = computed(move || {
+            if fullscreen.get() {
+                0.0
+            } else {
+                safe_area().bottom.0
+            }
+        });
         let loading = signal(true);
         let failure = signal::<Option<String>>(None);
         let summary = computed({
@@ -298,7 +305,7 @@ impl Browser {
                 &self.captions,
                 move || BrowserOptions {
                     active: visible.get(),
-                    bottom_inset: f64::from(safe_area().bottom.0),
+                    bottom_inset: f64::from(bottom_inset.get()),
                     settings: settings.get().unwrap_or_default(),
                 },
                 {
@@ -324,7 +331,9 @@ impl Browser {
                 },
             )
             .absolute()
-            .inset(px(0.0));
+            .inset(px(0.0))
+            // Let YouTube paint behind the gesture handle and apply the inset to its controls.
+            .bottom(move || px(-bottom_inset.get()));
         let palette = Palette {
             dark: computed({
                 let browser = self.clone();
