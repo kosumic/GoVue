@@ -291,7 +291,7 @@ impl WatchPlayback {
         &self,
         width: impl Fn() -> f32 + 'static,
         on_event: impl Fn(PlaybackEvent) + 'static,
-    ) -> NativeView {
+    ) -> impl IntoElement {
         let watch = self.clone();
         let fit = self.fit;
         let status = self.status;
@@ -623,18 +623,19 @@ impl WatchPlayback {
             Some(PlaybackSelection::Audio(key)) => audio_key = key,
             None => {}
         }
-        let source = PlaybackSource::prepare_android(
-            &self.core,
-            PlaybackRequest {
-                catalog: &catalog,
-                height: quality.0,
-                fps: quality.1,
-                audio_key,
-                user_agent: &agent,
-                allow_fallback: selection.is_none(),
-            },
-        )
-        .await?;
+        let request = PlaybackRequest {
+            catalog: &catalog,
+            height: quality.0,
+            fps: quality.1,
+            audio_key,
+            user_agent: &agent,
+            allow_fallback: selection.is_none(),
+        };
+        let source = if cfg!(target_os = "ios") {
+            PlaybackSource::prepare_ios(&self.core, request).await?
+        } else {
+            PlaybackSource::prepare_android(&self.core, request).await?
+        };
         let live = catalog["live"] == true;
         let qualities = if live {
             Vec::new()

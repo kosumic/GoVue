@@ -29,9 +29,11 @@ bash native-shell/ios/build-release.sh simulator
 
 The simulator bundle is at
 `native-shell/ios/build/iphonesimulator/GoVue.app`. The iOS host uses the
-shared Rust browser and Chat screens, with a retained WKWebView for YouTube.
+shared Rust browser, player controls, captions, and Chat screens. The retained
+WKWebView supplies the watch-page layout, and Native Shell's AVPlayer plays the
+HLS source planned by GoVue's Rust core.
 `Core::ios()` resolves the original `Application Support/LingoPlay/transcripts`
-directory within the app sandbox. The current iOS build uses the page player.
+directory within the app sandbox.
 
 On Android, construct `Core::android()` in the Native Shell app root. It uses
 GoVue’s existing app-private `files/transcripts` directory. Reuse the app ID and

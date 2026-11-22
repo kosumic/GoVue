@@ -24,9 +24,6 @@ use govue_shell_runtime::{
 };
 #[cfg(target_os = "android")]
 use govue_shell_runtime::{PlayerRuntime, TokenRuntime};
-#[cfg(target_os = "ios")]
-use nsh_core::prelude::*;
-#[cfg(target_os = "android")]
 use nsh_core::{platform::Lifecycle, prelude::*};
 use serde_json::{Value, json};
 
@@ -193,7 +190,6 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             reader.select(video.as_deref(), &audio);
         }
     });
-    #[cfg(target_os = "android")]
     effect({
         let watch = watch.clone();
         move || {
@@ -287,21 +283,17 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     }
                 })
                 .child(browser.view(fullscreen))
-                .children(cfg!(target_os = "android").then(|| {
-                    watch.view(
-                        move || width.get(),
-                        move |event| {
-                            let next_video = next_video.clone();
-                            playback_controls.playback(&event, move |url| next_video.open(url));
-                            if matches!(event, PlaybackEvent::Status { .. }) {
-                                sponsor_ticks.sample();
-                            }
-                        },
-                    )
-                }))
-                .children(cfg!(target_os = "android").then(|| {
-                    subtitles.view(move || width.get(), move || caption_controls.visible())
-                }))
+                .child(watch.view(
+                    move || width.get(),
+                    move |event| {
+                        let next_video = next_video.clone();
+                        playback_controls.playback(&event, move |url| next_video.open(url));
+                        if matches!(event, PlaybackEvent::Status { .. }) {
+                            sponsor_ticks.sample();
+                        }
+                    },
+                ))
+                .child(subtitles.view(move || width.get(), move || caption_controls.visible()))
                 .child(player_controls)
                 .child(sponsors.view(move || width.get(), move || !sponsor_controls.menu_open()))
                 .child(watch_transcript.view(

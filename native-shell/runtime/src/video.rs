@@ -1,13 +1,19 @@
+#[cfg(not(target_os = "ios"))]
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use nsh_core::{PointerEvents, element::NativeEvent, prelude::*};
+use nsh_core::prelude::*;
+#[cfg(not(target_os = "ios"))]
+use nsh_core::{PointerEvents, element::NativeEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
 use crate::{BrowserDocument, BrowserEvent, Core, CoreError};
+
+#[cfg(target_os = "ios")]
+mod ios;
 
 #[derive(Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,8 +55,20 @@ impl PlaybackSource {
         core: &Core,
         request: PlaybackRequest<'_>,
     ) -> Result<Self, CoreError> {
+        Self::plan(core, request, "dash").await
+    }
+
+    pub async fn prepare_ios(core: &Core, request: PlaybackRequest<'_>) -> Result<Self, CoreError> {
+        Self::plan(core, request, "hls").await
+    }
+
+    async fn plan(
+        core: &Core,
+        request: PlaybackRequest<'_>,
+        manifest: &str,
+    ) -> Result<Self, CoreError> {
         let source: Source = core
-            .execute(json!({"op": "media_playback", "manifest": "dash",
+            .execute(json!({"op": "media_playback", "manifest": manifest,
             "catalog": request.catalog, "height": request.height, "fps": request.fps,
             "audioKey": request.audio_key, "userAgent": request.user_agent,
             "allowFallback": request.allow_fallback}))
@@ -241,7 +259,10 @@ impl PlaybackEvent {
 pub struct VideoPlayer {
     element: ElementRef,
     load: Signal<Load>,
+    #[cfg(not(target_os = "ios"))]
     retired: Rc<RefCell<BTreeMap<u64, Rc<Source>>>>,
+    #[cfg(target_os = "ios")]
+    gain: Signal<f32>,
 }
 
 impl VideoPlayer {
@@ -249,10 +270,14 @@ impl VideoPlayer {
         Self {
             element: element_ref(),
             load: signal(Load::default()),
+            #[cfg(not(target_os = "ios"))]
             retired: Rc::new(RefCell::new(BTreeMap::new())),
+            #[cfg(target_os = "ios")]
+            gain: signal(1.0),
         }
     }
 
+    #[cfg(not(target_os = "ios"))]
     pub fn view(
         &self,
         fit: impl Fn() -> PlaybackFit + 'static,
@@ -295,8 +320,13 @@ impl VideoPlayer {
         frame: impl Fn() -> EmbeddedVideoFrame + 'static,
         fit: impl Fn() -> PlaybackFit + 'static,
         on_event: impl Fn(PlaybackEvent) + 'static,
-    ) -> NativeView {
+    ) -> impl IntoElement {
         let frame = computed(frame);
+        #[cfg(target_os = "ios")]
+        {
+            ios::surface(self.clone(), frame, computed(fit), on_event)
+        }
+        #[cfg(not(target_os = "ios"))]
         self.view(fit, on_event)
             .absolute()
             .left(move || px(frame.with(|frame| frame.left)))
@@ -340,6 +370,7 @@ impl VideoPlayer {
         rate: f64,
     ) -> u64 {
         let previous = self.load.get_untracked();
+        #[cfg(not(target_os = "ios"))]
         if let Some(source) = previous.source {
             self.retired
                 .borrow_mut()
@@ -400,8 +431,30 @@ impl VideoPlayer {
             .load
             .with_untracked(|current| current.source.is_some() && current.generation == generation)
         {
+            #[cfg(not(target_os = "ios"))]
             self.element
                 .command(action, json!({"generation": generation, "value": value}));
+            #[cfg(target_os = "ios")]
+            match action {
+                "play" => self.load.update(|load| load.playing = true),
+                "pause" => self.load.update(|load| load.playing = false),
+                "rate" => {
+                    if let Some(rate) = value.as_f64() {
+                        self.load.update(|load| load.rate = rate);
+                    }
+                }
+                "volume" => {
+                    if let Some(gain) = value.as_f64() {
+                        self.gain.set(gain as f32);
+                    }
+                }
+                "seek" => {
+                    if let Some(seconds) = value.as_f64() {
+                        self.element.seek(seconds);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

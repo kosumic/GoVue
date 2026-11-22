@@ -1,6 +1,13 @@
-use nsh_core::{PointerEvents, element::NativeEvent, prelude::*};
+use nsh_core::prelude::*;
 use serde::{Deserialize, Serialize};
+
+#[cfg(not(target_os = "ios"))]
+use nsh_core::{PointerEvents, element::NativeEvent};
+#[cfg(not(target_os = "ios"))]
 use serde_json::{Value, json};
+
+#[cfg(target_os = "ios")]
+mod ios;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +47,12 @@ pub struct CaptionDisplay {
 pub fn caption_overlay(
     display: impl Fn() -> Option<CaptionDisplay> + 'static,
     on_layout: impl Fn(CaptionLayout) + 'static,
-) -> NativeView {
+) -> impl IntoElement {
+    #[cfg(target_os = "ios")]
+    {
+        ios::overlay(display, on_layout)
+    }
+    #[cfg(not(target_os = "ios"))]
     nsh_core::element::native("govue/caption-overlay")
         .absolute()
         .top(px(0.0))
