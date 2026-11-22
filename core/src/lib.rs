@@ -98,6 +98,14 @@ pub fn release_playback_route(uri: &str) {
     let _ = transport::release(&json!({"uri": uri}));
 }
 
+/// Disposes a native reader even if its UI owner has already stopped.
+pub fn dispose_transcript_reader(root: &str, session_id: &str, version: u64) {
+    let _ = transcript_session::dispatch(
+        &json!({"op":"transcript_session_dispose","sessionId":session_id,"version":version}),
+        root,
+    );
+}
+
 /// Notifications carry no application data. Consumers fetch the current Rust snapshot.
 #[uniffi::export(callback_interface)]
 pub trait CoreEvents: Send + Sync {

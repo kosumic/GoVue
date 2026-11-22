@@ -5,6 +5,7 @@ mod caption_overlay;
 mod captions;
 mod core;
 mod player;
+mod reader;
 #[cfg(target_os = "android")]
 mod subtitles;
 mod tokens;
@@ -19,6 +20,10 @@ pub use caption_overlay::{
 pub use captions::CaptionPage;
 pub use core::{Core, CoreError};
 pub use player::{PlayerRuntime, PlayerRuntimeError, PlayerSignatures};
+pub use reader::{
+    ReaderDocument, ReaderLine, ReaderResults, ReaderRow, ReaderSnapshot, ReaderTracks, Transcript,
+    TranscriptReader, TranscriptSegment, TranscriptTrack,
+};
 #[cfg(target_os = "android")]
 pub use subtitles::WatchSubtitles;
 pub use tokens::TokenRuntime;

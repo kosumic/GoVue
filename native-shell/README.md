@@ -74,6 +74,10 @@ within the same video.
 the native playback position. Mount its view above the video surface.
 Switching tracks cancels the previous extraction and clears its cue.
 
+`TranscriptReader` keeps the existing Rust reader session alive while a
+panel is closed, and releases it when the active video changes. It exposes
+the same cached data, track comparison, search, and export operations.
+
 Register `io.github.kaminarios.govue.shell.PlayerRuntime` with the Android
 `NshView` before calling `runRustApp`. Construct the Rust `PlayerRuntime` in the
 player component and mount its hidden `view()`. Pass the pending media request

@@ -105,6 +105,10 @@ impl Core {
         govue_core::register_caption_page(adapter, video, &self.storage).map_err(CoreError::Request)
     }
 
+    pub(crate) fn dispose_reader(&self, session: &str, version: u64) {
+        govue_core::dispose_transcript_reader(&self.storage, session, version);
+    }
+
     /// Resolve the watch video using the shared extraction jobs. Dropping this
     /// future cancels the job even after its worker has started.
     pub async fn resolve_media(
