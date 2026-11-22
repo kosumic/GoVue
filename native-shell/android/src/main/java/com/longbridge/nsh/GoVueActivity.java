@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.res.Configuration;
 import android.os.Bundle;
 
+import io.github.kaminarios.govue.shell.AiTransport;
 import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
 import io.github.kaminarios.govue.shell.PlayerRuntime;
@@ -18,6 +19,7 @@ public final class GoVueActivity extends Activity {
         super.onCreate(state);
         DevActivity.edgeToEdge(this);
         view = new NshView(this);
+        AiTransport.install(this);
         view.useStandaloneLimits();
         view.ownSystemBars();
         BrowserTab.register(view);

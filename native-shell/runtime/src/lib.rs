@@ -1,5 +1,7 @@
 //! Rust adapters for services hosted by GoVue's Native Shell platform code.
 
+#[cfg(target_os = "android")]
+mod ai_android;
 mod browser;
 mod caption_overlay;
 mod captions;
