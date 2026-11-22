@@ -426,6 +426,42 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         "media_settings_export" => crate::player::preferences::export(root),
         "media_settings_import" => crate::player::preferences::import(&command["data"], root),
         "sponsor_control" => crate::player::sponsor::control(command, root),
+        "sponsor_fetch" => {
+            use std::{io::Read, time::Duration};
+
+            let url = dispatch(
+                &json!({"op":"sponsor_request","videoId":command["videoId"]}),
+                root,
+            )?;
+            let address = url.as_str().ok_or("Invalid SponsorBlock endpoint.")?;
+            let agent = ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(12)))
+                .max_redirects(0)
+                .http_status_as_error(false)
+                .build()
+                .new_agent();
+            let response = agent
+                .get(address)
+                .call()
+                .map_err(|_| "SponsorBlock could not connect.")?;
+            match response.status().as_u16() {
+                404 => Ok(json!([])),
+                200 => {
+                    let mut raw = String::new();
+                    response
+                        .into_body()
+                        .into_reader()
+                        .take(2_000_001)
+                        .read_to_string(&mut raw)
+                        .map_err(|_| "Unreadable SponsorBlock response.")?;
+                    dispatch(
+                        &json!({"op":"sponsor_parse","videoId":command["videoId"],"raw":raw}),
+                        root,
+                    )
+                }
+                _ => Err("SponsorBlock could not connect.".into()),
+            }
+        }
         "sponsor_request" => {
             let id = crate::string(command, "videoId")?;
             if !crate::video_id(id) {

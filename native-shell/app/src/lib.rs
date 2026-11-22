@@ -16,9 +16,12 @@ mod queue_view;
 mod reader_clock;
 mod reader_view;
 mod settings_view;
+mod sponsors;
 mod ui;
 
-use govue_shell_runtime::{CaptionPage, Core, TranscriptReader, WatchPlayback, WatchSubtitles};
+use govue_shell_runtime::{
+    CaptionPage, Core, PlaybackEvent, TranscriptReader, WatchPlayback, WatchSubtitles,
+};
 #[cfg(target_os = "android")]
 use govue_shell_runtime::{PlayerRuntime, TokenRuntime};
 #[cfg(target_os = "ios")]
@@ -78,6 +81,10 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         settings_screen,
     );
     let theme = browser.clone();
+    let sponsors = sponsors::SponsorBlock::new(core.clone(), watch.clone(), settings, {
+        let browser = browser.clone();
+        move || browser.active_video()
+    });
     let palette = ui::Palette {
         dark: computed(move || theme.dark()),
     };
@@ -221,6 +228,8 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let playback_controls = controls.clone();
     let next_video = browser.clone();
     let caption_controls = controls.clone();
+    let sponsor_controls = controls.clone();
+    let sponsor_ticks = sponsors.clone();
     let navigate_back = browser.clone();
     let navigate_video = browser.clone();
     let player_controls = controls.view(
@@ -284,6 +293,9 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                         move |event| {
                             let next_video = next_video.clone();
                             playback_controls.playback(&event, move |url| next_video.open(url));
+                            if matches!(event, PlaybackEvent::Status { .. }) {
+                                sponsor_ticks.sample();
+                            }
                         },
                     )
                 }))
@@ -291,6 +303,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     subtitles.view(move || width.get(), move || caption_controls.visible())
                 }))
                 .child(player_controls)
+                .child(sponsors.view(move || width.get(), move || !sponsor_controls.menu_open()))
                 .child(watch_transcript.view(
                     move || {
                         if beside.get() {

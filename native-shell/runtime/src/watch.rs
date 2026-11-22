@@ -55,6 +55,7 @@ struct Page {
     position: Option<PositionRequest>,
     displayed: bool,
     media_ready: bool,
+    sponsor_segments: Option<(String, Value)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -114,6 +115,7 @@ pub struct WatchPlayback {
     fit: Signal<PlaybackFit>,
     video: Signal<Option<WatchVideo>>,
     status: Signal<Option<Rc<PlaybackStatus>>>,
+    seek_intent: Signal<Option<(u64, f64)>>,
     preparing: Signal<bool>,
     error: Signal<Option<String>>,
 }
@@ -134,6 +136,7 @@ impl WatchPlayback {
             fit: signal(PlaybackFit::Contain),
             video: signal(None),
             status: signal(None),
+            seek_intent: signal(None),
             preparing: signal(false),
             error: signal(None),
         };
@@ -205,6 +208,24 @@ impl WatchPlayback {
         &self.player
     }
 
+    pub fn seek(&self, generation: u64, seconds: f64) {
+        if seconds.is_finite()
+            && seconds >= 0.0
+            && self.video.with_untracked(|video| {
+                video
+                    .as_ref()
+                    .is_some_and(|video| video.generation == generation)
+            })
+        {
+            self.seek_intent.set(Some((generation, seconds)));
+            self.player.seek(generation, seconds);
+        }
+    }
+
+    pub fn seek_intent(&self) -> Option<(u64, f64)> {
+        self.seek_intent.get()
+    }
+
     pub fn fit(&self) -> PlaybackFit {
         self.fit.get()
     }
@@ -221,6 +242,23 @@ impl WatchPlayback {
 
     pub async fn speeds(&self) -> Result<Vec<f64>, CoreError> {
         self.core.execute(json!({"op":"media_speeds"})).await
+    }
+
+    pub fn set_sponsor_segments(&self, video_id: String, segments: Value) {
+        self.page.borrow_mut().sponsor_segments = Some((video_id, segments));
+        self.sponsor_page();
+    }
+
+    fn sponsor_page(&self) {
+        let page = self.page.borrow();
+        if let Some((watch, (id, segments))) =
+            page.watch.as_ref().zip(page.sponsor_segments.as_ref())
+            && watch.video_id == *id
+            && page.media_ready
+        {
+            let id = json!(id);
+            watch.inject(&format!("window.__govueMedia?.sponsors({id},{segments});"));
+        }
     }
 
     pub fn frame(&self, width: f32) -> EmbeddedVideoFrame {
@@ -390,6 +428,7 @@ impl WatchPlayback {
                 if displayed {
                     watch.native_player(true);
                 }
+                self.sponsor_page();
                 self.maybe_start();
             }
             Some("playerLayout") => {

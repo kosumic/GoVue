@@ -79,7 +79,7 @@ impl ReaderClock {
     pub fn seek(&self, time: f64) {
         self.reset.update(|revision| *revision += 1);
         if let Some(video) = self.watch.video() {
-            self.watch.player().seek(video.generation, time);
+            self.watch.seek(video.generation, time);
             self.watch.player().play(video.generation);
         }
     }

@@ -141,6 +141,10 @@ impl PlayerControls {
         self.visible.get()
     }
 
+    pub fn menu_open(&self) -> bool {
+        self.menu.with(Option::is_some)
+    }
+
     pub fn error_view(&self) -> If {
         let watch = self.watch.clone();
         let controls = self.clone();
@@ -782,9 +786,7 @@ impl PlayerControls {
                 if let Some(video) = player.video()
                     && let Some(duration) = player.status().and_then(|status| status.duration)
                 {
-                    player
-                        .player()
-                        .seek(video.generation, duration * f64::from(fraction));
+                    player.seek(video.generation, duration * f64::from(fraction));
                 }
             })
             .child(
