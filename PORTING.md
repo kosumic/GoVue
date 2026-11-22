@@ -3,13 +3,15 @@
 ## Native Shell
 
 GoVue uses a shared Rust UI on Android and iOS. The Android and iOS hosts
-provide the WebView, media playback, and OS services. The native builds and CI
-use the original GoVue app IDs and require neither Expo nor React Native.
+provide the WebView, media playback, and OS services. The standalone release
+builds and CI use the original GoVue app IDs without Expo or React Native.
 
 - Android release fixtures covered the embedded player controls, caption
   details, the English and French transcript panes, transcript copy, the
   download sheet, selected word and phrase saving, Chat transcript audio,
   streamed Chat, and background reply alerts.
+- The Android word translation adapter started the first-run language model
+  download. The emulator reached the retry state before the download finished.
 - The Android provider QR flow shared an image through the system share
   sheet and opened an imported connection after reading the image from the
   photo picker. The Rust boundary tests verify that QR payloads omit API keys.
@@ -17,9 +19,11 @@ use the original GoVue app IDs and require neither Expo nor React Native.
   release kept a French B2 preference entered in the original app. Both APKs
   used a temporary test key. The legacy fixture unpacked its arm64 libraries
   for the emulator.
-- The iOS build compiled for arm64 with the original bundle ID. Native Shell
-  simulator runs covered the YouTube page, Chat, and mini-player. A signed
-  update on a physical iPhone remains unverified.
+- The iOS build compiled for arm64 with the original bundle ID. The final
+  iPhone 17 Pro simulator fixture verified embedded playback and the subtitle
+  overlay. Earlier simulator fixtures covered the browser, Chat, and
+  mini-player. Live YouTube requests timed out from the Mac. A signed update
+  on a physical iPhone remains unverified.
 - The original release credentials are needed to sign an update for existing
   installations. Protected YouTube playback, real provider sign-in, and a
   physical Chromecast receiver remain separate device checks.
