@@ -1,10 +1,35 @@
-# LiTube port
+# GoVue porting and verification
+
+## Native Shell
+
+GoVue uses a shared Rust UI on Android and iOS. The Android and iOS hosts
+provide the WebView, media playback, and OS services. The native builds and CI
+use the original GoVue app IDs and require neither Expo nor React Native.
+
+- Android release fixtures covered the embedded player controls, caption
+  details, the English and French transcript panes, transcript copy, the
+  download sheet, selected word and phrase saving, Chat transcript audio,
+  streamed Chat, and background reply alerts.
+- The Android provider QR flow shared an image through the system share
+  sheet and opened an imported connection after reading the image from the
+  photo picker. The Rust boundary tests verify that QR payloads omit API keys.
+- An in-place Android emulator update from GoVue 0.3.0 to the Native Shell
+  release kept a French B2 preference entered in the original app. Both APKs
+  used a temporary test key. The legacy fixture unpacked its arm64 libraries
+  for the emulator.
+- The iOS build compiled for arm64 with the original bundle ID. Native Shell
+  simulator runs covered the YouTube page, Chat, and mini-player. A signed
+  update on a physical iPhone remains unverified.
+- The original release credentials are needed to sign an update for existing
+  installations. Protected YouTube playback, real provider sign-in, and a
+  physical Chromecast receiver remain separate device checks.
+
+## LiTube baseline
 
 Reference: HydeYYHH/Litube, `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f`
-(2026-10-16). React Native owns presentation; Rust owns validation, selection,
-settings, queues, navigation state, and persistence. Expo Video owns playback.
-Android is the first verification target. Transcript reading, AI provider
-settings, and chat are available through shared React Native screens.
+(2026-10-16). The original GoVue implementation used React Native for
+presentation, Rust for validation and app state, and Expo Video for playback.
+The inventory and device notes below record that implementation.
 
 The owner deferred further Cast implementation on 2026-10-17. Existing Cast
 code and its recorded evidence remain; receiver verification and remaining

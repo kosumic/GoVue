@@ -120,7 +120,7 @@ mockup as Whip, using Easy French's
   keeping YouTube comments and recommendations interactive.
 - Choose speed, quality, audio tracks, and captions; browse chapters and manage
   the playback queue.
-- Continue with background audio and picture-in-picture through Expo Video.
+- Continue with background audio and picture-in-picture through Media3 and AVPlayer.
 - Configure SponsorBlock categories, caption appearance, gestures, and playback
   preferences in **Extensions**.
 
@@ -198,8 +198,7 @@ durable partial-download recovery after process termination remain open.
 
 ## Get started
 
-Build a native app using the [Android](#android) or [iOS](#ios) instructions below.
-GoVue needs its local Rust module and cannot run in Expo Go.
+Build GoVue using the [Android](#android) or [iOS](#ios) instructions.
 
 1. Open YouTube and choose a video with captions.
 2. Tap **Transcript** in the player. Select one or two languages and tap a caption
@@ -374,17 +373,13 @@ See the [CI documentation](.github/CI.md).
 
 ## Project status
 
-The LiTube port follows commit `bb9ee78428a30347fc6eaf21a679f2a0b8cbc91f`
-(2026-10-16). [PORTING.md](PORTING.md) records the acceptance inventory, device
-evidence, and remaining gaps; implemented controls still need verification.
-
-| Area | Current evidence and remaining work |
-| --- | --- |
-| Android | Pixel checks cover native VOD/live playback, quality and speed changes, captions, fullscreen/mini-player transitions, transcript context, and saved video chats. Comprehensive gesture and menu verification remains open. |
-| Downloads | Video and cover publication, read-back integrity, and reuse after restart were checked on the Pixel. Durable partial recovery remains open. |
-| PiP and background audio | A protected PiP audio handoff passed. The latest transition refinement, physical button checks, and extended background behavior remain open. |
-| Cast | Shared playback, pause/resume, seek, and revocation were checked through a USB relay. Direct Wi-Fi, physical receivers, and iOS adapters remain open; further Cast work is deferred. |
-| iOS | An ARM64 release build, native VOD playback, captions, bilingual reading, settings, and ChatGPT / Codex sign-in with a real reply were checked in the iPhone 17 Pro simulator on iOS 26.5. The account connection and saved chat survived restart. Physical iPhone and full feature verification remain open. |
+Native Shell builds GoVue for Android and iOS under the original app IDs.
+Android release fixtures cover the player, transcript and subtitle controls,
+Chat and its reply alerts, and configuration sharing. The iOS device app
+builds unsigned and the iPhone simulator has exercised the native browser,
+Chat, and mini-player. Shipping an update requires the original signing
+credentials. See the [porting inventory](PORTING.md#native-shell) for device
+coverage and remaining verification.
 
 The current standalone extractor uses a guest client. Sign-in-required videos
 and videos unavailable to that client fail explicitly, even if the browsing
