@@ -31,7 +31,9 @@ mod word_assistance;
 #[cfg(test)]
 mod tests;
 
-pub use commands::{ai_attachment_source_limit, ai_execute, ai_import_attachment};
+pub use commands::{
+    ai_attachment_source_limit, ai_execute, ai_import_attachment, ai_import_picked_attachment,
+};
 pub use http::{AiHeader, AiHttpRequest, AiPlatform, AiResponse, AiSecret, install_ai_platform};
 pub(crate) use notifications::foreground as chat_notification_foreground;
 pub(crate) use notifications::visible as chat_notification_visibility;

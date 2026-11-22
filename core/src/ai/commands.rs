@@ -243,3 +243,14 @@ pub fn ai_import_attachment(request: String, storage_path: String, cache_path: S
 pub fn ai_attachment_source_limit() -> u64 {
     attachments::MAX_SOURCE as u64
 }
+
+/// Import bytes supplied by a native picker or clipboard using the same checks as staged files.
+pub fn ai_import_picked_attachment(
+    storage: &std::path::Path,
+    name: &str,
+    mime: &str,
+    source: &[u8],
+) -> std::result::Result<Value, String> {
+    attachments::import_bytes(storage, source, &json!({"name": name, "mimeType": mime}))
+        .map_err(|error| error.to_string())
+}

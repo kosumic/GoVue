@@ -176,6 +176,27 @@ impl Core {
         self.run(request, govue_core::ai_execute).await
     }
 
+    pub async fn import_attachment<T: DeserializeOwned + Send + 'static>(
+        &self,
+        name: String,
+        mime: String,
+        source: impl AsRef<[u8]> + Send + 'static,
+    ) -> Result<T, CoreError> {
+        let storage = self.storage.clone();
+        blocking(move || {
+            let file = govue_core::ai_import_picked_attachment(
+                Path::new(&storage),
+                &name,
+                &mime,
+                source.as_ref(),
+            )
+            .map_err(CoreError::Request)?;
+            serde_json::from_value(file).map_err(CoreError::InvalidResponse)
+        })
+        .await
+        .map_err(|_| CoreError::WorkerStopped)?
+    }
+
     async fn run<T: DeserializeOwned + Send + 'static>(
         &self,
         request: Value,

@@ -5,6 +5,7 @@ extern crate nsh as _;
 
 #[cfg(target_os = "ios")]
 mod ai_ios;
+mod attachments_view;
 mod browser;
 mod chat;
 mod chat_markdown;

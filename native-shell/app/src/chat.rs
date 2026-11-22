@@ -43,6 +43,17 @@ pub struct Message {
     pub content: String,
     pub status: String,
     pub error: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Attachment {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub uri: String,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -118,6 +129,7 @@ pub struct Chat {
     loading: Signal<bool>,
     sending: Signal<bool>,
     error: Signal<Option<String>>,
+    draft_revision: Signal<u64>,
 }
 
 impl Chat {
@@ -138,6 +150,7 @@ impl Chat {
             loading: signal(false),
             sending: signal(false),
             error: signal(None),
+            draft_revision: signal(0),
         }
     }
 
@@ -164,6 +177,14 @@ impl Chat {
     }
     pub fn config(&self) -> Value {
         self.config.get()
+    }
+
+    pub fn draft_revision(&self) -> u64 {
+        self.draft_revision.get()
+    }
+
+    pub fn core(&self) -> Core {
+        self.core.clone()
     }
 
     pub async fn update_config(&self, request: Value) -> Result<Value, CoreError> {
@@ -270,6 +291,7 @@ impl Chat {
 
     pub fn new_chat(&self) {
         self.stop();
+        self.draft_revision.update(|revision| *revision += 1);
         self.current.set(None);
         self.matches.set(None);
         self.error.set(None);
@@ -415,17 +437,25 @@ impl Chat {
         });
     }
 
-    pub fn send(&self, prompt: String) -> bool {
+    pub fn send(
+        &self,
+        prompt: String,
+        attachments: Vec<String>,
+        accepted: impl FnOnce() + 'static,
+    ) {
         let prompt = prompt.trim();
-        if prompt.is_empty() || self.sending.get_untracked() || self.loading.get_untracked() {
-            return false;
+        if (prompt.is_empty() && attachments.is_empty())
+            || self.sending.get_untracked()
+            || self.loading.get_untracked()
+        {
+            return;
         }
         let current = self.current.get_untracked();
         if current
             .as_ref()
             .is_some_and(|chat| chat.video_id.is_some() && chat.transcript.is_none())
         {
-            return false;
+            return;
         }
         let id = current
             .as_ref()
@@ -438,12 +468,13 @@ impl Chat {
         let Some(id) = id else {
             self.error
                 .set(Some("Choose a model to start chatting.".into()));
-            return false;
+            return;
         };
         let epoch = self.epoch.get();
         let queue = self.task.get_untracked().is_some();
         let request = json!({"op":"ai_chat_session_send","sessionId":SESSION,"version":epoch,"queue":queue,
-            "command":{"id":id,"chatId":current.as_ref().map(|chat| &chat.id),"prompt":prompt}});
+            "command":{"id":id,"chatId":current.as_ref().map(|chat| &chat.id),"prompt":prompt,
+            "attachments":attachments}});
         self.sending.set(true);
         self.error.set(None);
         let chat = self.clone();
@@ -456,6 +487,7 @@ impl Chat {
                 chat.sending.set(false);
                 match result {
                     Ok(started) => {
+                        accepted();
                         let existing = chat.task.get_untracked();
                         if existing.as_ref() != Some(&started.task_id) {
                             chat.track_task(
@@ -470,7 +502,6 @@ impl Chat {
                 }
             })
         });
-        true
     }
 
     pub fn stop(&self) {

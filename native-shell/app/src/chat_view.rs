@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
-use nsh_core::{element::input, prelude::*};
+use nsh_core::{PasteEvent, element::input, prelude::*};
 use serde_json::Value;
 
+use crate::attachments_view::{AttachmentsView, PAPERCLIP};
 use crate::chat::{Chat, ChatTranscript};
 use crate::chat_markdown::chat_markdown;
 use crate::provider_view::ProviderView;
@@ -36,16 +37,29 @@ pub struct ChatView {
     find_query: Signal<String>,
     palette: Palette,
     providers: ProviderView,
+    attachments: AttachmentsView,
 }
 
 impl ChatView {
     pub fn new(chat: Chat, palette: Palette) -> Self {
+        let attachments = AttachmentsView::new(chat.core(), palette);
+        let draft = signal(String::new());
+        effect({
+            let attachments = attachments.clone();
+            let reset = chat.clone();
+            move || {
+                reset.draft_revision();
+                attachments.reset();
+                draft.set(String::new());
+            }
+        });
         Self {
             providers: ProviderView::new(chat.clone(), palette),
+            attachments,
             chat,
             palette,
             layer: signal(Layer::Thread),
-            draft: signal(String::new()),
+            draft,
             query: signal(String::new()),
             find_query: signal(String::new()),
         }
@@ -54,6 +68,9 @@ impl ChatView {
     pub fn back(&self) -> bool {
         if !self.chat.visible() {
             return false;
+        }
+        if self.attachments.back() {
+            return true;
         }
         match self.layer.get_untracked() {
             Layer::Thread => self.chat.close(),
@@ -144,6 +161,7 @@ impl ChatView {
                         move || layer.get() == Layer::Find,
                         move || overlay.find_bar(),
                     ))
+                    .child(panel.attachments.overlays())
             },
         )
     }
@@ -172,6 +190,7 @@ impl ChatView {
         });
         let video_chat = self.chat.clone();
         let find = self.chat.clone();
+        let files = self.attachments.clone();
         let composer = self.composer(open_transcript);
 
         view()
@@ -224,6 +243,7 @@ impl ChatView {
                         move || list.with(|messages| !messages.is_empty()),
                         move || {
                             let search = find.clone();
+                            let files = files.clone();
                             scroll().h_full().w_full().child(
                                 view()
                                     .w_full()
@@ -278,6 +298,14 @@ impl ChatView {
                                                     .bg(move || p.raised())
                                                     .px(px(18.0))
                                                     .py(px(12.0))
+                                                    .child(files.strip(
+                                                        move || {
+                                                            message.with(|message| {
+                                                                message.attachments.clone()
+                                                            })
+                                                        },
+                                                        None,
+                                                    ))
                                                     .child(
                                                         text(value)
                                                             .selectable(true)
@@ -487,6 +515,23 @@ impl ChatView {
                 .and_then(|thread| thread.transcript.clone())
         });
         let loading = self.chat.clone();
+        let draft_files = self.attachments.clone();
+        let pasting = self.attachments.clone();
+        let pasting_chat = self.chat.clone();
+        let send_files = self.attachments.clone();
+        let pick = self.attachments.clone();
+        let pick_chat = self.chat.clone();
+        let input_ref = element_ref();
+        let enabled = computed({
+            let files = self.attachments.clone();
+            let chat = self.chat.clone();
+            move || {
+                !files.busy()
+                    && !chat.sending()
+                    && !chat.loading()
+                    && (!files.empty() || draft.with(|value| !value.trim().is_empty()))
+            }
+        });
         view()
             .self_center()
             .w_full()
@@ -547,7 +592,12 @@ impl ChatView {
                     .pb(px(7.0))
                     .bg(move || p.raised())
                     .child(
+                        self.attachments
+                            .draft_strip(move || draft_files.busy() || loading.sending()),
+                    )
+                    .child(
                         input()
+                            .element_ref(&input_ref)
                             .label("Message GoVue")
                             .value(move || draft.get())
                             .placeholder(move || {
@@ -562,6 +612,11 @@ impl ChatView {
                             .on_change(move |value: &str| {
                                 draft.set(value.chars().take(8000).collect())
                             })
+                            .on_paste(move |event: &PasteEvent| {
+                                if !pasting_chat.sending() && !pasting_chat.loading() {
+                                    pasting.paste(event);
+                                }
+                            })
                             .h(px(56.0))
                             .pt(px(18.0))
                             .pb(px(10.0))
@@ -569,15 +624,39 @@ impl ChatView {
                             .text_size(px(16.0))
                             .line_height(px(24.0))
                             .text_color(move || p.ink())
-                            .readonly(move || loading.loading()),
+                            .readonly({
+                                let loading = self.chat.clone();
+                                move || loading.loading()
+                            }),
                     )
                     .child(
                         view()
                             .flex_row()
                             .items_center()
-                            .justify_end()
                             .gap(px(10.0))
                             .px(px(7.0))
+                            .child(
+                                press()
+                                    .size(px(42.0))
+                                    .rounded(px(21.0))
+                                    .items_center()
+                                    .justify_center()
+                                    .label("Attach files")
+                                    .disabled({
+                                        let pick = pick.clone();
+                                        move || {
+                                            pick.busy()
+                                                || pick_chat.loading()
+                                                || pick_chat.sending()
+                                        }
+                                    })
+                                    .on_press(move || {
+                                        input_ref.blur();
+                                        pick.show_actions();
+                                    })
+                                    .child(ui::icon(PAPERCLIP, 22.0, move || p.ink())),
+                            )
+                            .child(view().flex_1())
                             .child(when(
                                 {
                                     let busy = busy.clone();
@@ -597,23 +676,24 @@ impl ChatView {
                                     .items_center()
                                     .justify_center()
                                     .bg(move || p.ink())
-                                    .opacity(move || {
-                                        if draft.with(|value| value.trim().is_empty()) {
-                                            0.45
-                                        } else {
-                                            1.0_f32
-                                        }
-                                    })
+                                    .opacity(move || if enabled.get() { 1.0_f32 } else { 0.45 })
+                                    .disabled(move || !enabled.get())
                                     .label("Send message")
                                     .on_press(move || {
-                                        if !send.sending() && send.send(draft.get()) {
-                                            draft.set(String::new());
-                                        }
+                                        let submitted = draft.get_untracked();
+                                        let files = send_files.clone();
+                                        send.send(submitted.clone(), files.ids(), move || {
+                                            if draft.get_untracked() == submitted {
+                                                draft.set(String::new());
+                                            }
+                                            files.sent();
+                                        });
                                     })
                                     .child(ui::icon(ui::UP, 22.0, move || p.background())),
                             ),
                     ),
             )
+            .child(self.attachments.notice())
     }
 
     fn models(&self) -> View {

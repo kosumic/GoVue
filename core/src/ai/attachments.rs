@@ -182,9 +182,6 @@ fn prepare(source: &[u8], command: &Value) -> Result<(Kind, Vec<u8>, u32, u32)> 
     Ok((Kind::Text, text.into_bytes(), 0, 0))
 }
 pub(super) fn import(root: &Path, cache: &Path, command: &Value) -> Result<Value> {
-    let _import = IMPORT
-        .lock()
-        .map_err(|_| "Attachment processing is unavailable. Restart GoVue.")?;
     let uri = url::Url::parse(crate::string(command, "uri")?)
         .map_err(|_| "Choose a local attachment file.")?;
     if uri.query().is_some() || uri.fragment().is_some() {
@@ -202,7 +199,17 @@ pub(super) fn import(root: &Path, cache: &Path, command: &Value) -> Result<Value
         return Err("Choose a file through the attachment picker or clipboard.".into());
     }
     let source = read_bounded(&source, MAX_SOURCE)?;
-    let (kind, bytes, width, height) = prepare(&source, command)?;
+    import_bytes(root, &source, command)
+}
+
+pub(super) fn import_bytes(root: &Path, source: &[u8], command: &Value) -> Result<Value> {
+    if source.len() > MAX_SOURCE {
+        return Err("This attachment is too large.".into());
+    }
+    let _import = IMPORT
+        .lock()
+        .map_err(|_| "Attachment processing is unavailable. Restart GoVue.")?;
+    let (kind, bytes, width, height) = prepare(source, command)?;
     let name: String = command["name"]
         .as_str()
         .unwrap_or("attachment")
