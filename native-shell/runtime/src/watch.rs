@@ -117,6 +117,17 @@ impl WatchPlayback {
                 let _ = watch.session::<Value>("dispose", json!({}));
             }
         });
+        effect({
+            let watch = watch.clone();
+            move || {
+                if let Some(video) = watch.video() {
+                    let watch = watch.clone();
+                    spawn(async move {
+                        watch.remember_playback(video).await;
+                    });
+                }
+            }
+        });
         Ok(watch)
     }
 
@@ -196,6 +207,7 @@ impl WatchPlayback {
         let fit = self.fit;
         let status = self.status;
         let video = self.video;
+        let recovery = self.clone();
         self.player.embedded_view(
             move || watch.frame(width()),
             move || fit.get(),
@@ -211,10 +223,61 @@ impl WatchPlayback {
                     })
                 {
                     status.set(Some(Rc::new(latest.clone())));
+                    if latest.state == "error" {
+                        recovery.recover(*generation);
+                    }
                 }
                 on_event(event);
             },
         )
+    }
+
+    async fn remember_playback(&self, video: WatchVideo) {
+        let _ = self
+            .core
+            .execute::<Value>(json!({"op":"player_history","videoId":video.video_id,
+            "item":{"videoId":video.video_id,"title":video.title,"author":video.author}}))
+            .await;
+        loop {
+            timer(Duration::from_secs(5)).await;
+            let remember = self.settings.with_untracked(|settings| {
+                settings
+                    .as_ref()
+                    .and_then(|settings| settings.get("rememberPosition"))
+                    == Some(&Value::Bool(true))
+            });
+            if remember && let Some(status) = self.status.get_untracked() {
+                let _ = self
+                    .core
+                    .execute::<Value>(json!({"op":"player_position",
+                    "videoId":video.video_id,"position":status.position}))
+                    .await;
+            }
+        }
+    }
+
+    fn recover(&self, generation: u64) {
+        if !self
+            .session("recover", json!({"remote":false}))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let watch = self.clone();
+        spawn(async move {
+            timer(Duration::from_millis(750)).await;
+            if watch.video.with_untracked(|video| {
+                video
+                    .as_ref()
+                    .is_some_and(|video| video.generation == generation)
+            }) && watch.status.with_untracked(|status| {
+                status
+                    .as_ref()
+                    .is_some_and(|status| status.state == "error")
+            }) {
+                watch.start();
+            }
+        });
     }
 
     pub fn receive(&self, tab: &BrowserTab, event: &BrowserEvent) {

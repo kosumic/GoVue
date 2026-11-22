@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use govue_shell_runtime::{
     BrowserDocument, BrowserEvent, BrowserOptions, BrowserTab, CaptionPage, Core, CoreError,
     WatchPlayback,
 };
-use nsh_core::prelude::*;
+use nsh_core::{PointerEvents, element::NativeEvent, prelude::*};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
@@ -52,6 +53,7 @@ pub struct Browser {
     watch: WatchPlayback,
     chat: Chat,
     settings_screen: Signal<Option<SettingsScreen>>,
+    notice: Signal<Option<(String, u64)>>,
 }
 
 impl Browser {
@@ -75,6 +77,7 @@ impl Browser {
             watch,
             chat,
             settings_screen,
+            notice: signal(None),
         };
         spawn(browser.clone().run(pending));
         browser.post("state", json!({}));
@@ -107,6 +110,51 @@ impl Browser {
             |tab| tab.id,
             move |tab, _| browser.tab(tab.get_untracked()),
         ))
+    }
+
+    pub fn launches(&self) -> NativeView {
+        let browser = self.clone();
+        nsh_core::element::native("govue/browser-launches")
+            .absolute()
+            .size(px(1.0))
+            .opacity(0.0)
+            .pointer_events(PointerEvents::None)
+            .prop("ready", json!(true))
+            .on_native_event(move |event: &NativeEvent| {
+                if event.name.as_ref() == "launch"
+                    && let Some(text) = event.data.as_str().filter(|text| text.len() <= 100_000)
+                {
+                    browser.post("shared_url", json!({"text":text}));
+                }
+            })
+    }
+
+    pub fn toast(&self) -> If {
+        let notice = self.notice;
+        when(
+            move || notice.with(Option::is_some),
+            move || {
+                view()
+                    .absolute()
+                    .left(px(14.0))
+                    .right(px(14.0))
+                    .bottom(px(20.0))
+                    .rounded(px(10.0))
+                    .bg(rgba(0x272727f5))
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .pointer_events(PointerEvents::None)
+                    .child(
+                        text(move || {
+                            notice
+                                .get()
+                                .map_or_else(String::new, |(message, _)| message)
+                        })
+                        .text_size(px(13.0))
+                        .text_color(rgb(0xffffff)),
+                    )
+            },
+        )
     }
 
     fn tab(&self, tab: Tab) -> NativeView {
@@ -253,7 +301,32 @@ impl Browser {
     }
 
     async fn run(self, mut pending: mpsc::UnboundedReceiver<Value>) {
-        while let Some(request) = pending.recv().await {
+        let mut notice_version = 0;
+        while let Some(mut request) = pending.recv().await {
+            if request["op"] == "browser_shared_url" {
+                match self.core.execute::<String>(request).await {
+                    Ok(url) => {
+                        request = json!({"op":"browser_open","url":url});
+                    }
+                    Err(error) => {
+                        notice_version += 1;
+                        let notice = self.notice;
+                        let version = notice_version;
+                        notice.set(Some((error.to_string(), version)));
+                        spawn(async move {
+                            timer(Duration::from_secs(3)).await;
+                            if notice.with_untracked(|notice| {
+                                notice
+                                    .as_ref()
+                                    .is_some_and(|(_, current)| *current == version)
+                            }) {
+                                notice.set(None);
+                            }
+                        });
+                        continue;
+                    }
+                }
+            }
             match self.core.execute::<State>(request).await {
                 Ok(mut state) => {
                     let target = state.target.take();

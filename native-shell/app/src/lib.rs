@@ -183,10 +183,13 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     let frame = watch_bounds.frame(width.get());
                     (frame.top + frame.height).max(0.0)
                 }))
+                .child(controls.error_view())
                 .child(chat_panel)
                 .child(chat_transcript.view(|| 0.0))
-                .child(settings_view.view()),
+                .child(settings_view.view())
+                .child(browser.toast()),
         )
+        .child(browser.launches())
         .child(signatures.view())
         .child(tokens.view())
 }

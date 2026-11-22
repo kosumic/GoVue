@@ -89,6 +89,51 @@ impl PlayerControls {
         self.visible.get()
     }
 
+    pub fn error_view(&self) -> If {
+        let watch = self.watch.clone();
+        let controls = self.clone();
+        let p = self.palette;
+        when(
+            move || watch.video().is_none() && watch.error().is_some(),
+            move || {
+                let error = controls.watch.clone();
+                let retry = controls.watch.clone();
+                let close = controls.watch.clone();
+                let data = controls.reader.clone();
+                let transcript = controls.reader.clone();
+                view()
+                    .absolute()
+                    .top(px(60.0))
+                    .left(px(12.0))
+                    .right(px(12.0))
+                    .p(px(16.0))
+                    .bg(move || p.background())
+                    .child(
+                        text(move || error.error().unwrap_or_default())
+                            .text_size(px(13.0))
+                            .text_color(move || p.ink()),
+                    )
+                    .child(
+                        view()
+                            .flex_row()
+                            .flex_wrap()
+                            .child(error_button(p, "Retry", move || retry.start()))
+                            .child(error_button(p, "Web player", move || close.close()))
+                            .child(when(
+                                move || {
+                                    data.snapshot()
+                                        .is_some_and(|state| state.document(0).is_some())
+                                },
+                                move || {
+                                    let transcript = transcript.clone();
+                                    error_button(p, "Read transcript", move || transcript.toggle())
+                                },
+                            )),
+                    )
+            },
+        )
+    }
+
     pub fn close_menu(&self) -> bool {
         let was_open = self.menu.get_untracked();
         if was_open {
@@ -466,6 +511,14 @@ impl PlayerControls {
                     ),
             )
     }
+}
+
+fn error_button(p: Palette, title: &'static str, action: impl Fn() + 'static) -> View {
+    press()
+        .label(title)
+        .p(px(12.0))
+        .on_press(action)
+        .child(text(title).text_size(px(13.0)).text_color(move || p.ink()))
 }
 
 fn player_button(
