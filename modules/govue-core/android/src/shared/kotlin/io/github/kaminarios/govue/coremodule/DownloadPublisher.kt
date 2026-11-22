@@ -8,13 +8,15 @@ import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import androidx.annotation.RequiresApi
-import io.github.kaminarios.govue.core.execute
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 
 /** OS byte I/O only. Rust owns filenames, artifact identity and publication state. */
-internal class DownloadPublisher(private val context: Context) {
+internal class DownloadPublisher(
+  private val context: Context,
+  private val execute: (String, String) -> String,
+) {
   companion object {
     private class Slot(val lock: Any = Any(), var users: Int = 0)
     private val slots = mutableMapOf<String, Slot>()

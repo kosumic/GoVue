@@ -6,6 +6,8 @@ mod browser;
 mod caption_overlay;
 mod captions;
 mod core;
+#[cfg(target_os = "android")]
+mod downloads_android;
 mod player;
 mod reader;
 #[cfg(any(target_os = "android", target_os = "ios"))]

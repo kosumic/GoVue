@@ -16,4 +16,5 @@ modules/govue-core/ios/generated/
 .cache/
 src/youtube/generated/
 .gradle/
+/native-shell/android/.kotlin/
 modules/govue-core/android/build/

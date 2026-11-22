@@ -38,6 +38,7 @@ android {
         res.srcDir nativeInputs.dir("res").asFile
         res.srcDir "../../modules/govue-core/android/src/main/res"
     }
+    sourceSets.main.kotlin.srcDir "../../modules/govue-core/android/src/shared/kotlin"
 
     buildTypes {
         release {
