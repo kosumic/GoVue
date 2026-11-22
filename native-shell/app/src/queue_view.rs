@@ -1,6 +1,10 @@
 use std::rc::Rc;
 
-use nsh_core::{Checked, Dialog, DialogButton, DialogButtonStyle, element::dialog, prelude::*};
+use nsh_core::{
+    AccessibilityActionDef, Checked, Dialog, DialogButton, DialogButtonStyle, PressEvent,
+    element::{ClaimRequest, ResponderEvent, TouchClaim, dialog},
+    prelude::*,
+};
 use serde_json::json;
 
 use crate::{
@@ -12,6 +16,16 @@ use crate::{
 
 const LOOP: &str = "m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3";
 const DELETE: &str = "M3 6h18m-2 0-1.5 15h-11L5 6m4 0V3h6v3M10 10v7m4-7v7";
+const ROW_HEIGHT: f32 = 72.0;
+
+#[derive(Clone, PartialEq)]
+struct Drag {
+    video: String,
+    from: usize,
+    to: usize,
+    origin: f32,
+    captured: bool,
+}
 
 pub fn queue_sheet(
     p: Palette,
@@ -38,6 +52,20 @@ pub fn queue_sheet(
     let dismiss = close.clone();
     let download_all = downloads.clone();
     let close_all = close.clone();
+    let drag = signal(None::<Drag>);
+    let reorder = queue.clone();
+    let displayed = computed(move || {
+        let mut items = state.with(|state| state.queue.clone());
+        if let Some(active) = drag.get()
+            && active.to < items.len()
+            && let Some(from) = items.iter().position(|item| item.video_id == active.video)
+            && from != active.to
+        {
+            let item = items.remove(from);
+            items.insert(active.to, item);
+        }
+        items
+    });
     view()
         .absolute()
         .inset(px(0.0))
@@ -180,8 +208,31 @@ pub fn queue_sheet(
                             .text_color(move || p.muted())
                     },
                 ))
-                .child(scroll().max_h(px(390.0)).child(view().child(each(
-                    move || state.with(|state| state.queue.clone()),
+                .child(scroll().max_h(px(390.0)).child(view()
+                    .claim_touches(TouchClaim::on_move().capture().ask(move |request: &ClaimRequest| {
+                        if drag.with_untracked(Option::is_some) { request.claim(); }
+                    }))
+                    .on_responder_grant(move |_: &ResponderEvent| drag.update(|drag| {
+                        if let Some(current) = drag { current.captured = true; }
+                    }))
+                    .on_responder_move(move |event: &ResponderEvent| {
+                        let length = state.with_untracked(|state| state.queue.len());
+                        drag.update(|drag| {
+                            if let Some(active) = drag {
+                                let delta = ((event.page.y.0 - active.origin) / ROW_HEIGHT).floor() as isize;
+                                active.to = active.from.saturating_add_signed(delta).min(length.saturating_sub(1));
+                            }
+                        });
+                    })
+                    .on_responder_terminate(move |_: &ResponderEvent| drag.set(None))
+                    .on_responder_release(move |_: &ResponderEvent| {
+                        if let Some(active) = drag.get_untracked() && active.to != active.from {
+                            reorder.update("move", json!({"id":active.video,"offset":active.to as isize - active.from as isize}));
+                        }
+                        drag.set(None);
+                    })
+                    .child(each(
+                    displayed,
                     |item| item.video_id.clone(),
                     move |item, _| {
                         let navigate = open.clone();
@@ -189,18 +240,48 @@ pub fn queue_sheet(
                         let close_download = close.clone();
                         let download = downloads.clone();
                         let remove = remove.clone();
+                        let move_item = remove.clone();
+                        let picked = move || drag.with(|drag| drag.as_ref().is_some_and(|active| {
+                            item.with(|item| item.video_id == active.video)
+                        }));
                         view()
                             .px(px(12.0))
-                            .min_h(px(72.0))
+                            .h(px(ROW_HEIGHT))
                             .flex_row()
                             .items_center()
+                            .bg(move || if picked() { p.raised() } else { rgba(0x00000000).into() })
                             .child(
                                 press()
                                     .flex_1()
                                     .min_w(px(0.0))
+                                    .h_full()
+                                    .justify_center()
                                     .py(px(8.0))
                                     .gap(px(4.0))
+                                    .label(move || item.with(|item| format!("Play {}", item.title)))
+                                    .hint("Hold and drag to reorder")
+                                    .accessibility_actions(vec![
+                                        AccessibilityActionDef { name: "decrement".into(), label: Some("Move up".into()) },
+                                        AccessibilityActionDef { name: "increment".into(), label: Some("Move down".into()) },
+                                    ])
+                                    .on_accessibility_action(move |action: &str| {
+                                        let offset = match action { "increment" => 1, "decrement" => -1, _ => return };
+                                        move_item.update("move", json!({"id":item.with_untracked(|item| item.video_id.clone()),"offset":offset}));
+                                    })
+                                    .on_long_press(move |event: &PressEvent| {
+                                        let video = item.with_untracked(|item| item.video_id.clone());
+                                        if let Some(from) = state.with_untracked(|state| state.queue.iter().position(|item| item.video_id == video)) {
+                                            let origin = event.page_position.y.0 - event.position.y.0.clamp(0.0, ROW_HEIGHT);
+                                            drag.set(Some(Drag { video, from, to: from, origin, captured: false }));
+                                        }
+                                    })
+                                    .on_press_up(move || {
+                                        if drag.with_untracked(|drag| drag.as_ref().is_some_and(|active| !active.captured)) {
+                                            drag.set(None);
+                                        }
+                                    })
                                     .on_press(move || {
+                                        if drag.with_untracked(Option::is_some) { return; }
                                         close();
                                         navigate(item.with(|item| item.address()));
                                     })
