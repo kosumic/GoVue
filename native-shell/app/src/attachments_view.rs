@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use govue_shell_runtime::Core;
+use govue_shell_runtime::{Core, CoreError};
 use nsh_core::{
     PasteEvent, ResizeMode,
     element::{
@@ -13,8 +13,8 @@ use nsh_core::{
 use serde_json::{Value, json};
 use url::Url;
 
-use crate::chat::Attachment;
 use crate::ui::{self, Palette, press};
+use crate::{attachment_camera::AttachmentCamera, chat::Attachment};
 
 pub const PAPERCLIP: &str =
     "M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l10-10a4 4 0 0 1 5.7 5.7l-10 10a2 2 0 0 1-2.8-2.8l9-9";
@@ -22,9 +22,11 @@ const FILE: &str =
     "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm0 0v6h6M8 13h8m-8 4h8";
 const PHOTO: &str = "M3 3h18v18H3zm5 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm13 9-4-4L7 21";
 const CLIPBOARD: &str = "M9 3h6v4H9zm0 2H5v17h14V5h-4";
+const CAMERA: &str = "M8 5l2-2h4l2 2h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm4 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8z";
 
 #[derive(Clone, Copy)]
 enum Source {
+    Camera,
     Photos,
     Files,
     Clipboard,
@@ -33,6 +35,7 @@ enum Source {
 #[derive(Clone)]
 pub struct AttachmentsView {
     core: Core,
+    camera: AttachmentCamera,
     owner: Owner,
     p: Palette,
     files: Signal<Vec<Attachment>>,
@@ -49,6 +52,7 @@ impl AttachmentsView {
     pub fn new(core: Core, p: Palette) -> Self {
         Self {
             core,
+            camera: AttachmentCamera::new(),
             owner: Owner::current(),
             p,
             files: signal(Vec::new()),
@@ -64,6 +68,10 @@ impl AttachmentsView {
 
     pub fn busy(&self) -> bool {
         self.busy.get()
+    }
+
+    pub fn camera(&self) -> NativeView {
+        self.camera.view()
     }
 
     pub fn empty(&self) -> bool {
@@ -186,6 +194,14 @@ impl AttachmentsView {
             }
             let count = files.remaining();
             match source {
+                Source::Camera => match files.camera.take_photo().await {
+                    Ok(Some(file)) => {
+                        let result = files.core.import_camera_photo::<Attachment>(file).await;
+                        files.record(revision, result);
+                    }
+                    Err(error) => files.record(revision, Err(CoreError::Request(error))),
+                    Ok(None) => {}
+                },
                 Source::Photos => {
                     let mut request = PickRequest::new(count > 1, count);
                     request.max_dimension = Some(DevicePixels(1600));
@@ -263,11 +279,15 @@ impl AttachmentsView {
         if self.revision.get_untracked() != revision {
             return;
         }
-        match self
+        let result = self
             .core
             .import_attachment::<Attachment>(name, mime, bytes)
-            .await
-        {
+            .await;
+        self.record(revision, result);
+    }
+
+    fn record(&self, revision: u64, result: Result<Attachment, CoreError>) {
+        match result {
             Ok(file) if self.revision.get_untracked() != revision => self.release(vec![file.id]),
             Ok(file) => self.files.update(|files| {
                 if files.iter().all(|draft| draft.id != file.id) {
@@ -500,6 +520,7 @@ impl AttachmentsView {
                                 move || actions.set(false),
                             )),
                     )
+                    .child(self.action(Source::Camera, CAMERA, "Take photo", None))
                     .child(self.action(Source::Photos, PHOTO, "Photos", None))
                     .child(self.action(
                         Source::Files,

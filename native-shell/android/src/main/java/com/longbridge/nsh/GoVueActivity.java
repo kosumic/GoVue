@@ -9,6 +9,7 @@ import io.github.kaminarios.govue.shell.AiTransport;
 import io.github.kaminarios.govue.shell.BrowserLaunches;
 import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
+import io.github.kaminarios.govue.shell.ChatCamera;
 import io.github.kaminarios.govue.shell.DownloadExport;
 import io.github.kaminarios.govue.shell.DownloadTransport;
 import io.github.kaminarios.govue.shell.NowPlaying;
@@ -37,6 +38,7 @@ public final class GoVueActivity extends Activity {
         BrowserTab.register(view);
         launches.register(view);
         CaptionOverlay.register(view);
+        ChatCamera.register(view, this);
         VideoPlayer.register(view);
         NowPlaying.register(view);
         playerWindow.register(view, this);

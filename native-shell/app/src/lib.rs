@@ -5,8 +5,11 @@ extern crate nsh as _;
 
 #[cfg(target_os = "ios")]
 mod ai_ios;
+mod attachment_camera;
 mod attachments_view;
 mod browser;
+#[cfg(target_os = "ios")]
+mod camera_ios;
 mod chat;
 mod chat_markdown;
 mod chat_view;
@@ -65,6 +68,7 @@ pub fn run_ios() {
     downloads_ios::install();
     nsh_platform_ios::set_ui_sets(vec![nsh_base::registry()]);
     nsh_platform_ios::set_components(|components| {
+        camera_ios::register(components);
         ios_browser::register(components);
         downloads_ios::register(components);
         now_playing_ios::register(components);
@@ -484,6 +488,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         .child(pip.view(move || watch.frame(width.get()), move || can_present.get()));
     #[cfg(target_os = "ios")]
     let root = root.child(now_playing);
-    root.child(PlayerRuntime::new().view())
+    root.child(chat_view.camera())
+        .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())
 }

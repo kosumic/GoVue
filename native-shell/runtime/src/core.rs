@@ -197,6 +197,49 @@ impl Core {
         .map_err(|_| CoreError::WorkerStopped)?
     }
 
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    pub async fn import_camera_photo<T: DeserializeOwned + Send + 'static>(
+        &self,
+        file: String,
+    ) -> Result<T, CoreError> {
+        let storage = self.storage.clone();
+        blocking(move || {
+            let stem = file.strip_suffix(".jpg").unwrap_or_default();
+            if stem.len() != 36 || !stem.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
+                return Err(CoreError::Request("Invalid camera photo.".into()));
+            }
+            #[cfg(target_os = "android")]
+            let cache = Path::new(&storage)
+                .ancestors()
+                .nth(2)
+                .map(|root| root.join("cache"));
+            #[cfg(target_os = "ios")]
+            let cache = Path::new(&storage)
+                .ancestors()
+                .nth(3)
+                .map(|root| root.join("Caches"));
+            let cache = cache
+                .ok_or(CoreError::StorageUnavailable)?
+                .join("govue-chat-camera");
+            let source = cache.join(file);
+            let uri =
+                url::Url::from_file_path(&source).map_err(|_| CoreError::StorageUnavailable)?;
+            let result = govue_core::ai_import_attachment(
+                serde_json::json!({"uri":uri.as_str(),"name":"photo.jpg","mimeType":"image/jpeg"})
+                    .to_string(),
+                storage,
+                cache
+                    .to_str()
+                    .ok_or(CoreError::StorageUnavailable)?
+                    .to_owned(),
+            );
+            let _ = std::fs::remove_file(source);
+            decode(&result)
+        })
+        .await
+        .map_err(|_| CoreError::WorkerStopped)?
+    }
+
     async fn run<T: DeserializeOwned + Send + 'static>(
         &self,
         request: Value,

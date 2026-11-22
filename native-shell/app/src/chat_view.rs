@@ -65,6 +65,10 @@ impl ChatView {
         }
     }
 
+    pub fn camera(&self) -> NativeView {
+        self.attachments.camera()
+    }
+
     pub fn back(&self) -> bool {
         if !self.chat.visible() {
             return false;

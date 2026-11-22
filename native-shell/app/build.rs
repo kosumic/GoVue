@@ -19,6 +19,7 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output"));
     let inputs = [
         "../ios/DownloadTransport.swift",
+        "../ios/ChatCamera.swift",
         "../ios/NowPlaying.swift",
         "../ios/IsolatedRuntime.swift",
         "../../modules/govue-core/ios/DownloadMux.swift",

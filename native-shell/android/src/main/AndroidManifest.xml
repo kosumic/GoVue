@@ -18,6 +18,14 @@
             android:authorities="${applicationId}.files"
             android:exported="false"
             android:grantUriPermissions="true" />
+        <provider
+            android:name="io.github.kaminarios.govue.shell.ChatCamera$Provider"
+            android:authorities="${applicationId}.chat-camera"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/govue_chat_camera_paths" />
+        </provider>
         <service
             android:name="io.github.kaminarios.govue.coremodule.DownloadActivityService"
             android:exported="false"
