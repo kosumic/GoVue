@@ -107,6 +107,14 @@ impl Queue {
         self.request(operation, value, None);
     }
 
+    pub fn add(&self, item: Value, finished: impl FnOnce() + 'static) {
+        self.request(
+            "add",
+            json!({"item":item}),
+            Some(Box::new(move |_| finished())),
+        );
+    }
+
     pub fn advance(&self, direction: &str, open: impl FnOnce(String) + 'static) {
         let watch = self.watch.clone();
         let owner = watch.video();

@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
+use crate::browser_card::{self, Card};
 use crate::chat::Chat;
 use crate::downloads::Downloads;
 use crate::queue::Queue;
@@ -62,6 +63,8 @@ pub struct Browser {
     downloads: Downloads,
     settings_screen: Signal<Option<SettingsScreen>>,
     notice: Signal<Option<(String, u64)>>,
+    notice_revision: Signal<u64>,
+    card: Signal<Option<Card>>,
 }
 
 impl Browser {
@@ -89,6 +92,8 @@ impl Browser {
             downloads,
             settings_screen,
             notice: signal(None),
+            notice_revision: signal(0),
+            card: signal(None),
         };
         spawn(browser.clone().run(pending));
         #[cfg(target_os = "ios")]
@@ -416,6 +421,14 @@ impl Browser {
                 }
             }
             Some("back") => { self.back(); }
+            Some("share") => {
+                if let Some(url) = payload["url"].as_str()
+                    && govue_core::browser_url_policy(url.to_owned()) == "internal"
+                { browser_card::share_video(url.to_owned()); }
+            }
+            Some("card") => {
+                if let Some(card) = Card::from_page(&self.core, payload) { self.card.set(Some(card)); }
+            }
             Some("chat") => {
                 self.chat.show(self.video_id(&document));
             }
@@ -445,7 +458,19 @@ impl Browser {
                         "next":payload["next"],"previous":payload["previous"],"autoplay":payload["autoplay"]}));
                 }
             }
-            Some("queueAdd") => self.queue.update("add", json!({"item":payload})),
+            Some("queueAdd") => {
+                let browser = self.clone();
+                self.queue.add(payload.clone(), move || browser.notify("Added to queue".into()));
+            }
+            Some("queueError") => self.notify("Could not add this video to the queue.".into()),
+            Some("shortsReady" | "shortsBlocked") if payload["url"] == document.url => {
+                if url::Url::parse(&document.url).is_ok_and(|url| url.path().starts_with("/shorts/"))
+                    && self.video_id(&document).is_some()
+                {
+                    if message["action"] == "shortsReady" && !self.watch.offline() { self.watch.close(); }
+                    if message["action"] == "shortsBlocked" { self.notify("Tap the Short to start playback.".into()); }
+                }
+            }
             Some("appearance") if payload["url"] == document.url => {
                 if let Some(dark) = payload["dark"].as_bool() {
                     self.dark.set(dark);
@@ -455,6 +480,45 @@ impl Browser {
                 "documentUrl":document.url,"generation":document.generation,"kind":payload["kind"]})),
             _ => {}
         }
+    }
+
+    pub fn card_view(&self) -> impl IntoElement {
+        let card = self.card;
+        let browser = self.clone();
+        dynamic(move || {
+            card.get()
+                .map(|card| browser_card::sheet(browser.clone(), card))
+        })
+    }
+
+    pub fn close_card(&self) -> bool {
+        let open = self.card.with_untracked(Option::is_some);
+        if open {
+            self.card.set(None);
+        }
+        open
+    }
+
+    pub fn queue_card(&self, card: Card) {
+        let browser = self.clone();
+        let selected = card.clone();
+        self.queue.add(
+            json!({"videoId":card.video_id,"title":card.title,"author":card.author}),
+            move || {
+                if browser
+                    .card
+                    .with_untracked(|card| card.as_ref() == Some(&selected))
+                {
+                    browser.close_card();
+                }
+                browser.notify("Added to queue".into());
+            },
+        );
+    }
+
+    pub fn download_card(&self, video: String) {
+        self.close_card();
+        self.downloads.confirm("", json!([{"videoId":video}]));
     }
 
     fn video_id(&self, document: &BrowserDocument) -> Option<String> {
@@ -518,7 +582,6 @@ impl Browser {
     }
 
     async fn run(self, mut pending: mpsc::UnboundedReceiver<Value>) {
-        let mut notice_version = 0;
         while let Some(mut request) = pending.recv().await {
             if request["op"] == "browser_shared_url" {
                 match self.core.execute::<String>(request).await {
@@ -526,20 +589,7 @@ impl Browser {
                         request = json!({"op":"browser_open","url":url});
                     }
                     Err(error) => {
-                        notice_version += 1;
-                        let notice = self.notice;
-                        let version = notice_version;
-                        notice.set(Some((error.to_string(), version)));
-                        spawn(async move {
-                            timer(Duration::from_secs(3)).await;
-                            if notice.with_untracked(|notice| {
-                                notice
-                                    .as_ref()
-                                    .is_some_and(|(_, current)| *current == version)
-                            }) {
-                                notice.set(None);
-                            }
-                        });
+                        self.notify(error.to_string());
                         continue;
                     }
                 }
@@ -570,6 +620,23 @@ impl Browser {
                 Err(error) => report(error),
             }
         }
+    }
+
+    fn notify(&self, message: String) {
+        let notice = self.notice;
+        let revision = self.notice_revision.get_untracked() + 1;
+        self.notice_revision.set(revision);
+        notice.set(Some((message, revision)));
+        spawn(async move {
+            timer(Duration::from_secs(3)).await;
+            if notice.with_untracked(|notice| {
+                notice
+                    .as_ref()
+                    .is_some_and(|(_, current)| *current == revision)
+            }) {
+                notice.set(None);
+            }
+        });
     }
 }
 

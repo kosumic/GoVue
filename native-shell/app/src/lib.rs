@@ -9,6 +9,7 @@ mod ai_ios;
 mod attachment_camera;
 mod attachments_view;
 mod browser;
+mod browser_card;
 #[cfg(target_os = "ios")]
 mod camera_ios;
 mod chat;
@@ -258,7 +259,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let downloads = downloads.clone();
         let offline = back_from_offline.clone();
         move || {
-            if downloads.back() {
+            if downloads.back() || browser.close_card() {
                 return true;
             }
             if let Some(screen) = settings_screen.get_untracked() {
@@ -505,6 +506,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(mini_controls)
                 .child(settings_view.view())
                 .child(library.view())
+                .child(browser.card_view())
                 .child(download_confirm::download_confirm(
                     palette, downloads, width, height,
                 ))
