@@ -148,7 +148,8 @@ impl Browser {
     }
 
     fn mini_eligible(&self) -> bool {
-        self.watch.video().is_some_and(|video| !video.offline)
+        !self.watch.remote()
+            && self.watch.video().is_some_and(|video| !video.offline)
             && self.settings.with(|settings| {
                 settings
                     .as_ref()

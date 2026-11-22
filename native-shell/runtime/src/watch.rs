@@ -133,6 +133,8 @@ pub struct WatchPlayback {
     fit: Signal<PlaybackFit>,
     video: Signal<Option<WatchVideo>>,
     status: Signal<Option<Rc<PlaybackStatus>>>,
+    remote_status: Signal<Option<(u64, Rc<PlaybackStatus>)>>,
+    catalog: Signal<Option<(u64, Rc<Value>)>>,
     seek_intent: Signal<Option<(u64, f64)>>,
     preparing: Signal<bool>,
     error: Signal<Option<String>>,
@@ -156,6 +158,8 @@ impl WatchPlayback {
             fit: signal(PlaybackFit::Contain),
             video: signal(None),
             status: signal(None),
+            remote_status: signal(None),
+            catalog: signal(None),
             seek_intent: signal(None),
             preparing: signal(false),
             error: signal(None),
@@ -234,6 +238,8 @@ impl WatchPlayback {
         }
         self.fit.set(PlaybackFit::Contain);
         self.status.set(None);
+        self.remote_status.set(None);
+        self.catalog.set(None);
         self.error.set(None);
         let generation = self.player.replace(source, Some(0.0), true, 1.0);
         self.video.set(Some(WatchVideo {
@@ -258,7 +264,66 @@ impl WatchPlayback {
     }
 
     pub fn status(&self) -> Option<Rc<PlaybackStatus>> {
-        self.status.get()
+        self.remote_status
+            .with(|remote| {
+                remote
+                    .as_ref()
+                    .filter(|(generation, _)| {
+                        self.video.with(|video| {
+                            video
+                                .as_ref()
+                                .is_some_and(|video| video.generation == *generation)
+                        })
+                    })
+                    .map(|(_, status)| status.clone())
+            })
+            .or_else(|| self.status.get())
+    }
+
+    pub fn remote(&self) -> bool {
+        self.remote_status.with(|remote| {
+            remote.as_ref().is_some_and(|(generation, _)| {
+                self.video.with(|video| {
+                    video
+                        .as_ref()
+                        .is_some_and(|video| video.generation == *generation)
+                })
+            })
+        })
+    }
+
+    pub fn set_remote_status(&self, generation: u64, status: Option<PlaybackStatus>) {
+        if self.video.with_untracked(|video| {
+            video
+                .as_ref()
+                .is_some_and(|video| video.generation == generation)
+        }) {
+            self.remote_status
+                .set(status.map(|status| (generation, Rc::new(status))));
+        }
+    }
+
+    pub fn cast_catalog(&self, generation: u64) -> Option<(Rc<Value>, String)> {
+        let catalog = self.catalog.with_untracked(|catalog| {
+            catalog
+                .as_ref()
+                .filter(|(owner, _)| *owner == generation)
+                .map(|(_, data)| data.clone())
+        })?;
+        Some((catalog, self.page.borrow().user_agent.clone()))
+    }
+
+    pub fn cast_selection(&self, generation: u64, height: u32, fps: u32, audio: String) {
+        self.video.update(|video| {
+            if let Some(video) = video
+                .as_mut()
+                .filter(|video| video.generation == generation)
+            {
+                video.quality_height = height;
+                video.quality_fps = fps;
+                video.audio_key = audio;
+            }
+        });
     }
 
     pub fn preparing(&self) -> bool {
@@ -375,7 +440,13 @@ impl WatchPlayback {
         let video = self.video;
         let recovery = self.clone();
         self.player.embedded_view(
-            move || watch.frame(width()),
+            move || {
+                let mut frame = watch.frame(width());
+                if watch.remote() {
+                    frame.visible = false;
+                }
+                frame
+            },
             move || fit.get(),
             corner_radius,
             zoom,
@@ -902,6 +973,7 @@ impl WatchPlayback {
                 .unwrap_or_default()
                 .into(),
         }));
+        self.catalog.set(Some((generation, Rc::new(catalog))));
         Ok(())
     }
 
@@ -974,6 +1046,8 @@ impl WatchPlayback {
         }
         self.video.set(None);
         self.status.set(None);
+        self.remote_status.set(None);
+        self.catalog.set(None);
         self.error.set(None);
     }
 

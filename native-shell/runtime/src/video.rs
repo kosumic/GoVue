@@ -259,17 +259,21 @@ impl PlaybackEvent {
 pub struct VideoPlayer {
     element: ElementRef,
     load: Signal<Load>,
+    remote: Stored<Option<Rc<RemoteCommand>>>,
     #[cfg(not(target_os = "ios"))]
     retired: Rc<RefCell<BTreeMap<u64, Rc<Source>>>>,
     #[cfg(target_os = "ios")]
     gain: Signal<f32>,
 }
 
+type RemoteCommand = dyn Fn(u64, &str, &Value) -> bool;
+
 impl VideoPlayer {
     pub fn new() -> Self {
         Self {
             element: element_ref(),
             load: signal(Load::default()),
+            remote: stored(None),
             #[cfg(not(target_os = "ios"))]
             retired: Rc::new(RefCell::new(BTreeMap::new())),
             #[cfg(target_os = "ios")]
@@ -414,6 +418,14 @@ impl VideoPlayer {
         self.command(generation, "play", Value::Null);
     }
 
+    pub fn remote_commands(&self, dispatch: impl Fn(u64, &str, &Value) -> bool + 'static) {
+        self.remote.replace(Some(Rc::new(dispatch)));
+    }
+
+    pub fn suspend_local(&self, generation: u64) {
+        self.local_command(generation, "pause", Value::Null);
+    }
+
     pub fn pause(&self, generation: u64) {
         self.command(generation, "pause", Value::Null);
     }
@@ -445,6 +457,19 @@ impl VideoPlayer {
     }
 
     fn command(&self, generation: u64, action: &str, value: Value) {
+        if matches!(action, "play" | "pause" | "seek" | "rate")
+            && self.remote.with(|remote| {
+                remote
+                    .as_ref()
+                    .is_some_and(|send| send(generation, action, &value))
+            })
+        {
+            return;
+        }
+        self.local_command(generation, action, value);
+    }
+
+    fn local_command(&self, generation: u64, action: &str, value: Value) {
         if self
             .load
             .with_untracked(|current| current.source.is_some() && current.generation == generation)

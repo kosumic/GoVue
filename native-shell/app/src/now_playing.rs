@@ -40,6 +40,9 @@ pub fn now_playing(
         .opacity(0.0)
         .pointer_events(PointerEvents::None)
         .prop("snapshot", move || {
+            if watch.remote() {
+                return Value::Null;
+            }
             let undisplayed = || {
                 if watch.queue_transition() {
                     json!({"transition":true})

@@ -15,6 +15,7 @@ android {
   }
   sourceSets.main.java.srcDir '../generated/kotlin'
   sourceSets.main.java.srcDir 'src/shared/kotlin'
+  sourceSets.main.java.srcDir 'src/shared/java'
   lint { abortOnError true }
 }
 

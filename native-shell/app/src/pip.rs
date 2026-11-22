@@ -71,10 +71,13 @@ impl Pip {
         let scope = computed({
             let watch = watch.clone();
             move || {
-                watch.video().map(|video| Owner {
-                    id: video.video_id,
-                    generation: video.generation,
-                })
+                watch
+                    .video()
+                    .filter(|_| !watch.remote())
+                    .map(|video| Owner {
+                        id: video.video_id,
+                        generation: video.generation,
+                    })
             }
         });
         let (tx, rx) = mpsc::unbounded_channel();

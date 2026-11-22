@@ -9,6 +9,7 @@ import io.github.kaminarios.govue.shell.AiTransport;
 import io.github.kaminarios.govue.shell.BrowserLaunches;
 import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
+import io.github.kaminarios.govue.shell.CastTransport;
 import io.github.kaminarios.govue.shell.ChatCamera;
 import io.github.kaminarios.govue.shell.ChatSpeech;
 import io.github.kaminarios.govue.shell.ChatReadAloud;
@@ -34,6 +35,7 @@ public final class GoVueActivity extends Activity {
         DevActivity.edgeToEdge(this);
         view = new NshView(this);
         AiTransport.install(this);
+        CastTransport.register(view, this);
         DownloadTransport.install(this);
         DownloadExport.register(view, this);
         view.useStandaloneLimits();

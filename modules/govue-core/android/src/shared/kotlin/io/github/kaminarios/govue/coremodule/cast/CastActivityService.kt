@@ -8,18 +8,19 @@ import android.app.Service
 import android.content.Intent
 import android.net.wifi.WifiManager
 import android.os.PowerManager
-import io.github.kaminarios.govue.core.execute
-import java.io.File
 
 /** Keeps the explicitly active LAN transport alive, with a visible revocation action. */
 class CastActivityService : Service() {
+  companion object {
+    @Volatile internal var stopCast: (() -> Unit)? = null
+  }
   private var wake: PowerManager.WakeLock? = null
   private var wifi: WifiManager.WifiLock? = null
   override fun onBind(intent: Intent?) = null
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (intent?.action == "io.github.kaminarios.govue.STOP_CAST") {
       Thread {
-        runCatching { execute("{\"op\":\"cast_stop_all\"}", File(filesDir, "transcripts").path) }
+        runCatching { stopCast?.invoke() }
         stopSelf(startId)
       }.apply { isDaemon = true; start() }
       return START_NOT_STICKY

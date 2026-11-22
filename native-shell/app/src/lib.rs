@@ -12,6 +12,7 @@ mod browser;
 mod browser_card;
 #[cfg(target_os = "ios")]
 mod camera_ios;
+mod cast_view;
 mod chat;
 mod chat_activity;
 mod chat_markdown;
@@ -399,6 +400,33 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         pip.clone(),
         downloads.clone(),
     );
+    let casting = controls.cast.clone();
+    let cast_overlay = casting.overlay(width);
+    let cast_panel = casting.panel(palette);
+    let remote = computed({
+        let watch = watch.clone();
+        move || watch.remote()
+    });
+    effect({
+        let watch = watch.clone();
+        let controls = controls.clone();
+        let browser = browser.clone();
+        move || {
+            if remote.get()
+                && let Some(video) = watch.video()
+                && let Some(status) = watch.status()
+            {
+                let browser = browser.clone();
+                controls.playback(
+                    &PlaybackEvent::Status {
+                        generation: video.generation,
+                        status: (*status).clone(),
+                    },
+                    move |url| browser.open(url),
+                );
+            }
+        }
+    });
     let download_notice = downloads.notice;
     let download_export = downloads.export_view();
     let mini_controls = mini.view(watch.clone(), browser.clone(), queue, controls.clone());
@@ -467,14 +495,18 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                                 }
                             },
                             move |event| {
-                                let next_video = next_video.clone();
-                                playback_controls.playback(&event, move |url| next_video.open(url));
+                                if !remote.get_untracked() {
+                                    let next_video = next_video.clone();
+                                    playback_controls
+                                        .playback(&event, move |url| next_video.open(url));
+                                }
                                 if matches!(event, PlaybackEvent::Status { .. }) {
                                     sponsor_ticks.sample();
                                 }
                             },
                         )),
                 )
+                .child(cast_overlay)
                 .child(subtitles.view(
                     move || width.get(),
                     move || !pip_mode.get() && !mini_active.get() && caption_controls.visible(),
@@ -509,6 +541,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(library.view())
                 .child(browser.card_view())
                 .child(browser.gallery_view())
+                .child(cast_panel)
                 .child(download_confirm::download_confirm(
                     palette, downloads, width, height,
                 ))
@@ -536,7 +569,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(pip.notice()),
         );
     #[cfg(target_os = "android")]
-    let root = root.child(browser.launches());
+    let root = root.child(browser.launches()).child(casting.discovery());
     let root = root
         .child(now_playing)
         .child(player_window.view())

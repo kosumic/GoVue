@@ -10,6 +10,7 @@ use nsh_core::{
 };
 use serde_json::{Value, json};
 
+use crate::cast_view::{CAST, CastView};
 use crate::chat::Chat;
 use crate::download_library::DOWNLOAD;
 use crate::downloads::Downloads;
@@ -76,6 +77,7 @@ pub struct PlayerControls {
     ended: Signal<Option<u64>>,
     speeds: Signal<Vec<f64>>,
     gestures: PlayerGestures,
+    pub cast: CastView,
 }
 
 impl PlayerControls {
@@ -90,6 +92,7 @@ impl PlayerControls {
     ) -> Self {
         let controller = Self {
             gestures: PlayerGestures::new(settings.core(), watch.clone(), settings.clone()),
+            cast: CastView::new(settings.core(), watch.clone()),
             watch,
             subs,
             reader,
@@ -217,6 +220,9 @@ impl PlayerControls {
     }
 
     pub fn close_menu(&self) -> bool {
+        if self.cast.close() {
+            return true;
+        }
         if self.chapter_preview.with_untracked(Option::is_some) {
             self.chapter_preview.set(None);
             return true;
@@ -495,6 +501,7 @@ impl PlayerControls {
             move || watch.offline()
         });
         let fullscreen_back = back.clone();
+        let cast = self.cast.clone();
         view()
             .absolute()
             .inset(px(0.0))
@@ -529,6 +536,17 @@ impl PlayerControls {
                             )),
                     )
                     .child(view().flex_1())
+                    .child(
+                        player_button(
+                            CAST,
+                            "Cast",
+                            48.0,
+                            || rgb(0xffffff).into(),
+                            move || cast.show(),
+                        )
+                        .disabled(offline)
+                        .opacity(move || if offline.get() { 0.45_f32 } else { 1.0 }),
+                    )
                     .child(player_button(
                         CC,
                         "Subtitles",
@@ -716,6 +734,11 @@ impl PlayerControls {
     ) -> View {
         let menu = self.menu;
         let watch = self.watch.clone();
+        let cast = self.cast.clone();
+        let offline = computed({
+            let watch = self.watch.clone();
+            move || watch.offline()
+        });
         let has_chapters = computed({
             let watch = self.watch.clone();
             move || {
@@ -773,6 +796,10 @@ impl PlayerControls {
                     .child(player_menu_row("Audio track", AUDIO, move || {
                         menu.set(Some(Menu::Audio))
                     }))
+                    .child(player_menu_row("Cast", CAST, move || {
+                        menu.set(None);
+                        cast.show();
+                    }).disabled(offline).opacity(move || if offline.get() { 0.45_f32 } else { 1.0 }))
                     .child(player_menu_row("Subtitle style", CC, move || {
                         menu.set(Some(Menu::Style))
                     }))
@@ -972,26 +999,30 @@ impl PlayerControls {
     fn switch_stream(&self, selection: PlaybackSelection, settings: Value) {
         self.menu.set(None);
         let write = self.settings.clone();
-        self.watch
-            .select_stream(selection, move |result| match result {
-                Ok(()) => write.update(settings),
-                Err(message) => {
-                    spawn(async move {
-                        dialog(Dialog {
-                            id: 0,
-                            title: Some("Could not change playback".into()),
-                            message: Some(message),
-                            buttons: vec![DialogButton {
-                                text: "OK".into(),
-                                style: DialogButtonStyle::Default,
-                            }],
-                            cancelable: true,
-                            sheet: false,
-                        })
-                        .await;
-                    });
-                }
-            });
+        let accepted = move |result: Result<(), String>| match result {
+            Ok(()) => write.update(settings),
+            Err(message) => {
+                spawn(async move {
+                    dialog(Dialog {
+                        id: 0,
+                        title: Some("Could not change playback".into()),
+                        message: Some(message),
+                        buttons: vec![DialogButton {
+                            text: "OK".into(),
+                            style: DialogButtonStyle::Default,
+                        }],
+                        cancelable: true,
+                        sheet: false,
+                    })
+                    .await;
+                });
+            }
+        };
+        if self.watch.remote() {
+            self.cast.replace_stream(&selection, accepted);
+        } else {
+            self.watch.select_stream(selection, accepted);
+        }
     }
 
     fn seek_bar(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {
