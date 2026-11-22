@@ -1,0 +1,12 @@
+{
+  "name": "govue-native-shell-page-bundles",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "page:build": "cd .. && node scripts/build-page.js --native-shell"
+  },
+  "dependencies": {
+    "bgutils-js": "4.0.3",
+    "esbuild": "0.28.2"
+  }
+}

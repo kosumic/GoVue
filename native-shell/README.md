@@ -9,9 +9,10 @@ for subtitles and the transcript reader.
 Build the standalone Android app with GoVue's Nix Android toolchain, Gradle
 9.4.1, and the Native Shell v0.6.1 sources at `../nsh`. Set `NSH_SOURCE`
 for a different checkout location and `GRADLE` for a different Gradle
-executable. The build uses the Node dependencies for the shared page bundles.
+executable. Install the standalone page-bundler dependencies before building.
 
 ```sh
+npm --prefix native-shell ci
 nix develop path:. --command bash native-shell/android/build-release.sh
 ```
 

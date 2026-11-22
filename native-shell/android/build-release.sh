@@ -5,7 +5,7 @@ repo=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo"
 
 # The Node step bundles the scripts used in the YouTube and token WebViews.
-npm run page:build
+npm --prefix native-shell run page:build
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo/native-shell/app/target}"
 cargo build --locked --release --manifest-path native-shell/app/Cargo.toml --target aarch64-linux-android
 
