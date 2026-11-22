@@ -33,6 +33,7 @@ pub struct ReadAloud {
     revision: Signal<u64>,
     playing: Signal<Option<(String, u64)>>,
     error: Signal<Option<String>>,
+    example_error: Signal<Option<String>>,
 }
 
 impl ReadAloud {
@@ -44,6 +45,7 @@ impl ReadAloud {
             revision: signal(0),
             playing: signal(None),
             error: signal(None),
+            example_error: signal(None),
         }
     }
 
@@ -64,6 +66,36 @@ impl ReadAloud {
         }
     }
 
+    pub fn stop_example(&self) {
+        if self
+            .active()
+            .is_some_and(|id| id.starts_with("word-example:"))
+        {
+            self.stop();
+        }
+        self.example_error.set(None);
+    }
+
+    pub fn example_error(&self) -> Option<String> {
+        self.example_error.get()
+    }
+
+    pub fn speak_example(&self, key: &str, text: String, language: String) {
+        let key = format!("word-example:{key}");
+        let same = self.active().as_ref() == Some(&key);
+        self.stop();
+        self.example_error.set(None);
+        if same || lifecycle() != nsh_core::platform::Lifecycle::Active {
+            return;
+        }
+        let id = self.revision.get_untracked() + 1;
+        self.revision.set(id);
+        self.playing.set(Some((key, id)));
+        self.pause_video();
+        self.platform
+            .command("read", json!({"id":id,"chunks":[text],"language":language}));
+    }
+
     fn toggle(&self, message: Message) {
         let same = self
             .playing
@@ -75,11 +107,7 @@ impl ReadAloud {
         let id = self.revision.get_untracked() + 1;
         self.revision.set(id);
         self.playing.set(Some((message.id, id)));
-        if let Some(video) = self.watch.video()
-            && self.watch.status().is_some_and(|status| status.playing)
-        {
-            self.watch.player().pause(video.generation);
-        }
+        self.pause_video();
         let speech = self.clone();
         spawn(async move {
             let result = speech
@@ -101,6 +129,14 @@ impl ReadAloud {
                 }
             }
         });
+    }
+
+    fn pause_video(&self) {
+        if let Some(video) = self.watch.video()
+            && self.watch.status().is_some_and(|status| status.playing)
+        {
+            self.watch.player().pause(video.generation);
+        }
     }
 
     fn owns(&self, id: u64) -> bool {
@@ -176,8 +212,15 @@ impl ReadAloud {
                     && let Ok(event) = Finished::deserialize(&event.data)
                     && speech.owns(event.id)
                 {
+                    let example = speech
+                        .active()
+                        .is_some_and(|id| id.starts_with("word-example:"));
                     speech.playing.set(None);
-                    speech.error.set(event.error);
+                    if example {
+                        speech.example_error.set(event.error);
+                    } else {
+                        speech.error.set(event.error);
+                    }
                 }
             })
     }

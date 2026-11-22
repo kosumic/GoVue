@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::caption_audio::{CaptionAudio, Phase};
 use crate::ui::{self, Palette, press};
+use crate::word_assistance::WordHelp;
 
 const BOOKMARK: &str = "M6 4h12v16l-6-4-6 4zm6 3v5m-2.5-2.5h5";
 const SPEAKER: &str = "M3 9h4l5-4v14l-5-4H3zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14";
@@ -97,6 +98,7 @@ pub struct WordTools {
     p: Palette,
     owner: Owner,
     audio: CaptionAudio,
+    help: WordHelp,
     seed: Signal<Option<Seed>>,
     initial: Signal<Option<Range>>,
     range: Signal<Option<Range>>,
@@ -115,12 +117,13 @@ pub struct WordTools {
 }
 
 impl WordTools {
-    pub fn new(core: Core, p: Palette, audio: CaptionAudio) -> Self {
+    pub fn new(core: Core, p: Palette, audio: CaptionAudio, help: WordHelp) -> Self {
         Self {
             core,
             p,
             owner: Owner::current(),
             audio,
+            help,
             seed: signal(None),
             initial: signal(None),
             range: signal(None),
@@ -154,7 +157,16 @@ impl WordTools {
         self.range.set(None);
         self.cancel_translation();
         self.audio.stop();
+        self.help.close();
         true
+    }
+
+    pub fn back(&self) -> bool {
+        self.help.back() || self.close()
+    }
+
+    pub fn provider_picker(&self) -> If {
+        self.help.picker()
     }
 
     fn open(&self, seed: Seed) {
@@ -163,6 +175,7 @@ impl WordTools {
         self.feedback.set(None);
         self.saving.set(false);
         self.seed.set(Some(seed));
+        self.help.refresh();
         self.update_selection(None);
     }
 
@@ -191,6 +204,7 @@ impl WordTools {
         self.feedback.set(None);
         self.audio_kind.set(None);
         self.audio.stop();
+        self.help.clear();
         if offsets.is_some_and(|(start, end)| start == end) {
             self.error.set(Some("Select at least one word.".into()));
             return;
@@ -348,6 +362,7 @@ impl WordTools {
     }
 
     fn play(&self) {
+        self.help.stop_speech();
         if self.audio.phase.get_untracked() != Phase::Idle {
             self.audio.stop();
             return;
@@ -699,6 +714,7 @@ impl WordTools {
         let save = self.clone();
         let play = self.clone();
         let retry = self.clone();
+        let selected = self.clone();
         let pending = self.pending;
         let loading = self.loading;
         let error = self.error;
@@ -816,6 +832,9 @@ impl WordTools {
                         }))
                         .child(when(move || feedback.with(Option::is_some), move || {
                             help(p, move || feedback.get().unwrap_or_default())
+                        }))
+                        .child(self.help.contents(pending, move || {
+                            selected.selected_command("ai_word_assistance")
                         })))))
     }
 }

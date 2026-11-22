@@ -68,6 +68,7 @@ mod speech_ios;
 mod sponsors;
 mod subtitle_style;
 mod ui;
+mod word_assistance;
 #[cfg(target_os = "ios")]
 mod word_ios;
 mod word_tools;
@@ -245,7 +246,15 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             }
         }
     });
-    let words = word_tools::WordTools::new(core.clone(), palette, chat_view.caption_audio());
+    let caption_audio = chat_view.caption_audio();
+    let word_help = word_assistance::WordHelp::new(
+        chat.clone(),
+        chat_view.provider_settings(),
+        chat_view.example_speech(),
+        caption_audio.clone(),
+        palette,
+    );
+    let words = word_tools::WordTools::new(core.clone(), palette, caption_audio, word_help);
     let chat_reader = TranscriptReader::new(core.clone());
     let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette, words.clone());
     let watch_reader = TranscriptReader::new(core.clone());
@@ -321,7 +330,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             if downloads.back() || browser.close_gallery() || browser.close_card() {
                 return true;
             }
-            if settings_view.back() || words.close() {
+            if settings_view.back() || words.back() {
                 return true;
             }
             if chat_reader.visible() {
@@ -593,6 +602,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(chat_panel)
                 .child(chat_transcript.view(|| 0.0, || 0.0))
                 .child(words.popup())
+                .child(words.provider_picker())
                 .child(mini_controls)
                 .child(settings_view.view())
                 .child(library.view())

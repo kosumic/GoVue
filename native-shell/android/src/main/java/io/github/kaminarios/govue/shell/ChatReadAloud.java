@@ -13,6 +13,7 @@ import com.longbridge.nsh.NshComponentContext;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** Reads Rust-prepared response text using Android's current speech engine. */
@@ -26,6 +27,7 @@ public final class ChatReadAloud implements NshComponent {
     private long active;
     private int index;
     private List<String> chunks = List.of();
+    private String language;
 
     public ChatReadAloud(Activity activity, NshComponentContext context) {
         this.context = context;
@@ -56,10 +58,11 @@ public final class ChatReadAloud implements NshComponent {
                 checked.add(text);
             }
             chunks = checked;
+            if (values.get("language") instanceof String tag && tag.length() <= 32) language = tag;
             if (speech == null) {
                 speech = new TextToSpeech(view.getContext(), status -> main.post(() -> initialized(status)));
             } else if (ready) {
-                next();
+                begin();
             }
         }
     }
@@ -81,10 +84,24 @@ public final class ChatReadAloud implements NshComponent {
             @Override public void onError(String utterance) { main.post(() -> completed(utterance, true)); }
         });
         ready = true;
-        if (active != 0) next();
+        if (active != 0) begin();
     }
 
     private String utterance() { return "govue-read-" + active + "-" + index; }
+
+    private void begin() {
+        if (language == null) {
+            var voice = speech.getDefaultVoice();
+            if (voice != null) speech.setVoice(voice);
+        } else {
+            Locale locale = Locale.forLanguageTag(language);
+            if (speech.setLanguage(locale) < TextToSpeech.LANG_AVAILABLE) {
+                finish("No voice is available for this language. Add it in your device’s text-to-speech settings.");
+                return;
+            }
+        }
+        next();
+    }
 
     private void next() {
         if (index == chunks.size()) {
@@ -113,6 +130,7 @@ public final class ChatReadAloud implements NshComponent {
     private void stop() {
         active = 0;
         chunks = List.of();
+        language = null;
         index = 0;
         if (speech != null && ready) speech.stop();
     }

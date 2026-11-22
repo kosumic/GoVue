@@ -36,13 +36,13 @@ enum Layer {
 }
 
 #[derive(Clone, PartialEq)]
-struct Model {
-    provider: String,
-    id: String,
-    label: String,
-    provider_label: String,
-    connected: bool,
-    group: bool,
+pub struct Model {
+    pub provider: String,
+    pub id: String,
+    pub label: String,
+    pub provider_label: String,
+    pub connected: bool,
+    pub group: bool,
 }
 
 #[derive(Clone)]
@@ -197,6 +197,14 @@ impl ChatView {
 
     pub fn caption_audio(&self) -> crate::caption_audio::CaptionAudio {
         self.games.audio.clone()
+    }
+
+    pub fn example_speech(&self) -> ReadAloud {
+        self.reading.clone()
+    }
+
+    pub fn provider_settings(&self) -> ProviderView {
+        self.providers.clone()
     }
 
     fn edit(&self, message: Message) {
@@ -1214,18 +1222,6 @@ impl ChatView {
         let providers_back = self.providers_back;
         let chat = self.chat.clone();
         let read = self.chat.clone();
-        let query = signal(String::new());
-        let models = computed(move || {
-            let query = query.get().trim().to_lowercase();
-            provider_models(&read.config())
-                .into_iter()
-                .filter(|model| {
-                    format!("{} {} {}", model.label, model.id, model.provider_label)
-                        .to_lowercase()
-                        .contains(&query)
-                })
-                .collect::<Vec<_>>()
-        });
         view()
             .flex_1()
             .child(
@@ -1244,58 +1240,26 @@ impl ChatView {
                             .text_color(move || p.ink()),
                     ),
             )
-            .child(input().label("Search AI models").placeholder("Search models or connections…")
-                .value(move ||query.get()).on_change(move |value: &str|query.set(value.into()))
-                .mx(px(20.0)).my(px(8.0)).h(px(43.0)).px(px(12.0)).rounded(px(12.0)).border(px(0.5))
-                .border_color(move ||p.muted()).text_size(px(14.0))
-                .text_color(move ||p.ink()).placeholder_color(move ||p.muted()))
-            .child(scroll().flex_1().child(view().px(px(20.0))
-                .child(text("Choose a saved model or group.").text_size(px(12.0)).text_color(move ||p.muted()))
-                .child(when(move || models.with(Vec::is_empty), move || {
-                    view().py(px(32.0)).gap(px(8.0))
-                        .child(text(move || if query.with(String::is_empty) {"Connect your first provider"} else {"No matching visible models"})
-                            .text_size(px(15.0)).text_color(move ||p.ink()))
-                        .child(text("Add a connection and refresh its models, or save a model ID.")
-                            .text_size(px(12.0)).text_color(move ||p.muted()))
-                }))
-                .child(each(
-                models,
-                |row| (row.provider.clone(), row.id.clone()),
-                move |row, _| {
-                    let chat = chat.clone();
-                    let model = row.get_untracked();
-                    press()
-                        .px(px(12.0))
-                        .min_h(px(54.0))
-                        .justify_center()
-                        .gap(px(2.0))
-                        .on_press(move || {
-                            if model.connected {
-                                chat.choose_provider(model.provider.clone(), (!model.group).then(||model.id.clone()));
-                                layer.set(Layer::Thread);
-                            } else {
-                                providers_back.set(Layer::Models);
-                                layer.set(Layer::Providers);
-                            }
-                        })
-                        .child(
-                            text(move || row.with(|row| row.label.clone()))
-                                .text_size(px(15.0))
-                                .text_color(move || p.ink()),
-                        )
-                        .child(
-                            text(move || row.with(|row| row.provider_label.clone()))
-                                .text_size(px(11.0))
-                                .text_color(move || p.muted()),
-                        )
+            .child(model_choices(
+                p,
+                read,
+                move |model| {
+                    if model.connected {
+                        chat.choose_provider(
+                            model.provider.clone(),
+                            (!model.group).then(|| model.id.clone()),
+                        );
+                        layer.set(Layer::Thread);
+                    } else {
+                        providers_back.set(Layer::Models);
+                        layer.set(Layer::Providers);
+                    }
                 },
-            ))))
-            .child(press().h(px(54.0)).px(px(20.0)).justify_center()
-                .label("Manage providers and models").on_press(move ||{
+                move || {
                     providers_back.set(Layer::Models);
                     layer.set(Layer::Providers);
-                })
-                .child(text("Manage providers and models").text_size(px(14.0)).text_color(move ||p.ink())))
+                },
+            ))
     }
 
     fn history(&self) -> View {
@@ -1679,7 +1643,68 @@ fn composer_note(
         )
 }
 
-fn provider_models(config: &Value) -> Vec<Model> {
+pub fn model_choices(
+    p: Palette,
+    read: Chat,
+    choose: impl Fn(Model) + Clone + 'static,
+    manage: impl Fn() + 'static,
+) -> View {
+    let query = signal(String::new());
+    let models = computed(move || {
+        let query = query.get().trim().to_lowercase();
+        provider_models(&read.config())
+            .into_iter()
+            .filter(|model| {
+                format!("{} {} {}", model.label, model.id, model.provider_label)
+                    .to_lowercase()
+                    .contains(&query)
+            })
+            .collect::<Vec<_>>()
+    });
+    view().flex_1().min_h(px(0.0))
+            .child(input().label("Search AI models").placeholder("Search models or connections…")
+                .value(move ||query.get()).on_change(move |value: &str|query.set(value.into()))
+                .mx(px(20.0)).my(px(8.0)).h(px(43.0)).px(px(12.0)).rounded(px(12.0)).border(px(0.5))
+                .border_color(move ||p.muted()).text_size(px(14.0))
+                .text_color(move ||p.ink()).placeholder_color(move ||p.muted()))
+            .child(scroll().flex_1().child(view().px(px(20.0))
+                .child(text("Choose a saved model or group.").text_size(px(12.0)).text_color(move ||p.muted()))
+                .child(when(move || models.with(Vec::is_empty), move || {
+                    view().py(px(32.0)).gap(px(8.0))
+                        .child(text(move || if query.with(String::is_empty) {"Connect your first provider"} else {"No matching visible models"})
+                            .text_size(px(15.0)).text_color(move ||p.ink()))
+                        .child(text("Add a connection and refresh its models, or save a model ID.")
+                            .text_size(px(12.0)).text_color(move ||p.muted()))
+                }))
+                .child(each(
+                models,
+                |row| (row.provider.clone(), row.id.clone()),
+                move |row, _| {
+                    let choose = choose.clone();
+                    press()
+                        .px(px(12.0))
+                        .min_h(px(54.0))
+                        .justify_center()
+                        .gap(px(2.0))
+                        .on_press(move || choose(row.get_untracked()))
+                        .child(
+                            text(move || row.with(|row| row.label.clone()))
+                                .text_size(px(15.0))
+                                .text_color(move || p.ink()),
+                        )
+                        .child(
+                            text(move || row.with(|row| row.provider_label.clone()))
+                                .text_size(px(11.0))
+                                .text_color(move || p.muted()),
+                        )
+                },
+            ))))
+            .child(press().h(px(54.0)).px(px(20.0)).justify_center()
+                .label("Manage providers and models").on_press(manage)
+                .child(text("Manage providers and models").text_size(px(14.0)).text_color(move ||p.ink())))
+}
+
+pub fn provider_models(config: &Value) -> Vec<Model> {
     let groups = config["groups"]
         .as_array()
         .into_iter()

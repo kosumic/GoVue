@@ -8,6 +8,7 @@ private final class ChatReadAloud: NSObject, AVSpeechSynthesizerDelegate {
     private var active: UInt64?
     private var utterance: AVSpeechUtterance?
     private var parts: ArraySlice<String> = []
+    private var voice: AVSpeechSynthesisVoice?
 
     init(context: UnsafeRawPointer, reply: @escaping SpeechReply) {
         self.context = context
@@ -29,9 +30,18 @@ private final class ChatReadAloud: NSObject, AVSpeechSynthesizerDelegate {
                 finish("Could not read this response. Please try again.")
                 return
             }
-            guard !AVSpeechSynthesisVoice.speechVoices().isEmpty else {
+            let voices = AVSpeechSynthesisVoice.speechVoices()
+            guard !voices.isEmpty else {
                 finish("No text-to-speech voice is available. Add one in your device’s text-to-speech settings.")
                 return
+            }
+            if let language = values["language"] as? String {
+                let base = Locale.Language(identifier: language).languageCode
+                guard let match = voices.first(where: { Locale.Language(identifier: $0.language).languageCode == base }) else {
+                    finish("No voice is available for this language. Add it in your device’s text-to-speech settings.")
+                    return
+                }
+                voice = match
             }
             parts = chunks[...]
             next()
@@ -41,6 +51,7 @@ private final class ChatReadAloud: NSObject, AVSpeechSynthesizerDelegate {
     private func next() {
         guard let text = parts.popFirst() else { finish(); return }
         let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = voice
         self.utterance = utterance
         synthesizer.speak(utterance)
     }
@@ -75,6 +86,7 @@ private final class ChatReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         active = nil
         utterance = nil
         parts = []
+        voice = nil
         synthesizer.stopSpeaking(at: .immediate)
     }
 
