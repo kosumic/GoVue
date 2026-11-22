@@ -90,7 +90,7 @@ pub use ai::{
 };
 pub use extraction::{
     ExtractionHeader, ExtractionHttp, ExtractionReply, ExtractionRequest, install_extraction_http,
-    register_caption_page, resolve_media_catalog,
+    register_caption_page, resolve_caption_track, resolve_media_catalog,
 };
 
 /// Releases an opaque loopback route after a native player retires its source.

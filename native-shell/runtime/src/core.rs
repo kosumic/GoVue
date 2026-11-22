@@ -113,14 +113,33 @@ impl Core {
         user_agent: String,
         fresh: bool,
     ) -> Result<Value, CoreError> {
-        let cancel = MediaCancellation(Arc::new(AtomicBool::new(false)));
+        self.extract(move |storage, active| {
+            govue_core::resolve_media_catalog(storage, &video_id, &user_agent, fresh, active)
+        })
+        .await
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) async fn resolve_caption(
+        &self,
+        video: String,
+        track: String,
+    ) -> Result<(), CoreError> {
+        self.extract(move |storage, active| {
+            govue_core::resolve_caption_track(storage, &video, &track, active)
+        })
+        .await
+    }
+
+    async fn extract<T: Send + 'static>(
+        &self,
+        run: impl FnOnce(&str, &dyn Fn() -> bool) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, CoreError> {
+        let cancel = ExtractionCancellation(Arc::new(AtomicBool::new(false)));
         let stopped = cancel.0.clone();
         let storage = self.storage.clone();
         blocking(move || {
-            govue_core::resolve_media_catalog(&storage, &video_id, &user_agent, fresh, || {
-                !stopped.load(Ordering::Acquire)
-            })
-            .map_err(CoreError::Request)
+            run(&storage, &|| !stopped.load(Ordering::Acquire)).map_err(CoreError::Request)
         })
         .await
         .map_err(|_| CoreError::WorkerStopped)?
@@ -152,9 +171,9 @@ impl Core {
     }
 }
 
-struct MediaCancellation(Arc<AtomicBool>);
+struct ExtractionCancellation(Arc<AtomicBool>);
 
-impl Drop for MediaCancellation {
+impl Drop for ExtractionCancellation {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Release);
     }

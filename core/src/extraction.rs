@@ -985,17 +985,39 @@ pub fn resolve_media_catalog(
     fresh: bool,
     active: impl Fn() -> bool,
 ) -> std::result::Result<Value, String> {
-    resolve_request(
+    resolve_active(
         root,
         json!({"kind":"media","videoId":video_id,"userAgent":user_agent,"fresh":fresh}),
-        &|_| {
-            if active() {
-                Ok(())
-            } else {
-                Err("Extraction cancelled.".into())
-            }
-        },
+        active,
     )
+}
+
+pub fn resolve_caption_track(
+    root: &str,
+    video_id: &str,
+    track_id: &str,
+    active: impl Fn() -> bool,
+) -> std::result::Result<(), String> {
+    resolve_active(
+        root,
+        json!({"kind":"transcript","videoId":video_id,"trackId":track_id}),
+        active,
+    )
+    .map(|_| ())
+}
+
+fn resolve_active(
+    root: &str,
+    command: Value,
+    active: impl Fn() -> bool,
+) -> std::result::Result<Value, String> {
+    resolve_request(root, command, &|_| {
+        if active() {
+            Ok(())
+        } else {
+            Err("Extraction cancelled.".into())
+        }
+    })
     .map_err(|error| error.to_string())
 }
 

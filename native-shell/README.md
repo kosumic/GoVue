@@ -58,6 +58,10 @@ The controller probes the page position before taking over, scopes
 extraction to the active document, and keeps the source when navigating
 within the same video.
 
+`WatchSubtitles` uses the watch video, saved subtitle track and style, and
+the native playback position. Mount its view above the video surface.
+Switching tracks cancels the previous extraction and clears its cue.
+
 Register `io.github.kaminarios.govue.shell.PlayerRuntime` with the Android
 `NshView` before calling `runRustApp`. Construct the Rust `PlayerRuntime` in the
 player component and mount its hidden `view()`. Pass the pending media request

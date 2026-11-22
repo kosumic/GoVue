@@ -20,7 +20,7 @@ pub struct CaptionStyle {
     pub color: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptionLayout {
     pub source_text: String,

@@ -65,6 +65,15 @@ pub struct WatchVideo {
     pub generation: u64,
     pub quality_height: u32,
     pub quality_fps: u32,
+    pub subtitles: Rc<[SubtitleTrack]>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct SubtitleTrack {
+    pub id: String,
+    pub language: String,
+    pub label: String,
+    pub automatic: bool,
 }
 
 /// Owns the handoff from the active YouTube document to one retained player.
@@ -137,6 +146,10 @@ impl WatchPlayback {
 
     pub fn video(&self) -> Option<WatchVideo> {
         self.video.get()
+    }
+
+    pub(crate) fn settings(&self) -> Option<Map<String, Value>> {
+        self.settings.get()
     }
 
     pub fn status(&self) -> Option<Rc<PlaybackStatus>> {
@@ -460,6 +473,9 @@ impl WatchPlayback {
             generation,
             quality_height: height,
             quality_fps: fps,
+            subtitles: Vec::<SubtitleTrack>::deserialize(&catalog["subtitles"])
+                .unwrap_or_default()
+                .into(),
         }));
         Ok(())
     }
