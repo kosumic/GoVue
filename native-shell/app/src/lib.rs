@@ -140,7 +140,12 @@ fn GoVue() -> impl IntoElement {
     let core = Core::ios();
     match core.and_then(|core| Ok((WatchPlayback::new(core.clone())?, core))) {
         Ok((watch, core)) => workspace(core, watch),
-        Err(error) => view().p_safe_area().child(text(error.to_string())),
+        Err(error) => {
+            let page = view().p_safe_area().child(text(error.to_string()));
+            #[cfg(target_os = "android")]
+            let page = page.child(launch_cover(|| true));
+            page
+        }
     }
 }
 
@@ -173,7 +178,6 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         settings_screen,
         downloads.clone(),
     );
-    let theme = browser.clone();
     let sponsors = sponsors::SponsorBlock::new(core.clone(), watch.clone(), settings, {
         let browser = browser.clone();
         let watch = watch.clone();
@@ -186,7 +190,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         }
     });
     let palette = ui::Palette {
-        dark: computed(move || theme.dark()),
+        dark: computed(dark),
     };
     let settings_view = SettingsView::new(
         preferences.clone(),
@@ -342,6 +346,8 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             }
         }
     });
+    #[cfg(target_os = "android")]
+    let launch_chat = chat.clone();
     let controls = PlayerControls::new(
         watch.clone(),
         subtitles.clone(),
@@ -681,7 +687,19 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(pip.notice()),
         );
     #[cfg(target_os = "android")]
-    let root = root.child(browser.launches()).child(casting.discovery());
+    let root = {
+        let launches = browser.launches();
+        let loading = launch_cover(move || {
+            browser.launch_ready()
+                || launch_chat.visible()
+                || immersive.get()
+                || settings_screen.with(Option::is_some)
+                || download_screen.with(Option::is_some)
+        });
+        root.child(launches)
+            .child(casting.discovery())
+            .child(loading)
+    };
     let root = root
         .child(now_playing)
         .child(chat_view.game_audio())
@@ -697,6 +715,17 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         .child(words.native())
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())
+}
+
+#[cfg(target_os = "android")]
+fn launch_cover(ready: impl Fn() -> bool + 'static) -> NativeView {
+    native("govue/launch-cover")
+        .absolute()
+        .size(px(1.0))
+        .opacity(0.0)
+        .pointer_events(nsh_core::PointerEvents::None)
+        .prop("dark", move || Value::Bool(dark()))
+        .prop("ready", move || Value::Bool(ready()))
 }
 
 fn chat_notifications(

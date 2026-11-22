@@ -4,8 +4,13 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 
@@ -29,6 +34,7 @@ import io.github.kaminarios.govue.shell.PlayerRuntime;
 import io.github.kaminarios.govue.shell.PlayerPip;
 import io.github.kaminarios.govue.shell.PlayerWindow;
 import io.github.kaminarios.govue.shell.ProviderQrScanner;
+import io.github.kaminarios.govue.shell.R;
 import io.github.kaminarios.govue.shell.ReplyNotifications;
 import io.github.kaminarios.govue.shell.TokenRuntime;
 import io.github.kaminarios.govue.shell.VideoPlayer;
@@ -39,6 +45,7 @@ public final class GoVueActivity extends Activity {
     private final PlayerWindow playerWindow = new PlayerWindow();
     private final PlayerPip pip = new PlayerPip();
     private NshView view;
+    private FrameLayout launchCover;
     private ChatSpeech speech;
     private ReplyNotifications.Binding notifications;
     private ProviderQrScanner.Binding qrScanner;
@@ -76,7 +83,7 @@ public final class GoVueActivity extends Activity {
         pip.register(view, this);
         PlayerRuntime.register(view);
         TokenRuntime.register(view);
-        setContentView(view);
+        setContentView(withLaunchCover());
         if (Build.VERSION.SDK_INT >= 33) {
             backCallback = () -> {
                 if (!view.handleBack() && !moveTaskToBack(false)) finishAfterTransition();
@@ -86,6 +93,49 @@ public final class GoVueActivity extends Activity {
         }
         if (state == null) receive(getIntent());
         view.runRustApp("nsh");
+    }
+
+    private FrameLayout withLaunchCover() {
+        FrameLayout root = new FrameLayout(this);
+        root.addView(view, new FrameLayout.LayoutParams(-1, -1));
+        launchCover = new FrameLayout(this);
+        launchCover.setBackgroundColor(getColor(R.color.govue_launch_background));
+        launchCover.setClickable(true);
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.govue_icon);
+        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        int size = getResources().getDimensionPixelSize(R.dimen.govue_launch_icon_size);
+        GradientDrawable badge = new GradientDrawable();
+        badge.setShape(GradientDrawable.OVAL);
+        badge.setColor(getColor(R.color.govue_background_light));
+        icon.setBackground(badge);
+        int inset = size / 5;
+        icon.setPadding(inset, inset, inset, inset);
+        launchCover.addView(icon, new FrameLayout.LayoutParams(size, size, Gravity.CENTER));
+        root.addView(launchCover, new FrameLayout.LayoutParams(-1, -1));
+        view.registerComponent("govue/launch-cover", context -> new NshComponent() {
+            private final View marker = new View(GoVueActivity.this);
+
+            @Override
+            public View view() {
+                return marker;
+            }
+
+            @Override
+            public void setProp(String name, Object value) {
+                if (launchCover == null) return;
+                if (name.equals("dark")) {
+                    launchCover.setBackgroundColor(getColor(Boolean.TRUE.equals(value)
+                            ? R.color.govue_background_dark : R.color.govue_background_light));
+                } else if (name.equals("ready") && Boolean.TRUE.equals(value)) {
+                    FrameLayout cover = launchCover;
+                    launchCover = null;
+                    cover.postOnAnimation(() -> root.removeView(cover));
+                }
+            }
+        });
+        return root;
     }
 
     @Override

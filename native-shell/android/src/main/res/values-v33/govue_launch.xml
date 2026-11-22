@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.GoVue.Starting" parent="Theme.GoVue.Starting.Platform">
+        <item name="android:windowSplashScreenBehavior">icon_preferred</item>
+    </style>
+</resources>

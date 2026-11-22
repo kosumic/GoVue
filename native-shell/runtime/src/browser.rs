@@ -40,6 +40,9 @@ pub enum BrowserEvent {
     Ready {
         document: BrowserDocument,
     },
+    Painted {
+        document: BrowserDocument,
+    },
     Progress {
         fraction: f64,
     },

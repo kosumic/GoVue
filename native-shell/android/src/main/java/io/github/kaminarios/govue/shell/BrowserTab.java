@@ -58,6 +58,7 @@ public final class BrowserTab implements NshComponent {
     private boolean active;
     private boolean loading;
     private boolean failed;
+    private boolean painted;
 
     public static void register(NshView view) {
         view.registerComponent("govue/browser-tab", BrowserTab::new);
@@ -110,7 +111,10 @@ public final class BrowserTab implements NshComponent {
                     installDocumentStart();
                     evaluate(configuration);
                 }
-                if (visibilityChanged) evaluate(visibilityScript());
+                if (visibilityChanged) {
+                    evaluate(visibilityScript());
+                    reportFirstPaint();
+                }
             }
         }
     }
@@ -170,6 +174,7 @@ public final class BrowserTab implements NshComponent {
         });
         installDocumentStart();
         container.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        loading = true;
         web.loadUrl(url);
     }
 
@@ -244,6 +249,21 @@ public final class BrowserTab implements NshComponent {
         emit("ready", Collections.singletonMap("document", document()));
     }
 
+    private void reportFirstPaint() {
+        if (!active || loading || failed || painted) return;
+        WebView current = web;
+        // onPageFinished can run before the WebView draws the loaded document.
+        current.postVisualStateCallback(generation, new WebView.VisualStateCallback() {
+            @Override
+            public void onComplete(long revision) {
+                if (current == web && active && revision == generation && !failed && !painted) {
+                    painted = true;
+                    emit("painted", Collections.singletonMap("document", document()));
+                }
+            }
+        });
+    }
+
     private void emitError(String message, boolean terminated) {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("message", message);
@@ -301,6 +321,7 @@ public final class BrowserTab implements NshComponent {
             bindDocument();
             emitNavigation();
             if (bridgeReady || allowedOrigin(Uri.parse(address)).isEmpty()) emitReady();
+            reportFirstPaint();
         }
 
         @Override

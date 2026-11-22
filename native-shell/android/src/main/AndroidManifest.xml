@@ -52,6 +52,7 @@
             android:foregroundServiceType="connectedDevice" />
         <activity
             android:name="com.longbridge.nsh.GoVueActivity"
+            android:theme="@style/Theme.GoVue.Starting"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:enableOnBackInvokedCallback="true"
             android:exported="true"

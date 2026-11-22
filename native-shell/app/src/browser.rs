@@ -9,7 +9,7 @@ use govue_shell_runtime::{
 };
 #[cfg(target_os = "android")]
 use nsh_core::element::NativeEvent;
-use nsh_core::{PointerEvents, prelude::*};
+use nsh_core::{PointerEvents, platform::Appearance, prelude::*};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
@@ -55,7 +55,8 @@ pub struct Browser {
     state: Signal<State>,
     retained: Rc<RefCell<HashMap<u64, BrowserTab>>>,
     settings: Signal<Option<Map<String, Value>>>,
-    dark: Signal<bool>,
+    #[cfg(target_os = "android")]
+    launch_ready: Signal<bool>,
     actions: mpsc::UnboundedSender<Value>,
     captions: CaptionPage,
     watch: WatchPlayback,
@@ -87,7 +88,8 @@ impl Browser {
             state: signal(State::default()),
             retained: Rc::new(RefCell::new(HashMap::new())),
             settings,
-            dark: signal(false),
+            #[cfg(target_os = "android")]
+            launch_ready: signal(false),
             actions,
             watch,
             chat,
@@ -129,8 +131,9 @@ impl Browser {
         browser
     }
 
-    pub fn dark(&self) -> bool {
-        self.dark.get()
+    #[cfg(target_os = "android")]
+    pub fn launch_ready(&self) -> bool {
+        self.launch_ready.get()
     }
 
     pub fn active_video(&self) -> Option<String> {
@@ -335,10 +338,7 @@ impl Browser {
             // Let YouTube paint behind the gesture handle and apply the inset to its controls.
             .bottom(move || px(-bottom_inset.get()));
         let palette = Palette {
-            dark: computed({
-                let browser = self.clone();
-                move || browser.dark()
-            }),
+            dark: computed(dark),
         };
         view()
             .absolute()
@@ -405,7 +405,22 @@ impl Browser {
                 json!({"id":id,"url":document.url,"generation":document.generation}),
             ),
             BrowserEvent::ExternalUrl { url } if self.active(id) => self.open(url),
-            BrowserEvent::Error { .. } => self.post("invalidate", json!({"id":id})),
+            #[cfg(target_os = "android")]
+            BrowserEvent::Painted { document }
+                if self.active(id)
+                    && tab.current_document().is_some_and(|current| {
+                        current.url == document.url && current.generation == document.generation
+                    }) =>
+            {
+                self.launch_ready.set(true);
+            }
+            BrowserEvent::Error { .. } => {
+                #[cfg(target_os = "android")]
+                if self.active(id) {
+                    self.launch_ready.set(true);
+                }
+                self.post("invalidate", json!({"id":id}));
+            }
             BrowserEvent::PageMessage {
                 document,
                 origin,
@@ -489,7 +504,7 @@ impl Browser {
             }
             Some("appearance") if payload["url"] == document.url => {
                 if let Some(dark) = payload["dark"].as_bool() {
-                    self.dark.set(dark);
+                    set_color_scheme(if dark { Appearance::Dark } else { Appearance::Light });
                 }
             }
             Some("transient") => self.post("transient", json!({"id":id,"origin":origin,
