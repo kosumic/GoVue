@@ -1,10 +1,13 @@
-#![cfg(target_os = "android")]
+#![cfg(any(target_os = "android", target_os = "ios"))]
 
+#[cfg(target_os = "android")]
 extern crate nsh as _;
 
 mod browser;
 mod chat;
 mod chat_view;
+#[cfg(target_os = "ios")]
+mod ios_browser;
 mod player_view;
 mod player_window;
 mod provider_view;
@@ -15,9 +18,12 @@ mod reader_view;
 mod settings_view;
 mod ui;
 
-use govue_shell_runtime::{
-    CaptionPage, Core, PlayerRuntime, TokenRuntime, TranscriptReader, WatchPlayback, WatchSubtitles,
-};
+use govue_shell_runtime::{CaptionPage, Core, TranscriptReader, WatchPlayback, WatchSubtitles};
+#[cfg(target_os = "android")]
+use govue_shell_runtime::{PlayerRuntime, TokenRuntime};
+#[cfg(target_os = "ios")]
+use nsh_core::prelude::*;
+#[cfg(target_os = "android")]
 use nsh_core::{platform::Lifecycle, prelude::*};
 use serde_json::{Value, json};
 
@@ -28,12 +34,27 @@ use player_view::PlayerControls;
 use player_window::PlayerWindow;
 use settings_view::{Preferences, SettingsView};
 
+#[cfg(target_os = "android")]
 ::nsh::ui_sets!(vec![nsh_base::registry()]);
+#[cfg(target_os = "android")]
 ::nsh::main!(nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"));
+
+#[cfg(target_os = "ios")]
+pub fn run_ios() {
+    nsh_platform_ios::set_ui_sets(vec![nsh_base::registry()]);
+    nsh_platform_ios::set_components(ios_browser::register);
+    nsh_ios_app::run_rust(
+        nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"),
+    );
+}
 
 #[component]
 fn GoVue() -> impl IntoElement {
-    match Core::android().and_then(|core| Ok((WatchPlayback::new(core.clone())?, core))) {
+    #[cfg(target_os = "android")]
+    let core = Core::android();
+    #[cfg(target_os = "ios")]
+    let core = Core::ios();
+    match core.and_then(|core| Ok((WatchPlayback::new(core.clone())?, core))) {
         Ok((watch, core)) => workspace(core, watch),
         Err(error) => view().p_safe_area().child(text(error.to_string())),
     }
@@ -42,8 +63,6 @@ fn GoVue() -> impl IntoElement {
 fn workspace(core: Core, watch: WatchPlayback) -> View {
     let captions = CaptionPage::new(core.clone());
     let subtitles = WatchSubtitles::new(core.clone(), watch.clone());
-    let signatures = PlayerRuntime::new();
-    let tokens = TokenRuntime::new(core.clone());
     let preferences = Preferences::new(core.clone());
     let settings = preferences.state;
     let settings_screen = signal(None);
@@ -167,6 +186,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             reader.select(video.as_deref(), &audio);
         }
     });
+    #[cfg(target_os = "android")]
     effect({
         let watch = watch.clone();
         move || {
@@ -211,7 +231,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         move |url| navigate_video.open(url),
         player_window.clone(),
     );
-    view()
+    let root = view()
         .flex_1()
         .pt(move || {
             px(if fullscreen.get() {
@@ -258,14 +278,18 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     }
                 })
                 .child(browser.view(fullscreen))
-                .child(watch.view(
-                    move || width.get(),
-                    move |event| {
-                        let next_video = next_video.clone();
-                        playback_controls.playback(&event, move |url| next_video.open(url));
-                    },
-                ))
-                .child(subtitles.view(move || width.get(), move || caption_controls.visible()))
+                .children(cfg!(target_os = "android").then(|| {
+                    watch.view(
+                        move || width.get(),
+                        move |event| {
+                            let next_video = next_video.clone();
+                            playback_controls.playback(&event, move |url| next_video.open(url));
+                        },
+                    )
+                }))
+                .children(cfg!(target_os = "android").then(|| {
+                    subtitles.view(move || width.get(), move || caption_controls.visible())
+                }))
                 .child(player_controls)
                 .child(watch_transcript.view(
                     move || {
@@ -289,9 +313,12 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(chat_transcript.view(|| 0.0, || 0.0))
                 .child(settings_view.view())
                 .child(browser.toast()),
-        )
+        );
+    #[cfg(target_os = "android")]
+    let root = root
         .child(browser.launches())
         .child(player_window.view())
-        .child(signatures.view())
-        .child(tokens.view())
+        .child(PlayerRuntime::new().view())
+        .child(TokenRuntime::new(core).view());
+    root
 }

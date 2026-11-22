@@ -71,6 +71,18 @@ impl Core {
         Self::with_storage(&files.join("transcripts"))
     }
 
+    /// Uses the original GoVue iOS application support directory.
+    #[cfg(target_os = "ios")]
+    pub fn ios() -> Result<Self, CoreError> {
+        let data = nsh_core::element::data_dir().ok_or(CoreError::StorageUnavailable)?;
+        let base = data
+            .parent()
+            .filter(|parent| parent.file_name().is_some_and(|name| name == "nsh"))
+            .and_then(Path::parent)
+            .ok_or(CoreError::StorageUnavailable)?;
+        Self::with_storage(&base.join("LingoPlay/transcripts"))
+    }
+
     /// Opens the app's existing GoVue core root. The host resolves its sandbox path.
     pub fn with_storage(path: &Path) -> Result<Self, CoreError> {
         let storage = path

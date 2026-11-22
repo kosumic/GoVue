@@ -10,7 +10,11 @@ publish = false
 
 [lib]
 name = "nsh"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "GoVue"
+path = "src/ios_main.rs"
 
 [dependencies]
 govue-core = { path = "../../core" }
@@ -23,3 +27,13 @@ tokio = { version = "1", features = ["sync"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 nsh-platform-android = { version = "=0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+block2 = "0.6.2"
+nsh-ios-app = { version = "=0.6.1", default-features = false }
+nsh-platform-ios = { version = "=0.6.1", default-features = false, features = ["highlight", "svg"] }
+objc2 = "0.6.5"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "objc2"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSKeyValueObserving", "NSObject", "NSString", "NSURL", "NSURLRequest"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIResponder", "UIView"] }
+url = "2"

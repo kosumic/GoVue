@@ -7,7 +7,9 @@ use govue_shell_runtime::{
     BrowserDocument, BrowserEvent, BrowserOptions, BrowserTab, CaptionPage, Core, CoreError,
     WatchPlayback,
 };
-use nsh_core::{PointerEvents, element::NativeEvent, prelude::*};
+#[cfg(target_os = "android")]
+use nsh_core::element::NativeEvent;
+use nsh_core::{PointerEvents, prelude::*};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
@@ -15,6 +17,7 @@ use tokio::sync::mpsc;
 use crate::chat::Chat;
 use crate::queue::Queue;
 use crate::settings_view::SettingsScreen;
+use crate::ui::{Palette, press};
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +119,7 @@ impl Browser {
         ))
     }
 
+    #[cfg(target_os = "android")]
     pub fn launches(&self) -> NativeView {
         let browser = self.clone();
         nsh_core::element::native("govue/browser-launches")
@@ -161,7 +165,7 @@ impl Browser {
         )
     }
 
-    fn tab(&self, tab: Tab, fullscreen: Memo<bool>) -> NativeView {
+    fn tab(&self, tab: Tab, fullscreen: Memo<bool>) -> View {
         let id = tab.id;
         let native = BrowserTab::new(tab.url, tab.generation);
         self.retained.borrow_mut().insert(id, native.clone());
@@ -186,25 +190,107 @@ impl Browser {
         let settings = self.settings;
         let chat = self.chat.clone();
         let settings_screen = self.settings_screen;
-        native
+        let visible = computed(move || {
+            active.get()
+                && !fullscreen.get()
+                && !chat.visible()
+                && settings_screen.with(Option::is_none)
+        });
+        let loading = signal(true);
+        let failure = signal::<Option<String>>(None);
+        let renderer = native
             .view(
                 &self.captions,
                 move || BrowserOptions {
-                    active: active.get()
-                        && !fullscreen.get()
-                        && !chat.visible()
-                        && settings_screen.with(Option::is_none),
+                    active: visible.get(),
                     bottom_inset: f64::from(safe_area().bottom.0),
                     settings: settings.get().unwrap_or_default(),
                 },
                 {
                     let browser = self.clone();
                     let native = native.clone();
-                    move |event| browser.event(id, &native, event)
+                    move |event| {
+                        match &event {
+                            BrowserEvent::Navigation {
+                                loading: pending, ..
+                            } => {
+                                loading.set(*pending);
+                                failure.set(None);
+                            }
+                            BrowserEvent::Ready { .. } => loading.set(false),
+                            BrowserEvent::Error { message, .. } => {
+                                loading.set(false);
+                                failure.set(Some(message.clone()));
+                            }
+                            _ => {}
+                        }
+                        browser.event(id, &native, event);
+                    }
                 },
             )
             .absolute()
+            .inset(px(0.0));
+        let palette = Palette {
+            dark: computed({
+                let browser = self.clone();
+                move || browser.dark()
+            }),
+        };
+        view()
+            .absolute()
             .inset(px(0.0))
+            .pointer_events(PointerEvents::BoxNone)
+            .child(renderer)
+            .child(when(
+                move || visible.get() && loading.get(),
+                || {
+                    view()
+                        .absolute()
+                        .top(px(0.0))
+                        .left(px(0.0))
+                        .right(px(0.0))
+                        .h(px(2.0))
+                        .bg(rgb(0xff0000))
+                        .pointer_events(PointerEvents::None)
+                },
+            ))
+            .child(when(
+                move || visible.get() && failure.with(Option::is_some),
+                move || {
+                    let native = native.clone();
+                    view()
+                        .absolute()
+                        .bottom(px(0.0))
+                        .left(px(0.0))
+                        .right(px(0.0))
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.0))
+                        .p(px(16.0))
+                        .bg(move || palette.raised())
+                        .child(
+                            text(move || failure.get().unwrap_or_default())
+                                .flex_1()
+                                .text_size(px(13.0))
+                                .text_color(move || palette.ink()),
+                        )
+                        .child(
+                            press()
+                                .p(px(12.0))
+                                .label("Reload page")
+                                .on_press(move || {
+                                    failure.set(None);
+                                    loading.set(true);
+                                    native.reload();
+                                })
+                                .child(
+                                    text("Reload")
+                                        .text_size(px(13.0))
+                                        .text_color(move || palette.ink()),
+                                ),
+                        )
+                },
+            ))
     }
 
     fn event(&self, id: u64, tab: &BrowserTab, event: BrowserEvent) {

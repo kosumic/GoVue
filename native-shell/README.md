@@ -19,6 +19,20 @@ nix develop path:. --command bash native-shell/android/build-release.sh
 The ARM64 release APK is in `native-shell/android/build/outputs/apk/release`.
 During migration its application ID is `io.github.kaminarios.govue.nsh`.
 
+On Apple Silicon with Xcode, build the iPhone or iPad simulator release with
+the same standalone page-bundler dependencies.
+
+```sh
+npm --prefix native-shell ci
+bash native-shell/ios/build-release.sh simulator
+```
+
+The simulator bundle is at
+`native-shell/ios/build/iphonesimulator/GoVue.app`. The iOS host uses the
+shared Rust browser and Chat screens, with a retained WKWebView for YouTube.
+`Core::ios()` resolves the original `Application Support/LingoPlay/transcripts`
+directory within the app sandbox. The current iOS build uses the page player.
+
 On Android, construct `Core::android()` in the Native Shell app root. It uses
 GoVue’s existing app-private `files/transcripts` directory. Reuse the app ID and
 signing identity in the eventual upgrade so Android retains that sandbox.

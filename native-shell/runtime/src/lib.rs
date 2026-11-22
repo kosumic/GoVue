@@ -8,11 +8,11 @@ mod captions;
 mod core;
 mod player;
 mod reader;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod subtitles;
 mod tokens;
 mod video;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod watch;
 
 pub use browser::{BrowserDocument, BrowserEvent, BrowserOptions, BrowserTab};
@@ -26,14 +26,14 @@ pub use reader::{
     ReaderDocument, ReaderLine, ReaderResults, ReaderRow, ReaderSnapshot, ReaderTracks, Transcript,
     TranscriptReader, TranscriptSegment, TranscriptTrack,
 };
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 pub use subtitles::WatchSubtitles;
 pub use tokens::TokenRuntime;
 pub use video::{
     EmbeddedVideoFrame, PageVideoLayout, PlaybackEvent, PlaybackFit, PlaybackRequest,
     PlaybackSource, PlaybackStatus, VideoPlayer, VideoTrack,
 };
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 pub use watch::{
     AudioTrack, PlaybackSelection, SubtitleTrack, VideoQuality, WatchPlayback, WatchVideo,
 };
