@@ -74,6 +74,8 @@ cat > "$bundle/Info.plist" <<EOF
     <key>UILaunchScreen</key><dict/>
     <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
     <key>NSCameraUsageDescription</key><string>Allow GoVue to scan provider QR codes and take photos for chat messages.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Allow GoVue to use the microphone for voice input in chat.</string>
+    <key>NSSpeechRecognitionUsageDescription</key><string>Allow GoVue to turn your speech into chat messages.</string>
     <key>UIBackgroundModes</key><array><string>audio</string></array>
     <key>UISupportedInterfaceOrientations</key>
     <array>

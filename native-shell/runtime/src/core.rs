@@ -109,6 +109,10 @@ impl Core {
         decode(&govue_core::state_execute(request.to_string()))
     }
 
+    pub fn dictation<T: DeserializeOwned>(&self, request: Value) -> Result<T, CoreError> {
+        decode(&govue_core::dictation_execute(request.to_string()))
+    }
+
     pub(crate) fn register_caption_page(
         &self,
         adapter: &str,

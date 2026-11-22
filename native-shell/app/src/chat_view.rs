@@ -3,6 +3,7 @@ use std::rc::Rc;
 use nsh_core::{
     KeyboardDismissMode, KeyboardTaps, PasteEvent,
     element::{ElementRef, input},
+    platform::Lifecycle,
     prelude::*,
 };
 use serde::Deserialize;
@@ -11,6 +12,7 @@ use serde_json::{Value, json};
 use crate::attachments_view::{AttachmentsView, PAPERCLIP};
 use crate::chat::{Chat, ChatTranscript, Message};
 use crate::chat_activity::{self, ToolSelection};
+use crate::chat_voice::ChatVoice;
 use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
 
@@ -49,12 +51,15 @@ pub struct ChatView {
     providers: ProviderView,
     attachments: AttachmentsView,
     tool_selection: ToolSelection,
+    voice: ChatVoice,
 }
 
 impl ChatView {
     pub fn new(chat: Chat, palette: Palette) -> Self {
         let attachments = AttachmentsView::new(chat.core(), palette);
         let draft = signal(String::new());
+        let layer = signal(Layer::Thread);
+        let voice = ChatVoice::new(chat.core(), draft);
         let editing = signal(None);
         let tool_selection = signal(None);
         effect({
@@ -68,13 +73,42 @@ impl ChatView {
                 tool_selection.set(None);
             }
         });
+        let voice_context = computed({
+            let chat = chat.clone();
+            move || {
+                chat.current()
+                    .map(|thread| (thread.id.clone(), thread.transcript.clone()))
+            }
+        });
+        effect({
+            let voice = voice.clone();
+            let chat = chat.clone();
+            move || {
+                voice_context.get();
+                chat.draft_revision();
+                if !chat.visible() || layer.get() != Layer::Thread {
+                    voice.clear();
+                } else {
+                    voice.cancel();
+                }
+            }
+        });
+        effect({
+            let voice = voice.clone();
+            move || {
+                if lifecycle() == Lifecycle::Background {
+                    voice.cancel();
+                }
+            }
+        });
         Self {
             providers: ProviderView::new(chat.clone(), palette),
             attachments,
             tool_selection,
             chat,
             palette,
-            layer: signal(Layer::Thread),
+            layer,
+            voice,
             draft,
             editing,
             reasoning_open: signal(false),
@@ -86,6 +120,10 @@ impl ChatView {
 
     pub fn camera(&self) -> NativeView {
         self.attachments.camera()
+    }
+
+    pub fn speech(&self) -> NativeView {
+        self.voice.native_view()
     }
 
     fn edit(&self, message: Message) {
@@ -641,11 +679,13 @@ impl ChatView {
         let enabled = computed({
             let files = self.attachments.clone();
             let chat = self.chat.clone();
+            let voice = self.voice.clone();
             move || {
                 !files.busy()
                     && !chat.sending()
                     && !chat.loading()
                     && !chat.settings_busy()
+                    && !voice.active()
                     && (editing.with(Option::is_none) || !chat.busy())
                     && (!files.empty() || draft.with(|value| !value.trim().is_empty()))
             }
@@ -774,6 +814,7 @@ impl ChatView {
                                 move || loading.loading()
                             }),
                     )
+                    .child(self.voice.preview(p))
                     .child(when(
                         move || reasoning_open.get() && selection.with(Option::is_some),
                         {
@@ -815,6 +856,7 @@ impl ChatView {
                                 reasoning_open,
                             ))
                             .child(view().flex_1())
+                            .child(self.voice.button(p, self.chat.clone(), input_ref))
                             .child(when(
                                 {
                                     let busy = busy.clone();
@@ -858,8 +900,10 @@ impl ChatView {
                                     })
                                     .child(ui::icon(ui::UP, 22.0, move || p.background())),
                             ),
-                    ),
+                    )
+                    .child(self.voice.status(p)),
             )
+            .child(self.voice.error(p))
             .child(self.attachments.notice())
     }
 

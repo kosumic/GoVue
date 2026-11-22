@@ -15,6 +15,7 @@ mod chat;
 mod chat_activity;
 mod chat_markdown;
 mod chat_view;
+mod chat_voice;
 mod download_confirm;
 mod download_library;
 mod downloads;
@@ -46,6 +47,8 @@ mod reader_clock;
 mod reader_view;
 mod segments_view;
 mod settings_view;
+#[cfg(target_os = "ios")]
+mod speech_ios;
 mod sponsors;
 mod subtitle_style;
 mod ui;
@@ -80,6 +83,7 @@ pub fn run_ios() {
     nsh_platform_ios::set_ui_sets(vec![nsh_base::registry()]);
     nsh_platform_ios::set_components(|components| {
         camera_ios::register(components);
+        speech_ios::register(components);
         ios_browser::register(components);
         downloads_ios::register(components);
         now_playing_ios::register(components);
@@ -535,6 +539,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             move || can_present.get() || mini_active.get(),
         ));
     root.child(chat_view.camera())
+        .child(chat_view.speech())
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())
 }

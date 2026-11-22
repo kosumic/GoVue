@@ -10,6 +10,7 @@ import io.github.kaminarios.govue.shell.BrowserLaunches;
 import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
 import io.github.kaminarios.govue.shell.ChatCamera;
+import io.github.kaminarios.govue.shell.ChatSpeech;
 import io.github.kaminarios.govue.shell.DownloadExport;
 import io.github.kaminarios.govue.shell.DownloadTransport;
 import io.github.kaminarios.govue.shell.NowPlaying;
@@ -24,6 +25,7 @@ public final class GoVueActivity extends Activity {
     private final PlayerWindow playerWindow = new PlayerWindow();
     private final PlayerPip pip = new PlayerPip();
     private NshView view;
+    private ChatSpeech speech;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -39,6 +41,10 @@ public final class GoVueActivity extends Activity {
         launches.register(view);
         CaptionOverlay.register(view);
         ChatCamera.register(view, this);
+        view.registerComponent("govue/chat-speech", context -> {
+            speech = new ChatSpeech(this, context);
+            return speech;
+        });
         VideoPlayer.register(view);
         NowPlaying.register(view);
         playerWindow.register(view, this);
@@ -81,6 +87,12 @@ public final class GoVueActivity extends Activity {
         DevActivity.systemBars(this);
         view.mounter().applySystemBars();
         playerWindow.applySystemBars();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
+        super.onRequestPermissionsResult(requestCode, permissions, grants);
+        if (requestCode == ChatSpeech.MICROPHONE && speech != null) speech.permission(grants);
     }
 
     @Override
