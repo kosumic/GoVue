@@ -6,6 +6,7 @@ use nsh_core::{
 use serde_json::{Value, json};
 
 use crate::chat::Chat;
+use crate::provider_group::{self, Group, GroupDraft};
 use crate::provider_model::{self, ModelDraft};
 use crate::ui::{self, Palette, press};
 
@@ -26,8 +27,10 @@ pub struct ProviderView {
     draft: Signal<Option<Value>>,
     key: Signal<String>,
     model: Signal<Option<ModelDraft>>,
+    group: Signal<Option<GroupDraft>>,
     model_query: Signal<String>,
     remove_model: Signal<bool>,
+    remove_group: Signal<bool>,
     instruction: Signal<Option<String>>,
     advanced: Signal<bool>,
     busy: Signal<bool>,
@@ -44,8 +47,10 @@ impl ProviderView {
             draft: signal(None),
             key: signal(String::new()),
             model: signal(None),
+            group: signal(None),
             model_query: signal(String::new()),
             remove_model: signal(false),
+            remove_group: signal(false),
             instruction: signal(None),
             advanced: signal(false),
             busy: signal(false),
@@ -55,6 +60,16 @@ impl ProviderView {
     }
 
     pub fn back(&self) -> bool {
+        if self.remove_group.get_untracked() {
+            self.remove_group.set(false);
+            return true;
+        }
+        if self.group.with_untracked(Option::is_some) {
+            self.revision.update(|revision| *revision += 1);
+            self.group.set(None);
+            self.error.set(None);
+            return true;
+        }
         if self.remove_model.get_untracked() {
             self.remove_model.set(false);
             return true;
@@ -82,15 +97,19 @@ impl ProviderView {
         let model_form = self.clone();
         let draft = self.draft;
         let model = self.model;
+        let group = self.group;
         let error = self.error;
         let busy = self.busy;
         let remove = self.remove_model;
         let removal = self.clone();
+        let remove_group = self.remove_group;
+        let group_removal = self.clone();
+        let group_form = self.clone();
         view()
             .flex_1()
             .min_h(px(0.0))
             .child(when(
-                move || draft.with(Option::is_none),
+                move || draft.with(Option::is_none) && group.with(Option::is_none),
                 move || page(p, listing.list(), busy, error),
             ))
             .child(when(
@@ -100,6 +119,10 @@ impl ProviderView {
             .child(when(
                 move || model.with(Option::is_some),
                 move || page(p, model_form.model(), busy, error),
+            ))
+            .child(when(
+                move || group.with(Option::is_some),
+                move || page(p, group_form.group(), busy, error),
             ))
             .child(when(remove, move || {
                 let removal = removal.clone();
@@ -113,10 +136,31 @@ impl ProviderView {
                     p,
                     "Remove model?",
                     detail,
+                    "Remove",
                     move || remove.set(false),
                     move || {
                         remove.set(false);
                         removal.delete_model();
+                    },
+                )
+            }))
+            .child(when(remove_group, move || {
+                let removal = group_removal.clone();
+                let name = group.with_untracked(|group| {
+                    group
+                        .as_ref()
+                        .map(|group| group.group.name.clone())
+                        .unwrap_or_default()
+                });
+                removal_dialog(
+                    p,
+                    "Delete model group?",
+                    name,
+                    "Delete",
+                    move || remove_group.set(false),
+                    move || {
+                        remove_group.set(false);
+                        removal.delete_group();
                     },
                 )
             }))
@@ -129,9 +173,13 @@ impl ProviderView {
         let saved = self.clone();
         let connections = self.chat.clone();
         let existing = self.clone();
+        let move_provider = self.clone();
         let choices = self.chat.clone();
         let edit = self.clone();
         let advanced = self.advanced;
+        let edit_group = self.clone();
+        let reorder_group = self.clone();
+        let busy = self.busy;
         view().gap(px(14.0))
             .child(section(p, "AGENT.md"))
             .child(help(p, || "Add instructions for every AI chat and video summary, such as your preferred language, learning level, or response style. Saved changes apply to your next message. Clear and save to remove them.".into()))
@@ -144,16 +192,30 @@ impl ProviderView {
                 }
             }))
             .child(section(p, "Connections"))
-            .child(each(move || array(&connections.config(), "providers"),
-                |provider| string(provider, "id"),
+            .child(each(move || {
+                let providers = array(&connections.config(), "providers");
+                let count = providers.len();
+                providers.into_iter().enumerate().map(|(index, provider)| (provider, index > 0, index + 1 < count)).collect::<Vec<_>>()
+            },
+                |(provider, _, _)| string(provider, "id"),
                 move |row, _| {
                     let pane = existing.clone();
-                    entry(p, ui::NEXT, move || row.with(|p|string(p,"label")), move || row.with(|p|{
+                    let move_provider = move_provider.clone();
+                    view().flex_row().items_center().gap(px(8.0))
+                    .child(entry(p, ui::NEXT, move || row.with(|(p, _, _)|string(p,"label")), move || row.with(|(p, _, _)|{
                         if p["enabled"] == false { "Disabled".into() }
                         else if p["needsReauth"] == true { "Sign-in expired".into() }
-                        else if p["connected"] == true { format!("{} models",array(p,"models").len()) }
+                        else if p["connected"] == true { format!("{} models",array(p,"models").iter().filter(|model| model["hidden"] != true).count()) }
                         else { "Connect to get started".into() }
-                    }), move || pane.edit(row.get()))
+                    }), move || pane.edit(row.with_untracked(|(provider, _, _)|provider.clone())))
+                        .flex_1().disabled(busy)
+                        .label(move || row.with(|(provider, _, _)| format!("Edit provider {}", string(provider,"label")))))
+                    .child(dynamic(move || {
+                        let (provider, up, down) = row.get();
+                        let move_provider = move_provider.clone();
+                        let id = string(&provider, "id");
+                        provider_model::order(p, up, down, busy, move |delta| move_provider.reorder_section("providers", &id, delta))
+                    }))
                 }))
             .child(section(p, "Add a connection"))
             .child(each(move || array(&choices.config(), "choices").into_iter()
@@ -169,6 +231,9 @@ impl ProviderView {
                             "enabled":true,"protocol":"","azure":false,"appendV1Suffix":false,"customUserAgent":""}))))
                 }))
             .child(action(p, "Advanced connections", move || advanced.update(|open|*open = !*open)))
+            .child(provider_group::list(p, self.chat.clone(), busy,
+                move |group| edit_group.edit_group(group),
+                move |id, delta| reorder_group.reorder_section("groups", &id, delta)))
     }
 
     fn edit(&self, provider: Value) {
@@ -369,6 +434,62 @@ impl ProviderView {
             ))
     }
 
+    fn edit_group(&self, group: Group) {
+        self.revision.update(|revision| *revision += 1);
+        self.error.set(None);
+        self.group.set(Some(group.into()));
+    }
+
+    fn group(&self) -> View {
+        let close = self.clone();
+        let save = self.clone();
+        let remove = self.remove_group;
+        provider_group::editor(
+            self.palette,
+            self.chat.clone(),
+            self.group,
+            self.busy,
+            move || {
+                close.back();
+            },
+            move || save.save_group(),
+            move || remove.set(true),
+        )
+    }
+
+    fn save_group(&self) {
+        let Some(draft) = self.group.get_untracked() else {
+            return;
+        };
+        match draft.request() {
+            Ok(request) => {
+                let group = self.group;
+                self.mutate(request, move |_| group.set(None));
+            }
+            Err(error) => self.error.set(Some(error.into())),
+        }
+    }
+
+    fn delete_group(&self) {
+        if let Some(draft) = self.group.get_untracked() {
+            let group = self.group;
+            self.mutate(
+                json!({"op":"ai_remove_group","id":draft.group.id}),
+                move |_| group.set(None),
+            );
+        }
+    }
+
+    fn reorder_section(&self, kind: &'static str, id: &str, delta: isize) {
+        let mut ids = array(&self.chat.config(), kind)
+            .iter()
+            .map(|item| string(item, "id"))
+            .collect::<Vec<_>>();
+        if move_id(&mut ids, id, delta) {
+            self.mutate(json!({"op":"ai_reorder","kind":kind,"ids":ids}), |_| {});
+        }
+    }
+
     fn provider_id(&self) -> String {
         self.draft.with_untracked(|draft| {
             draft
@@ -458,12 +579,7 @@ impl ProviderView {
                 })
                 .unwrap_or_default()
         });
-        if let Some(index) = ids.iter().position(|id| id == model_id)
-            && let Some(other) = index
-                .checked_add_signed(delta)
-                .filter(|other| *other < ids.len())
-        {
-            ids.swap(index, other);
+        if move_id(&mut ids, model_id, delta) {
             self.update_models(json!({"op":"ai_reorder","id":self.provider_id(),"ids":ids}));
         }
     }
@@ -547,7 +663,21 @@ fn saved_provider(config: &Value, id: &str) -> Option<Value> {
     }
 }
 
-fn array(value: &Value, key: &str) -> Vec<Value> {
+fn move_id(ids: &mut [String], id: &str, delta: isize) -> bool {
+    let Some(index) = ids.iter().position(|other| other == id) else {
+        return false;
+    };
+    let Some(other) = index
+        .checked_add_signed(delta)
+        .filter(|other| *other < ids.len())
+    else {
+        return false;
+    };
+    ids.swap(index, other);
+    true
+}
+
+pub(super) fn array(value: &Value, key: &str) -> Vec<Value> {
     value[key].as_array().cloned().unwrap_or_default()
 }
 
@@ -701,6 +831,7 @@ pub(super) fn removal_dialog(
     p: Palette,
     title: &'static str,
     detail: String,
+    label: &'static str,
     close: impl Fn() + Clone + 'static,
     remove: impl Fn() + 'static,
 ) -> View {
@@ -734,12 +865,12 @@ pub(super) fn removal_dialog(
                         .justify_end()
                         .gap(px(10.0))
                         .child(action(p, "Keep", close))
-                        .child(action(p, "Remove", remove)),
+                        .child(action(p, label, remove)),
                 ),
         )
 }
 
-fn entry(
+pub(super) fn entry(
     p: Palette,
     path: &'static str,
     title: impl Fn() -> String + 'static,

@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use crate::provider_view::{action, field, field_control, help, section, string};
 use crate::ui::{self, Palette, press};
 
-const EFFORTS: [&str; 8] = [
+pub(super) const EFFORTS: [&str; 8] = [
     "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 ];
 

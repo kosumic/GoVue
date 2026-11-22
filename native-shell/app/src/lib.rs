@@ -48,6 +48,7 @@ mod player_view;
 mod player_window;
 #[cfg(target_os = "ios")]
 mod player_window_ios;
+mod provider_group;
 mod provider_model;
 mod provider_view;
 mod queue;
