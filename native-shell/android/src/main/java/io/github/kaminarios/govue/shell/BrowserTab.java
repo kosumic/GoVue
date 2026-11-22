@@ -283,7 +283,8 @@ public final class BrowserTab implements NshComponent {
         public void doUpdateVisitedHistory(WebView view, String url, boolean reload) {
             if (view == web && url != null && !url.equals(address)) {
                 updateAddress(url);
-                evaluate("window.__govueBrowser?.setDocumentGeneration(" + generation + ");");
+                evaluate("window.__govueCaptions?.cancelAll();"
+                        + "window.__govueBrowser?.setDocumentGeneration(" + generation + ");");
                 if (!loading && bridgeReady) emitReady();
             }
         }

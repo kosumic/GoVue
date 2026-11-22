@@ -25,6 +25,17 @@ active video, and pending request before applying messages to Rust state.
 `BrowserTab::inject` targets a single document generation. The app handles
 external links and errors using the corresponding browser events.
 
+Create one `CaptionPage` beside `Core` in the app root and pass it to each tab
+view. Select the active tab with `CaptionPage::select`. The adapter delivers
+Rust extraction requests through GoVue's caption script after the document is
+ready. It releases that document's registration when the active tab changes.
+
+Register `CaptionOverlay` with `NshView` and mount `caption_overlay` over the
+player surface. Use `player_caption_frame` for the displayed cue and
+`media_settings.subtitleStyle` for its appearance. Pass the overlay's layout
+event into the next `player_caption_frame` request so the Rust player can page
+long cues at the correct time.
+
 Register `io.github.kaminarios.govue.shell.PlayerRuntime` with the Android
 `NshView` before calling `runRustApp`. Construct the Rust `PlayerRuntime` in the
 player component and mount its hidden `view()`. Pass the pending media request

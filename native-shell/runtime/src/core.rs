@@ -94,6 +94,14 @@ impl Core {
         decode(&govue_core::state_execute(request.to_string()))
     }
 
+    pub(crate) fn register_caption_page(
+        &self,
+        adapter: &str,
+        video: Option<&str>,
+    ) -> Result<(), CoreError> {
+        govue_core::register_caption_page(adapter, video, &self.storage).map_err(CoreError::Request)
+    }
+
     pub async fn execute<T: DeserializeOwned>(&self, request: Value) -> Result<T, CoreError> {
         self.run(request, govue_core::execute).await
     }

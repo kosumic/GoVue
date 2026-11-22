@@ -77,6 +77,38 @@ test('navigation cancels capture, restores hooks, and discards a late caption re
   assert.notEqual(env.selections.at(-1).value, env.previous, 'the preceding video must not change the new video’s caption settings');
 });
 
+test('leaving a Native Shell document cancels both caption requests and allows a fresh request', async t => {
+  let finish;
+  const env = setup(t, () => new Promise(resolve => { finish = resolve; }));
+  const { window, messages } = env;
+  delete window.ReactNativeWebView;
+  window.__govuePageTransport = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  const bridge = window.__govueCaptions;
+  bridge.request('reader:primary', task);
+  bridge.request('reader:comparison', { ...task, taskId: 8 });
+  const late = window.fetch(address);
+  window.location.hash = '#next-document';
+  bridge.cancelAll();
+  const response = { ok: true, clone: () => ({ text: async () => source }) };
+  finish(response);
+  await late;
+  await settle();
+  assert.deepEqual(messages.map(({ requestId, ok }) => [requestId, ok]), [
+    ['reader:primary', false], ['reader:comparison', false],
+  ]);
+  assert.equal(window.fetch, env.original.fetch);
+  assert.equal(env.selections.at(-1).value, env.previous);
+
+  bridge.request('reader:fresh', { ...task, taskId: 9 });
+  const current = window.fetch(address);
+  finish(response);
+  await current;
+  await settle();
+  assert.equal(messages.length, 3);
+  assert.equal(messages[2].requestId, 'reader:fresh');
+  assert.equal(messages[2].source, source);
+});
+
 test('the transcript button response is captured through XHR only for the requested video parameters', async t => {
   const env = setup(t);
   const { window } = env;

@@ -129,6 +129,7 @@
   };
   window.__govueCaptions = {
     cancel(requestId) { pending.get(requestId)?.finish(); },
+    cancelAll() { for (const state of pending.values()) state.finish(); },
     request(requestId, task) {
       if (currentVideo() !== task.videoId || !/^[\w-]{11}$/.test(task.videoId)) return;
       if (pending.get(requestId)?.taskId === task.taskId) return;

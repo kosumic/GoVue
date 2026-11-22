@@ -2,6 +2,8 @@ use nsh_core::{element::NativeEvent, prelude::*};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+use crate::CaptionPage;
+
 const COMPONENT: &str = "govue/browser-tab";
 const BOOTSTRAP: &str = include_str!("../../../src/youtube/generated/nativeShellBootstrap.js");
 const PAGE_BRIDGE: &str = include_str!("../../../src/youtube/generated/nativeShellBrowser.js");
@@ -12,6 +14,18 @@ pub struct BrowserDocument {
     pub url: String,
     pub generation: u64,
     pub can_go_back: bool,
+}
+
+impl BrowserDocument {
+    pub(crate) fn same_document(&self, other: &Self) -> bool {
+        self.generation == other.generation && self.url == other.url
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub(crate) struct DocumentState {
+    pub document: BrowserDocument,
+    pub ready: bool,
 }
 
 /// Origin and document identity are supplied by the native WebView. Page data
@@ -50,10 +64,12 @@ pub struct BrowserOptions {
 }
 
 /// Keep the same view mounted while the tab is covered by a native screen.
+#[derive(Clone)]
 pub struct BrowserTab {
     element: ElementRef,
     initial_url: String,
     generation: u64,
+    pub(crate) document: Signal<Option<DocumentState>>,
 }
 
 impl BrowserTab {
@@ -62,14 +78,18 @@ impl BrowserTab {
             element: element_ref(),
             initial_url,
             generation,
+            document: signal(None),
         }
     }
 
     pub fn view(
         &self,
+        captions: &CaptionPage,
         options: impl Fn() -> BrowserOptions + 'static,
         on_event: impl Fn(BrowserEvent) + 'static,
     ) -> NativeView {
+        let tab = self.clone();
+        let captions = captions.clone();
         nsh_core::element::native(COMPONENT)
             .element_ref(&self.element)
             .prop(
@@ -93,9 +113,39 @@ impl BrowserTab {
                 if event.name.as_ref() == "browser"
                     && let Ok(event) = BrowserEvent::deserialize(&event.data)
                 {
-                    on_event(event);
+                    tab.record_document(&event);
+                    if !captions.receive(&tab, &event) {
+                        on_event(event);
+                    }
                 }
             })
+    }
+
+    fn record_document(&self, event: &BrowserEvent) {
+        match event {
+            BrowserEvent::Navigation { document, .. } => {
+                let ready = self
+                    .document
+                    .get_untracked()
+                    .is_some_and(|state| state.ready && state.document.same_document(document));
+                self.document.set(Some(DocumentState {
+                    document: document.clone(),
+                    ready,
+                }));
+            }
+            BrowserEvent::Ready { document } => {
+                self.document.set(Some(DocumentState {
+                    document: document.clone(),
+                    ready: true,
+                }));
+            }
+            BrowserEvent::Error { .. } => self.document.set(None),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn is_same(&self, other: &Self) -> bool {
+        self.element == other.element
     }
 
     pub fn navigate(&self, url: &str) {

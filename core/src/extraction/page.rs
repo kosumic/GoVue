@@ -17,7 +17,15 @@ pub(super) const CHANNEL: &str = "extraction-page";
 pub(super) const TIMEOUT: Duration = Duration::from_secs(12);
 
 pub(super) fn register(command: &Value, root: &str) -> Result<Value> {
-    let adapter = crate::string(command, "adapterId")?;
+    set_registration(
+        crate::string(command, "adapterId")?,
+        command["videoId"].as_str(),
+        root,
+    )?;
+    Ok(Value::Null)
+}
+
+pub(crate) fn set_registration(adapter: &str, video: Option<&str>, root: &str) -> Result<()> {
     if adapter.is_empty() || adapter.len() > 150 || adapter.chars().any(char::is_control) {
         return Err("Invalid caption page identity.".into());
     }
@@ -25,7 +33,7 @@ pub(super) fn register(command: &Value, root: &str) -> Result<Value> {
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| "Caption page unavailable.")?;
-    if let Some(video) = command["videoId"].as_str() {
+    if let Some(video) = video {
         if !crate::video_id(video) || pages.len() >= 8 && !pages.contains_key(root) {
             return Err("Invalid caption page registration.".into());
         }
@@ -40,7 +48,7 @@ pub(super) fn register(command: &Value, root: &str) -> Result<Value> {
         pages.remove(root);
     }
     drop(pages);
-    Ok(Value::Null)
+    Ok(())
 }
 
 pub(super) fn captions(

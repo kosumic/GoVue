@@ -90,6 +90,7 @@ pub use ai::{
 };
 pub use extraction::{
     ExtractionHeader, ExtractionHttp, ExtractionReply, ExtractionRequest, install_extraction_http,
+    register_caption_page,
 };
 
 /// Notifications carry no application data. Consumers fetch the current Rust snapshot.

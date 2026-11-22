@@ -741,6 +741,16 @@ fn request_id(command: &Value) -> Result<&str> {
     Ok(request)
 }
 
+/// Registers the active native caption renderer. This only updates the page
+/// registry, so native hosts can invalidate it at the point of navigation.
+pub fn register_caption_page(
+    adapter: &str,
+    video: Option<&str>,
+    storage: &str,
+) -> std::result::Result<(), String> {
+    page::set_registration(adapter, video, storage).map_err(|error| error.to_string())
+}
+
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let op = crate::string(command, "op")?;
     if op == "extract_page_register" {
