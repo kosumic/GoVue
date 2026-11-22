@@ -32,6 +32,9 @@ pub fn chat_markdown(
             .part(Part::CodeBlock, |style| style.rounded(px(10.0)).p(px(12.0)))
             .part(Part::CodeBlockCode, |style| {
                 style.text_size(px(13.0)).line_height(px(20.0))
+            })
+            .part(Part::MathBlock, move |style| {
+                style.bg(p.background()).p(px(8.0))
             }),
     );
     text_view()
