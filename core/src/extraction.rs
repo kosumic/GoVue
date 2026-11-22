@@ -997,13 +997,12 @@ pub fn resolve_caption_track(
     video_id: &str,
     track_id: &str,
     active: impl Fn() -> bool,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<Value, String> {
     resolve_active(
         root,
         json!({"kind":"transcript","videoId":video_id,"trackId":track_id}),
         active,
     )
-    .map(|_| ())
 }
 
 fn resolve_active(

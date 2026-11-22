@@ -11,6 +11,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
+use crate::chat::Chat;
+
 #[derive(Clone, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct State {
@@ -47,6 +49,7 @@ pub struct Browser {
     actions: mpsc::UnboundedSender<Value>,
     captions: CaptionPage,
     watch: WatchPlayback,
+    chat: Chat,
 }
 
 impl Browser {
@@ -55,6 +58,7 @@ impl Browser {
         captions: CaptionPage,
         watch: WatchPlayback,
         settings: Signal<Option<Map<String, Value>>>,
+        chat: Chat,
     ) -> Self {
         let (actions, pending) = mpsc::unbounded_channel();
         let browser = Self {
@@ -66,18 +70,29 @@ impl Browser {
             actions,
             captions,
             watch,
+            chat,
         };
         spawn(browser.clone().run(pending));
         browser.post("state", json!({}));
-        on_back_press({
-            let browser = browser.clone();
-            move || browser.back()
-        });
         browser
     }
 
     pub fn dark(&self) -> bool {
         self.dark.get()
+    }
+
+    pub fn active_video(&self) -> Option<String> {
+        let url = self.state.with(|state| {
+            state
+                .tabs
+                .iter()
+                .find(|tab| tab.id == state.active_id)
+                .map(|tab| tab.url.clone())
+        })?;
+        self.core
+            .state::<Value>(json!({"op":"browser_identity","url":url}))
+            .ok()
+            .and_then(|identity| identity["videoId"].as_str().map(str::to_owned))
     }
 
     pub fn view(&self) -> View {
@@ -113,11 +128,12 @@ impl Browser {
             }
         });
         let settings = self.settings;
+        let chat = self.chat.clone();
         native
             .view(
                 &self.captions,
                 move || BrowserOptions {
-                    active: active.get(),
+                    active: active.get() && !chat.visible(),
                     bottom_inset: f64::from(safe_area().bottom.0),
                     settings: settings.get().unwrap_or_default(),
                 },
@@ -170,6 +186,11 @@ impl Browser {
                 }
             }
             Some("back") => { self.back(); }
+            Some("chat") => {
+                let video = self.core.state::<Value>(json!({"op":"browser_identity","url":document.url}))
+                    .ok().and_then(|identity| identity["videoId"].as_str().map(str::to_owned));
+                self.chat.show(video);
+            }
             Some("appearance") if payload["url"] == document.url => {
                 if let Some(dark) = payload["dark"].as_bool() {
                     self.dark.set(dark);
@@ -181,7 +202,7 @@ impl Browser {
         }
     }
 
-    fn open(&self, url: String) {
+    pub fn open(&self, url: String) {
         match govue_core::browser_url_policy(url.clone()).as_str() {
             "internal" => self.post("open", json!({"url":url})),
             "external" => {
@@ -197,7 +218,7 @@ impl Browser {
         self.state.with_untracked(|state| state.active_id == id)
     }
 
-    fn back(&self) -> bool {
+    pub fn back(&self) -> bool {
         let state = self.state.get_untracked();
         if !state.transient.is_empty() && state.transient != "none" {
             self.post("dismiss", json!({}));

@@ -162,6 +162,16 @@ impl TranscriptReader {
         self.state.get()
     }
 
+    pub fn select_track(&self, video: &str, track_id: &str) {
+        let current = self.state.get_untracked();
+        if current.as_ref().is_some_and(|state| {
+            state.video_id == video && state.track_ids.first().is_some_and(|id| id == track_id)
+        }) {
+            return;
+        }
+        self.load(video, "", vec![track_id.into()], false);
+    }
+
     pub fn visible(&self) -> bool {
         self.visible.get()
     }

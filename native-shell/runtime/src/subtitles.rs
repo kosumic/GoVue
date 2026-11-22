@@ -68,10 +68,10 @@ impl WatchSubtitles {
                     let core = core.clone();
                     spawn(async move {
                         match core
-                            .resolve_caption(selected.video.clone(), selected.track.clone())
+                            .resolve_transcript(selected.video.clone(), selected.track.clone())
                             .await
                         {
-                            Ok(()) => subtitles.loaded.set(Some(selected)),
+                            Ok(_) => subtitles.loaded.set(Some(selected)),
                             Err(error) => subtitles.error.set(Some(error.to_string())),
                         }
                         subtitles.loading.set(false);

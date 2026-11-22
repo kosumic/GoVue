@@ -123,16 +123,17 @@ impl Core {
         .await
     }
 
-    #[cfg(target_os = "android")]
-    pub(crate) async fn resolve_caption(
+    pub async fn resolve_transcript(
         &self,
         video: String,
         track: String,
-    ) -> Result<(), CoreError> {
-        self.extract(move |storage, active| {
-            govue_core::resolve_caption_track(storage, &video, &track, active)
-        })
-        .await
+    ) -> Result<crate::Transcript, CoreError> {
+        let value = self
+            .extract(move |storage, active| {
+                govue_core::resolve_caption_track(storage, &video, &track, active)
+            })
+            .await?;
+        serde_json::from_value(value).map_err(CoreError::InvalidResponse)
     }
 
     async fn extract<T: Send + 'static>(
