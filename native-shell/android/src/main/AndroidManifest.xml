@@ -51,6 +51,7 @@
         <activity
             android:name="com.longbridge.nsh.GoVueActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:enableOnBackInvokedCallback="true"
             android:exported="true"
             android:launchMode="singleTask"
             android:supportsPictureInPicture="true"

@@ -13,7 +13,11 @@ if [[ $# -gt 0 ]]; then shift; fi
 npm --prefix native-shell run page:build
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo/native-shell/ios/build/rust}"
 sdk_path=$(/usr/bin/xcrun --sdk "$sdk" --show-sdk-path)
-app_id=io.github.kaminarios.govue.nsh
+app_id=io.github.kaminarios.govue
+if [[ "${GOVUE_PREVIEW:-0}" == 1 ]]; then
+    app_id=io.github.kaminarios.govue.nsh
+fi
+export GOVUE_APP_ID="$app_id"
 cargo_command=build
 link_args=()
 if [[ "$sdk" == iphonesimulator ]]; then
@@ -76,6 +80,7 @@ cat > "$bundle/Info.plist" <<EOF
         </dict>
     </array>
     <key>LSRequiresIPhoneOS</key><true/>
+    <key>ITSAppUsesNonExemptEncryption</key><false/>
     <key>MinimumOSVersion</key><string>16.0</string>
     <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
     <key>UILaunchScreen</key><dict/>

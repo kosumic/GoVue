@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- GoVue has one Activity. The pinned host also includes two standalone launchers. -->
+    <issue id="GestureBackNavigation">
+        <ignore regexp="nsh-platform-android(-0\.6\.1)?/java/com/longbridge/nsh/(AppActivity|DevActivity)\.java" />
+    </issue>
+    <!-- These host widgets use the platform theme. -->
+    <issue id="AppCompatCustomView">
+        <ignore regexp="nsh-platform-android(-0\.6\.1)?/java/com/longbridge/nsh/(DateTimePickerComponent|InputBox)\.java" />
+    </issue>
+</lint>

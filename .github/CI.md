@@ -1,10 +1,9 @@
 # CI and dependency updates
 
 CI runs on pushes and pull requests targeting `master`, weekly, and manually.
-Rust and JavaScript checks run independently. Android generates the Rust bindings
-and Expo native project, builds an `arm64-v8a` release APK, and lints both the app and
-the local Expo module. Release builds exercise R8; the module's consumer rules keep
-UniFFI and JNA's reflection/JNI bindings intact. Module lint errors fail the build.
+Rust and JavaScript checks run independently. Android builds and lints the
+standalone Native Shell `arm64-v8a` release APK with the preview app ID and test
+signing key.
 JavaScript checks include
 ESLint's recommended JavaScript and TypeScript rules and React's rules of hooks.
 `npm run lint` rejects warnings and unused ESLint disable directives; it also runs
@@ -12,10 +11,8 @@ as part of `npm run check`. Generated and vendored sources are excluded from lin
 The Android job removes the hosted runner's preinstalled Android SDK and unused
 language runtimes before installing the Nix toolchain to leave room for native
 builds. Disk usage is logged before and after cleanup.
-`plugins/withAndroidBuildMemory.cjs` gives Gradle 1 GiB of metaspace so release
-R8 and lint do not exhaust Expo's default 512 MiB limit after native compilation.
-After Android passes, an Apple Silicon macOS runner builds the iOS XCFramework,
-installs CocoaPods dependencies, and compiles an unsigned arm64 release app.
+After Android passes, an Apple Silicon macOS runner compiles an unsigned arm64
+Native Shell iOS app.
 `CI complete` requires every applicable job to succeed and can be used as a
 required status check. Android APK/lint reports and the unsigned iOS app are
 retained for seven days. The unsigned iOS artifact is for compile validation.
@@ -26,7 +23,7 @@ fails the Rust dependency audit.
 
 Like Whip, CI runs CodeQL for JavaScript/TypeScript in a separate job and for
 Java/Kotlin around the Android build. Gradle's build cache is disabled so CodeQL
-observes compilation of the generated Expo project and local native module.
+observes compilation of the Android host.
 Both analyses upload results to GitHub code scanning.
 
 `npm ci` also applies temporary, version-checked security backports in
@@ -40,11 +37,7 @@ to an upstream release that fixes its advisory; installation fails on version
 or source changes so the patches cannot silently stop applying. These local
 backports do not clear Dependabot's version-based alerts.
 
-`plugins/withAndroidDependencyConstraints.cjs` keeps the generated app's Gson
-and Commons IO dependencies above their vulnerable versions. Prebuild applies
-these Gradle constraints repeatedly without editing the ignored native project.
-
-On `master`, the Android build also resolves `:app`'s `releaseRuntimeClasspath`
+On `master`, the Android build also resolves the root project's `releaseRuntimeClasspath`
 and generates a dependency graph containing the app's transitive native runtime
 dependencies. An empty or missing snapshot fails CI. A separate job submits the
 snapshot with `contents: write` without checking out or executing app code; the
@@ -63,34 +56,31 @@ CodeQL, dependency review, and dependency submission are included in the
 Only dependency review outside PRs and dependency submission outside `master`
 may be skipped successfully.
 
-The app version lives in `package.json`. Like Whip, `app.config.js` reads it
-through `scripts/app-version.cjs` so Expo generates both Android and iOS with
-the same version. `npm run check:app-version` validates the resolved Expo
-configuration and rejects version overrides in `app.json`; it runs in CI,
-`npm run check`, and release builds. Use `npm version patch --no-git-tag-version`
+The app version lives in `package.json`. Both hosts read that version during the
+build, and the release workflow validates the Android package and iOS bundle
+metadata against it. Use `npm version patch --no-git-tag-version`
 (or `minor`, `major`, or an explicit version) to update the package and lockfile.
 
 The manual `Build Android APK` workflow follows Whip's release build workflow.
 Run it from Actions with a tag matching `package.json`, for example `v0.1.0`.
-The shared version helper rejects mismatched tags. The workflow generates the
-native Android project, builds a standalone `arm64-v8a` release APK with embedded
-JavaScript, and uploads
+The shared version helper rejects mismatched tags. The workflow builds and signs
+a standalone `arm64-v8a` release APK with GoVue's original application ID and
+uploads
 `govue-arm64.apk` and its SHA-256 checksum as a `govue-arm64-apk` artifact. It also
 creates or updates the GitHub Release for that tag and replaces its APK/checksum
 assets. New tags point to the workflow's selected commit.
 
-After Android succeeds, the workflow generates the Rust XCFramework and iOS
-project on Apple Silicon, installs CocoaPods dependencies outside Nix, and
-compiles an unsigned arm64 release app with embedded JavaScript. The
+After Android succeeds, the workflow compiles an unsigned arm64 iOS release app
+on Apple Silicon. The
 `govue-ios-unsigned-compile-only` artifact contains the app ZIP for compile
 validation; it requires signing before installation on a device. The manual
 workflow retains its artifacts for 14 days, while ordinary CI retains them for
 seven days.
 
-The release APK currently uses Expo's development signing key, matching local
-release builds. Production Android signing is not configured. This workflow
-requires no signing secrets or EAS account, and the iOS app is only uploaded as
-an Actions artifact.
+Configure `GOVUE_ANDROID_KEYSTORE_BASE64`, `GOVUE_ANDROID_STORE_PASSWORD`,
+`GOVUE_ANDROID_KEY_ALIAS`, and `GOVUE_ANDROID_KEY_PASSWORD` as Actions secrets
+before running the release workflow. An in-place upgrade requires the same
+distribution signing key as the installed APK.
 
 Dependabot updates are squash-merged after the entire CI workflow succeeds.
 TypeScript stays within Expo SDK 58's supported `~6.0.3` range; update its

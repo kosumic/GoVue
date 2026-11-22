@@ -46,6 +46,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: native-shell/package-lock.json
 
       - name: Validate release tag against package version
         env:
@@ -54,23 +55,36 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+        with:
+          gradle-version: 9.4.1
 
-      # Enter Nix before generating outputs so path:. does not copy them into
-      # the Nix store. Expo's generated release variant uses the development key.
-      - name: Generate native project and build arm64 release APK
+      - name: Build and sign Native Shell arm64 release APK
+        env:
+          GOVUE_ANDROID_KEYSTORE_BASE64: ${{ secrets.GOVUE_ANDROID_KEYSTORE_BASE64 }}
+          GOVUE_ANDROID_STORE_PASSWORD: ${{ secrets.GOVUE_ANDROID_STORE_PASSWORD }}
+          GOVUE_ANDROID_KEY_ALIAS: ${{ secrets.GOVUE_ANDROID_KEY_ALIAS }}
+          GOVUE_ANDROID_KEY_PASSWORD: ${{ secrets.GOVUE_ANDROID_KEY_PASSWORD }}
         run: |
+          : "${GOVUE_ANDROID_KEYSTORE_BASE64:?Set the signing keystore used for existing GoVue APKs}"
+          export GOVUE_ANDROID_KEYSTORE="$(mktemp "$RUNNER_TEMP/govue-release.XXXXXX")"
+          trap 'rm -f -- "$GOVUE_ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$GOVUE_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$GOVUE_ANDROID_KEYSTORE"
+          unset GOVUE_ANDROID_KEYSTORE_BASE64
           nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
-            npm ci --include=dev
-            npm run check:app-version
-            npm run core:android
-            npx expo prebuild --platform android --no-install
-            android/gradlew -p android :app:assembleRelease \
-              -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon
+            npm --prefix native-shell ci
+            bash native-shell/android/build-release.sh --max-workers=2 --no-daemon
+            apk=native-shell/android/build/outputs/apk/release/GoVueNativeShell-release.apk
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify "$apk"
+            manifest=$("$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk")
+            package=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$manifest")
+            version=$(sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" <<< "$manifest")
+            test "$package" = io.github.kaminarios.govue
+            node scripts/app-version.cjs --actual "Android package version" "$version"
           NIX_SHELL
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk govue-arm64.apk
+          cp native-shell/android/build/outputs/apk/release/GoVueNativeShell-release.apk govue-arm64.apk
           sha256sum govue-arm64.apk > govue-arm64.apk.sha256
 
       - name: Upload APK
@@ -132,36 +146,19 @@ jobs:
         with:
           node-version: 24
           cache: npm
-
-      - name: Generate Rust XCFramework and iOS project
-        id: native
-        run: |
-          test "$(uname -m)" = arm64
-          nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
-            npm ci --include=dev
-            npm run check:app-version
-            npm run prebuild:ios -- --no-install
-            printf "pod=%s\n" "$(command -v pod)" >> "$GITHUB_OUTPUT"
-          NIX_SHELL
-
-      # CocoaPods and Xcode run outside Nix's compiler/SDK environment.
-      - name: Install native dependencies
-        env:
-          POD_COMMAND: ${{ steps.native.outputs.pod }}
-        run: |
-          "$POD_COMMAND" install --project-directory=ios
+          cache-dependency-path: native-shell/package-lock.json
 
       - name: Compile and validate unsigned iOS device app
         run: |
-          xcodebuild -quiet \
-            -workspace ios/GoVue.xcworkspace -scheme GoVue \
-            -configuration Release -sdk iphoneos -destination generic/platform=iOS \
-            -derivedDataPath "$RUNNER_TEMP/GoVueDerivedData" \
-            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES FORCE_BUNDLING=1 \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-            AD_HOC_CODE_SIGNING_ALLOWED=NO build
-          app_path="$RUNNER_TEMP/GoVueDerivedData/Build/Products/Release-iphoneos/GoVue.app"
-          test -s "$app_path/main.jsbundle"
+          test "$(uname -m)" = arm64
+          nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
+            npm --prefix native-shell ci
+            bash native-shell/ios/build-release.sh device
+          NIX_SHELL
+          app_path="native-shell/ios/build/iphoneos/GoVue.app"
+          test "$(plutil -extract CFBundleIdentifier raw "$app_path/Info.plist")" = io.github.kaminarios.govue
+          node scripts/app-version.cjs --actual "iOS bundle version" \
+            "$(plutil -extract CFBundleShortVersionString raw "$app_path/Info.plist")"
           test "$(lipo -archs "$app_path/GoVue")" = arm64
           ditto -c -k --sequesterRsrc --keepParent \
             "$app_path" "$RUNNER_TEMP/govue-ios-unsigned-compile-only.app.zip"

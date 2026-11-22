@@ -1,9 +1,16 @@
 package com.longbridge.nsh;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.os.Build;
 import android.os.Bundle;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
+
+import androidx.annotation.OptIn;
+import androidx.media3.common.util.UnstableApi;
 
 import io.github.kaminarios.govue.shell.AiTransport;
 import io.github.kaminarios.govue.shell.BrowserLaunches;
@@ -31,8 +38,10 @@ public final class GoVueActivity extends Activity {
     private final PlayerPip pip = new PlayerPip();
     private NshView view;
     private ChatSpeech speech;
+    private OnBackInvokedCallback backCallback;
 
     @Override
+    @OptIn(markerClass = UnstableApi.class)
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         DevActivity.edgeToEdge(this);
@@ -62,6 +71,13 @@ public final class GoVueActivity extends Activity {
         PlayerRuntime.register(view);
         TokenRuntime.register(view);
         setContentView(view);
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = () -> {
+                if (!view.handleBack() && !moveTaskToBack(false)) finishAfterTransition();
+            };
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+        }
         if (state == null) receive(getIntent());
         view.runRustApp("nsh");
     }
@@ -115,6 +131,7 @@ public final class GoVueActivity extends Activity {
     }
 
     @Override
+    @SuppressLint("GestureBackNavigation")
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
         if (!view.handleBack()) super.onBackPressed();
@@ -122,6 +139,9 @@ public final class GoVueActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+        }
         view.destroy();
         super.onDestroy();
     }

@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/kosumic/GoVue/actions/workflows/ci.yml"><img src="https://github.com/kosumic/GoVue/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License: GPL version 3"></a>
-  <a href="https://expo.dev"><img src="https://img.shields.io/badge/React%20Native%20%2B%20Expo-000020?logo=expo&amp;logoColor=white" alt="Built with React Native and Expo"></a>
+  <a href="https://github.com/longbridge/nsh"><img src="https://img.shields.io/badge/Native%20Shell-000020" alt="Built with Native Shell"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.99.0-000000?logo=rust&amp;logoColor=white" alt="Built with Rust 1.99.0"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-24.15.0%2B-339933?logo=node.js&amp;logoColor=white" alt="Node.js 24.15.0 or newer"></a>
   <a href="https://x.com/Kosumi1989"><img src="https://img.shields.io/badge/Follow-%40Kosumi1989-000000?logo=x&amp;logoColor=white" alt="Follow @Kosumi1989 on X"></a>
@@ -48,7 +48,7 @@ progress. See [project status](#project-status) for verified behavior and open w
 - [How it works](#how-it-works)
   - [Data and connections](#data-and-connections)
 - [Architecture](#architecture)
-  - [React Native Frontend](#react-native-frontend)
+  - [Native Shell Frontend](#native-shell-frontend)
   - [GoVue Rust Core](#govue-rust-core)
 - [Development](#development)
   - [Android](#android)
@@ -247,50 +247,37 @@ separate, revocable listener on the current private Wi-Fi address; see the
 
 ## Architecture
 
-GoVue shares its React Native presentation and Rust core between Android and
-iOS. React Native owns presentation and browser integration; Rust owns
-application logic, validation, state, and persistence. Kotlin and Swift adapt
-platform APIs through the [local Expo module](modules/govue-core/).
+GoVue shares its Native Shell presentation and Rust core between Android and
+iOS. The platform hosts adapt WebView, native playback, and OS services.
 
-### React Native Frontend
+### Native Shell Frontend
 
 ```mermaid
 flowchart TB
-  subgraph Frontend["React Native / TypeScript · shared presentation"]
-    Screens["Browser · reader · vocabulary · chat<br/>player controls · queue · settings · downloads"]
-    Browser["YouTube WebView + page bridges<br/>browsing · comments · account pages"]
-    Video["Expo Video<br/>playback · background audio · PiP"]
-    Runtimes["Isolated renderers<br/>token challenges · signature evaluation"]
-    Adapters["Thin TypeScript adapters<br/>semantic requests · validated core replies"]
-    Screens --> Browser
-    Screens --> Video
-    Screens <--> Adapters
-    Adapters <--> Runtimes
-  end
-  Module["GoVueCore Expo module<br/>Kotlin / Swift · generated UniFFI bindings"]
-  Core["GoVue Rust core<br/>logic · state · validation · persistence"]
-  Adapters <--> Module
-  Module <--> Core
-  Video -->|"opaque loopback media routes"| Core
-  classDef react fill:#e9f1ff,stroke:#3772c5,color:#172033
-  classDef native fill:#e9f7f5,stroke:#23847a,color:#172033
-  classDef rust fill:#fff0e7,stroke:#c45f24,color:#172033
-  class Screens,Browser,Video,Runtimes,Adapters react
-  class Module native
-  class Core rust
+  Screens["Native Shell · shared Rust UI<br/>browser · player controls · transcript · Chat · settings"]
+  Browser["Android WebView / WKWebView<br/>YouTube pages and injected bridges"]
+  Player["Media3 / AVPlayer<br/>video · background audio · PiP"]
+  Runtimes["Isolated renderers<br/>token challenges · signature evaluation"]
+  Runtime["GoVue Native Shell runtime<br/>browser, playback, and app state adapters"]
+  Core["GoVue Rust core<br/>logic · validation · persistence"]
+  Screens --> Browser
+  Screens --> Player
+  Screens <--> Runtime
+  Runtime <--> Runtimes
+  Runtime <--> Core
+  Player -->|"opaque loopback media routes"| Core
 ```
 
-[App.tsx](App.tsx) and [src/](src/) render the shared browser, player controls,
-reader, vocabulary, chat, settings, and download screens. The
-[YouTube bridges](src/youtube/) coordinate the page and web player, while
-[isolated runtimes](src/media/) execute token challenges and signature code in
-separate renderers. Expo Video owns playback, background audio, and PiP.
+The [shared app](native-shell/app/) renders GoVue's screens. The
+[YouTube bridges](src/youtube/) coordinate the page and player. Separate
+isolated renderers run token challenges and signature code. Media3 and AVPlayer
+provide playback, background audio, and PiP.
 
 ### GoVue Rust Core
 
 ```mermaid
 flowchart TB
-  Boundary["GoVueCore / UniFFI JSON boundary<br/>execute · ai · dictation"]
+  Boundary["GoVue shared Rust request boundary<br/>execute · ai · dictation"]
   subgraph Rust["govue-core · shared Rust library"]
     Dispatch["Request validation and dispatch"]
     Player["Browser and player state<br/>settings · queue/history · navigation · SponsorBlock"]
@@ -331,121 +318,59 @@ remain in memory; local playback receives scoped routes from Rust's media server
 
 ## Development
 
-GoVue uses React Native 0.88 and Expo SDK 58 with custom native builds. The
-[Nix flake](flake.nix) supplies Node.js 24, **Rust 1.99.0**, and the platform
-dependencies. Rust is pinned in [rust-toolchain.toml](rust-toolchain.toml);
-Node.js 24.15 or newer is required for the TypeScript build scripts. Enter the
-development shell before installing dependencies.
+The [Nix flake](flake.nix) supplies Node.js 24, the pinned
+[Rust toolchain](rust-toolchain.toml), and platform build tools. Standalone
+builds use the dependency lockfile in [native-shell](native-shell/).
+Node bundles the scripts loaded in the YouTube and token WebViews.
 
 ### Android
 
-On Linux, the shell includes JDK 17, Android SDK Platforms 36/37, NDK, and CMake.
-Connect an ARM64 device with USB debugging enabled:
+Use Linux, Gradle 9.4.1, and an ARM64 device with USB debugging enabled.
 
 ```sh
 nix develop path:.
-npm ci
-npm run android
+npm --prefix native-shell ci
+GOVUE_PREVIEW=1 bash native-shell/android/build-release.sh
+adb install -r native-shell/android/build/outputs/apk/release/GoVueNativeShell-release.apk
 ```
 
-Gradle builds the Rust library and bindings automatically. The Nix shell limits
-Android builds to `arm64-v8a`.
-
-For Metro over USB, run these inside the development shell:
-
-```sh
-adb reverse tcp:8081 tcp:8081
-npm start
-```
-
-If the development client needs to be opened manually, use another terminal:
-
-```sh
-adb shell am start -a android.intent.action.VIEW \
-  -d 'govue://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081' \
-  io.github.kaminarios.govue
-```
-
-To build and install a standalone APK from the repository root, inside the shell:
-
-```sh
-npm run core:android
-npx expo prebuild --platform android --no-install
-NODE_ENV=production android/gradlew -p android :app:assembleRelease \
-  -PreactNativeArchitectures=arm64-v8a
-adb install -r android/app/build/outputs/apk/release/app-release.apk
-```
-
-This bundles JavaScript and runs without Metro. The generated release variant
-currently uses the development signing key; production signing is not configured.
+The preview builds under a separate app ID so it can coexist with an installed
+GoVue. For a distribution APK, run the build with the original signing key.
+The [standalone build guide](native-shell/README.md) lists the signing
+environment variables.
 
 ### iOS
 
-Use an Apple Silicon Mac with Xcode, after verifying shared changes on Android:
+Use an Apple Silicon Mac with Xcode and verify shared changes on Android first.
 
 ```sh
 nix develop path:.
-npm ci
-npm run ios
+npm --prefix native-shell ci
+GOVUE_PREVIEW=1 bash native-shell/ios/build-release.sh simulator
+xcrun simctl install booted native-shell/ios/build/iphonesimulator/GoVue.app
 ```
 
-`npm run ios` builds the Rust device and simulator libraries, generates the
-XCFramework and Swift bindings, then runs Expo. Use `npm run prebuild:ios` to
-generate the native project without launching it. Keep Nix's host SDK/compiler
-overrides out of Xcode builds; the Darwin shell and Rust build script select
-Xcode's tools for Apple targets.
+Use the `device` build target to assemble the unsigned device app. Device
+installations require signing and provisioning for GoVue's original app ID.
 
 ### Generated files
 
-`npm ci` applies the local native patches and bundles the injected browser code.
-After changing `src/youtube/pageBridge.js`, the LiTube browser scripts, or decoder
-and token sources under `scripts/`, regenerate the bundles:
+The release scripts regenerate the injected browser code. To rebuild just
+that code after editing the page bridges or token runtime, run
+`npm --prefix native-shell run page:build`. The native Android and iOS hosts
+are tracked under [native-shell](native-shell/).
 
-```sh
-npm run page:build
-```
-
-Root `android/` and `ios/` projects, generated bindings, compiled Rust libraries,
-and browser bundles are ignored. Keep persistent native configuration in
-[app.json](app.json) or [config plugins](plugins/), and native adapter sources in
-[modules/govue-core](modules/govue-core/). Regenerate bindings with
-`npm run core:android` or `npm run core:ios`.
-
-The app version comes from `package.json` through [app.config.js](app.config.js),
-including Android, iOS, About, and diagnostics. Bump it with
-`npm version patch --no-git-tag-version` (or `minor`, `major`, or an explicit
-version). Release tags must match that version; `npm run check:app-version`
-checks the Expo configuration.
-
-Android and iOS build `expo-video` from source to include `scripts/patch-video.ts`;
-keep its postinstall patch and autolinking override together.
-Android also builds `expo-camera` from source for provider QR scanning. The QR
-config plugin adds Play Store package visibility and preserves ML Kit's reflected
-scanner class in release builds.
-`fingerprint.config.cjs` includes native package sources in fingerprints so local
-patches remain part of native compatibility checks under SDK 58.
-
-Android release builds enable R8 shrinking; the Rust module's consumer rules
-preserve the generated UniFFI/JNA bindings that are accessed through reflection.
-After an SDK upgrade, regenerate
-the ignored native projects with a clean Expo prebuild. On iOS, run
-`npm run prebuild:ios -- --clean` so the Rust XCFramework is available first.
+The app version comes from `package.json`. Bump it with
+`npm version patch --no-git-tag-version` or pass the desired version.
+The release workflow compares the tag and each packaged version.
 
 ### Validation
 
-Get behavior working on a live Android device, then run inside the shell:
-
-```sh
-npm run check
-npx expo install --check
-```
-
-These cover JavaScript/TypeScript lint, type checking, injected browser behavior,
-Rust formatting, Clippy, and Rust boundary/cache tests. CI also audits Rust
-dependencies, runs CodeQL and PR dependency review, submits the native dependency
-graph, builds and lints an ARM64 Android APK, then compiles an unsigned ARM64 iOS
-app. See [CI documentation](.github/CI.md). Fixture and compile checks complement
-live device verification.
+Verify behavior on a live Android device, then run `npm run check` in the Nix
+shell with the root development dependencies installed. This also checks the
+previous frontend during migration. CI builds and lints the Native Shell
+Android APK and compiles the unsigned iOS device app.
+See the [CI documentation](.github/CI.md).
 
 ## Project status
 

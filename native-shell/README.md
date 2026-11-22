@@ -6,10 +6,10 @@ gestures, and feature behavior. Preserve the YouTube launch screen, Chat in
 the bottom navigation and video player, and the existing player controls
 for subtitles and the transcript reader.
 
-Build the standalone Android app with GoVue's Nix Android toolchain, Gradle
-9.4.1, and the Native Shell v0.6.1 sources at `../nsh`. Set `NSH_SOURCE`
-for a different checkout location and `GRADLE` for a different Gradle
-executable. Install the standalone page-bundler dependencies before building.
+Build the standalone Android app with GoVue's Nix Android toolchain and Gradle
+9.4.1. Cargo supplies the Android host Java sources from the locked Native Shell
+package. Set `NSH_SOURCE` to build against a compatible local checkout, or
+`GRADLE` to use a specific Gradle executable.
 
 ```sh
 npm --prefix native-shell ci
@@ -17,14 +17,19 @@ nix develop path:. --command bash native-shell/android/build-release.sh
 ```
 
 The ARM64 release APK is in `native-shell/android/build/outputs/apk/release`.
-During migration its application ID is `io.github.kaminarios.govue.nsh`.
+The default application ID is `io.github.kaminarios.govue`. Supply the original
+Android distribution signing key through `GOVUE_ANDROID_KEYSTORE`,
+`GOVUE_ANDROID_STORE_PASSWORD`, `GOVUE_ANDROID_KEY_ALIAS`, and
+`GOVUE_ANDROID_KEY_PASSWORD` for an in-place upgrade. A build without a key
+produces an unsigned APK. Set `GOVUE_PREVIEW=1` for a debug-signed release APK
+with the separate `io.github.kaminarios.govue.nsh` identity.
 
 On Apple Silicon with Xcode, build the iPhone or iPad simulator release with
 the same standalone page-bundler dependencies.
 
 ```sh
 npm --prefix native-shell ci
-bash native-shell/ios/build-release.sh simulator
+GOVUE_PREVIEW=1 bash native-shell/ios/build-release.sh simulator
 ```
 
 The simulator bundle is at
@@ -34,10 +39,13 @@ WKWebView supplies the watch-page layout, and Native Shell's AVPlayer plays the
 HLS source planned by GoVue's Rust core.
 `Core::ios()` resolves the original `Application Support/LingoPlay/transcripts`
 directory within the app sandbox.
+Use `bash native-shell/ios/build-release.sh device` for the unsigned device
+bundle under `native-shell/ios/build/iphoneos/GoVue.app`. Sign it with the
+existing GoVue team and provisioning profile for device upgrades.
 
 On Android, construct `Core::android()` in the Native Shell app root. It uses
-GoVue’s existing app-private `files/transcripts` directory. Reuse the app ID and
-signing identity in the eventual upgrade so Android retains that sandbox.
+GoVue’s existing app-private `files/transcripts` directory. Android retains that
+sandbox when the APK uses the existing app ID and signing key.
 `Core::execute` and `Core::ai` run on Native Shell workers. Subscribe before
 starting an operation that publishes updates, then reload the affected state
 from Rust when its channel changes.

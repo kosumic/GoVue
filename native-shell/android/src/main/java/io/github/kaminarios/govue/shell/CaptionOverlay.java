@@ -3,6 +3,7 @@ package io.github.kaminarios.govue.shell;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.text.LineBreaker;
 import android.text.Layout;
 import android.text.StaticLayout;
 import android.util.TypedValue;
@@ -47,7 +48,7 @@ public final class CaptionOverlay extends ViewGroup implements NshComponent {
         density = getResources().getDisplayMetrics().density;
         cue = new TextView(getContext());
         cue.setGravity(Gravity.CENTER_HORIZONTAL);
-        cue.setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE);
+        cue.setBreakStrategy(LineBreaker.BREAK_STRATEGY_SIMPLE);
         cue.setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE);
         cue.setMaxLines(2);
         cue.setVisibility(View.GONE);
@@ -148,7 +149,7 @@ public final class CaptionOverlay extends ViewGroup implements NshComponent {
         if (measurement.equals(lastMeasurement)) return;
         lastMeasurement = measurement;
         StaticLayout layout = StaticLayout.Builder.obtain(source, 0, source.length(), cue.getPaint(), width)
-                .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+                .setBreakStrategy(LineBreaker.BREAK_STRATEGY_SIMPLE)
                 .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
                 .build();
         int count = layout.getLineCount();

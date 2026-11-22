@@ -151,12 +151,14 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: native-shell/package-lock.json
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
+          gradle-version: 9.4.1
           dependency-graph: ${{ github.ref == 'refs/heads/master' && 'generate-and-upload' || 'disabled' }}
-          dependency-graph-include-projects: '^:app$'
+          dependency-graph-include-projects: '^:$'
           dependency-graph-include-configurations: '^releaseRuntimeClasspath$'
           dependency-graph-continue-on-failure: false
           artifact-retention-days: 1
@@ -169,16 +171,14 @@ jobs:
 
       # Enter Nix before installing packages or generating build outputs so
       # path:. does not copy node_modules/ or target/ into the Nix store.
-      - name: Generate native project, build arm64 APK, and lint
+      - name: Build and lint Native Shell arm64 APK
         id: android-build
         run: |
           nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
-            npm ci --include=dev
-            npm run core:android
-            npx expo prebuild --platform android --no-install
-            android/gradlew -p android :app:assembleRelease :app:lintRelease :govue-core:lintRelease \
-              :app:dependencies --configuration releaseRuntimeClasspath \
-              -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-build-cache --no-daemon
+            npm --prefix native-shell ci
+            GOVUE_PREVIEW=1 bash native-shell/android/build-release.sh lintRelease \
+              dependencies --configuration releaseRuntimeClasspath \
+              --max-workers=2 --no-build-cache --no-daemon
           NIX_SHELL
 
       - name: Verify release dependency snapshot
@@ -200,9 +200,8 @@ jobs:
         with:
           name: govue-android-checks
           path: |
-            android/app/build/outputs/apk/release/app-release.apk
-            android/app/build/reports/lint-results-release.*
-            modules/govue-core/android/build/reports/lint-results-release.*
+            native-shell/android/build/outputs/apk/release/GoVueNativeShell-release.apk
+            native-shell/android/build/reports/lint-results-release.*
           retention-days: 7
 
   dependency-submission:
@@ -242,37 +241,20 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: native-shell/package-lock.json
 
       - name: Check iOS HTTP byte adapters
         run: npm run test:ios-http
 
-      - name: Generate Rust XCFramework and iOS project
-        id: native
+      - name: Compile unsigned arm64 iOS app
         run: |
           test "$(uname -m)" = arm64
           nix develop path:. --command bash -euo pipefail <<'NIX_SHELL'
-            npm ci --include=dev
-            npm run prebuild:ios -- --no-install
-            printf "pod=%s\n" "$(command -v pod)" >> "$GITHUB_OUTPUT"
+            npm --prefix native-shell ci
+            bash native-shell/ios/build-release.sh device
           NIX_SHELL
-
-      # CocoaPods and Xcode run outside Nix's compiler/SDK environment.
-      - name: Install native dependencies
-        env:
-          POD_COMMAND: ${{ steps.native.outputs.pod }}
-        run: |
-          "$POD_COMMAND" install --project-directory=ios
-
-      - name: Compile unsigned arm64 iOS app
-        run: |
-          xcodebuild -quiet \
-            -workspace ios/GoVue.xcworkspace -scheme GoVue \
-            -configuration Release -sdk iphoneos -destination generic/platform=iOS \
-            -derivedDataPath "$RUNNER_TEMP/GoVueDerivedData" \
-            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
-          app_path="$RUNNER_TEMP/GoVueDerivedData/Build/Products/Release-iphoneos/GoVue.app"
-          test -s "$app_path/main.jsbundle"
+          app_path="native-shell/ios/build/iphoneos/GoVue.app"
+          test "$(plutil -extract CFBundleIdentifier raw "$app_path/Info.plist")" = io.github.kaminarios.govue
           test "$(lipo -archs "$app_path/GoVue")" = arm64
           ditto -c -k --sequesterRsrc --keepParent \
             "$app_path" "$RUNNER_TEMP/GoVue-unsigned.app.zip"

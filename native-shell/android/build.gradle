@@ -2,24 +2,29 @@ plugins {
     id "com.android.application" version "9.2.1"
 }
 
-def source = providers.environmentVariable("NSH_SOURCE")
-        .orElse(rootProject.layout.projectDirectory.dir("../../../nsh").asFile.absolutePath)
-def nshJava = file("${source.get()}/crates/nsh-platform-android/java")
+def source = providers.environmentVariable("GOVUE_NSH_ANDROID_JAVA")
+        .orElse(providers.environmentVariable("NSH_SOURCE").map { "${it}/crates/nsh-platform-android/java" })
+        .orElse(rootProject.layout.projectDirectory.dir("../../../nsh/crates/nsh-platform-android/java").asFile.absolutePath)
+def nshJava = file(source.get())
 if (!new File(nshJava, "com/longbridge/nsh/NshView.java").isFile()) {
-    throw new GradleException("Set NSH_SOURCE to the Native Shell v0.6.1 source checkout.")
+    throw new GradleException("Run native-shell/android/build-release.sh to locate the locked Native Shell Android host.")
 }
 
 def govue = rootProject.layout.projectDirectory.dir("../..")
 def nativeInputs = layout.buildDirectory.dir("govue").get()
 def version = new groovy.json.JsonSlurper().parse(govue.file("package.json").asFile).version
 def parts = version.tokenize(".").collect { it.toInteger() }
+def preview = providers.environmentVariable("GOVUE_PREVIEW").orNull == "1"
+def keyStore = providers.environmentVariable("GOVUE_ANDROID_KEYSTORE").orNull
+def credentials = ["GOVUE_ANDROID_STORE_PASSWORD", "GOVUE_ANDROID_KEY_ALIAS", "GOVUE_ANDROID_KEY_PASSWORD"]
+        .collectEntries { [it, providers.environmentVariable(it).orNull] }
 
 android {
     namespace "io.github.kaminarios.govue.shell"
     compileSdk 37
 
     defaultConfig {
-        applicationId "io.github.kaminarios.govue.nsh"
+        applicationId = preview ? "io.github.kaminarios.govue.nsh" : "io.github.kaminarios.govue"
         minSdk 26
         targetSdk 36
         versionCode parts[0] * 1000000 + parts[1] * 1000 + parts[2]
@@ -32,6 +37,10 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
+    lint {
+        lintConfig file("lint.xml")
+    }
+
     sourceSets.main {
         java.srcDir nshJava
         java.srcDir "../../modules/govue-core/android/src/shared/java"
@@ -41,10 +50,27 @@ android {
     }
     sourceSets.main.kotlin.srcDir "../../modules/govue-core/android/src/shared/kotlin"
 
+    signingConfigs {
+        if (!preview && keyStore) {
+            if (credentials.values().any { !it }) {
+                throw new GradleException("Provide the GoVue release keystore passwords and key alias.")
+            }
+            distribution {
+                storeFile file(keyStore)
+                storePassword credentials.GOVUE_ANDROID_STORE_PASSWORD
+                keyAlias credentials.GOVUE_ANDROID_KEY_ALIAS
+                keyPassword credentials.GOVUE_ANDROID_KEY_PASSWORD
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // The development app has a separate application ID.
-            signingConfig signingConfigs.debug
+            if (preview) {
+                signingConfig signingConfigs.debug
+            } else if (keyStore) {
+                signingConfig signingConfigs.distribution
+            }
         }
     }
 }

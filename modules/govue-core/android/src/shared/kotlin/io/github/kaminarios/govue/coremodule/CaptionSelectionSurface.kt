@@ -1,5 +1,6 @@
 package io.github.kaminarios.govue.coremodule
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Canvas
@@ -30,6 +31,7 @@ class CaptionSelectionSurface(
   private var applying = false
   private var reportedHeight = 0f
   private val scrollListener = ViewTreeObserver.OnScrollChangedListener { positionHandles() }
+  @SuppressLint("AppCompatCustomView")
   private val text = object : EditText(context) {
     override fun onSelectionChanged(start: Int, end: Int) {
       super.onSelectionChanged(start, end)

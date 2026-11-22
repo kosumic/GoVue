@@ -91,10 +91,15 @@ use player_view::PlayerControls;
 use player_window::PlayerWindow;
 use settings_view::{Preferences, SettingsView};
 
+const APP_ID: &str = match option_env!("GOVUE_APP_ID") {
+    Some(id) => id,
+    None => "io.github.kaminarios.govue",
+};
+
 #[cfg(target_os = "android")]
 ::nsh::ui_sets!(vec![nsh_base::registry()]);
 #[cfg(target_os = "android")]
-::nsh::main!(nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"));
+::nsh::main!(nsh_core::element::Root::of::<GoVue>().app_id(APP_ID));
 
 #[cfg(target_os = "ios")]
 pub fn run_ios() {
@@ -113,7 +118,7 @@ pub fn run_ios() {
         player_window_ios::register(components);
         pip_ios::register(components);
     });
-    ios_host::run(nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"));
+    ios_host::run(nsh_core::element::Root::of::<GoVue>().app_id(APP_ID));
 }
 
 #[component]
