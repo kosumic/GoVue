@@ -102,24 +102,29 @@ impl Core {
         govue_core::register_caption_page(adapter, video, &self.storage).map_err(CoreError::Request)
     }
 
-    pub async fn execute<T: DeserializeOwned>(&self, request: Value) -> Result<T, CoreError> {
+    pub async fn execute<T: DeserializeOwned + Send + 'static>(
+        &self,
+        request: Value,
+    ) -> Result<T, CoreError> {
         self.run(request, govue_core::execute).await
     }
 
-    pub async fn ai<T: DeserializeOwned>(&self, request: Value) -> Result<T, CoreError> {
+    pub async fn ai<T: DeserializeOwned + Send + 'static>(
+        &self,
+        request: Value,
+    ) -> Result<T, CoreError> {
         self.run(request, govue_core::ai_execute).await
     }
 
-    async fn run<T: DeserializeOwned>(
+    async fn run<T: DeserializeOwned + Send + 'static>(
         &self,
         request: Value,
         execute: fn(String, String) -> String,
     ) -> Result<T, CoreError> {
         let storage = self.storage.clone();
-        let response = blocking(move || execute(request.to_string(), storage))
+        blocking(move || decode(&execute(request.to_string(), storage)))
             .await
-            .map_err(|_| CoreError::WorkerStopped)?;
-        decode(&response)
+            .map_err(|_| CoreError::WorkerStopped)?
     }
 }
 

@@ -93,6 +93,11 @@ pub use extraction::{
     register_caption_page,
 };
 
+/// Releases an opaque loopback route after a native player retires its source.
+pub fn release_playback_route(uri: &str) {
+    let _ = transport::release(&json!({"uri": uri}));
+}
+
 /// Notifications carry no application data. Consumers fetch the current Rust snapshot.
 #[uniffi::export(callback_interface)]
 pub trait CoreEvents: Send + Sync {

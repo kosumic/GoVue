@@ -36,6 +36,21 @@ player surface. Use `player_caption_frame` for the displayed cue and
 event into the next `player_caption_frame` request so the Rust player can page
 long cues at the correct time.
 
+The Android video surface uses Media3 `media3-exoplayer`,
+`media3-exoplayer-dash`, and `media3-exoplayer-hls` 1.9.1. Register
+`io.github.kaminarios.govue.shell.VideoPlayer` with `NshView`. Set
+`android:networkSecurityConfig="@xml/govue_network_security"` in the app
+manifest so the Rust media proxy can use loopback HTTP.
+
+Keep the Rust `VideoPlayer` view mounted over the page player bounds. Pass
+watch-tab messages through `PageVideoLayout::receive` and feed their scaled
+frame to `VideoPlayer::embedded_view`. That view follows page movement and
+visibility changes. Prepare a source with
+`PlaybackSource::prepare_android` and send playback commands with the
+generation returned by `VideoPlayer::replace`. Use status positions for
+captions and player controls. The player releases its previous loopback
+routes after the native replacement is applied.
+
 Register `io.github.kaminarios.govue.shell.PlayerRuntime` with the Android
 `NshView` before calling `runRustApp`. Construct the Rust `PlayerRuntime` in the
 player component and mount its hidden `view()`. Pass the pending media request
