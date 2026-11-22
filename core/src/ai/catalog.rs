@@ -387,6 +387,7 @@ pub(super) fn operation(op: &str) -> bool {
             | "ai_remove_group"
             | "ai_reorder"
             | "ai_export"
+            | "ai_export_file"
             | "ai_import"
             | "ai_provider_qr"
             | "ai_preview_provider_qr"
@@ -418,10 +419,12 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
             return Ok(super::sharing::preview(&p));
         }
         "ai_import_provider_qr" => super::sharing::import(&c, &mut cfg)?,
-        "ai_export" => {
-            return Ok(
-                json!({"format":"lingoplay.ai","version":1,"providers":cfg.providers,"groups":cfg.groups,"activeId":cfg.active_id}),
-            );
+        "ai_export" | "ai_export_file" => {
+            let export = json!({"format":"lingoplay.ai","version":1,"providers":cfg.providers,"groups":cfg.groups,"activeId":cfg.active_id});
+            if op == "ai_export_file" {
+                return crate::downloads::runner::export_json("govue-providers.json", &export);
+            }
+            return Ok(export);
         }
         "ai_import" => {
             let value = &c["data"];

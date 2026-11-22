@@ -56,7 +56,7 @@ public final class GoVueActivity extends Activity {
         PlayerRuntime.register(view);
         TokenRuntime.register(view);
         setContentView(view);
-        if (state == null) launches.receive(getIntent());
+        if (state == null) receive(getIntent());
         view.runRustApp("nsh");
     }
 
@@ -64,7 +64,16 @@ public final class GoVueActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        launches.receive(intent);
+        receive(intent);
+    }
+
+    private void receive(Intent intent) {
+        String scheme = intent == null ? null : intent.getScheme();
+        if ("govue".equals(scheme) || "lingoplay".equals(scheme)) {
+            view.handleUrlSchemeIntent(intent);
+        } else {
+            launches.receive(intent);
+        }
     }
 
     @Override

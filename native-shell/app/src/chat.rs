@@ -320,38 +320,6 @@ impl Chat {
         Ok(config)
     }
 
-    pub async fn refresh_models(&self, provider: &str) -> Result<(), CoreError> {
-        let started: Value = self
-            .core
-            .ai(json!({"op":"ai_start","kind":"models","id":provider}))
-            .await?;
-        let task = started["taskId"]
-            .as_str()
-            .ok_or_else(|| CoreError::Request("Could not start model discovery.".into()))?;
-        let result = self.wait_for_provider(task).await;
-        let _ = self
-            .core
-            .ai::<Value>(json!({"op":"ai_forget","taskId":task}))
-            .await;
-        result?;
-        self.update_config(json!({"op":"ai_config"})).await?;
-        Ok(())
-    }
-
-    async fn wait_for_provider(&self, task: &str) -> Result<(), CoreError> {
-        loop {
-            let state: Value = self.core.ai(json!({"op":"ai_poll","taskId":task})).await?;
-            if state["status"] != "running" {
-                return if let Some(error) = state["error"].as_str() {
-                    Err(CoreError::Request(error.into()))
-                } else {
-                    Ok(())
-                };
-            }
-            timer(Duration::from_millis(250)).await;
-        }
-    }
-
     pub fn matches(&self) -> Option<Rc<Matches>> {
         self.matches.get()
     }

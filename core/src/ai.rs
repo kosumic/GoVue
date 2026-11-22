@@ -8,6 +8,10 @@ mod catalog;
 mod chat_sessions;
 mod client;
 mod commands;
+
+pub(crate) fn foreground(active: bool) {
+    commands::FOREGROUND.store(active, std::sync::atomic::Ordering::Relaxed);
+}
 mod connections;
 mod conversations;
 mod credentials;

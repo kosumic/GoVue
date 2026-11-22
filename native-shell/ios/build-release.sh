@@ -68,6 +68,13 @@ cat > "$bundle/Info.plist" <<EOF
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleSupportedPlatforms</key><array><string>$platform</string></array>
     <key>CFBundleVersion</key><string>$version</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>$app_id</string>
+            <key>CFBundleURLSchemes</key><array><string>govue</string><string>lingoplay</string></array>
+        </dict>
+    </array>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>16.0</string>
     <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>

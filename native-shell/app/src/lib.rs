@@ -49,6 +49,7 @@ mod player_window;
 #[cfg(target_os = "ios")]
 mod player_window_ios;
 mod provider_group;
+mod provider_jobs;
 mod provider_model;
 mod provider_view;
 mod queue;
@@ -123,6 +124,14 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let settings = preferences.state;
     let settings_screen = signal(None);
     let chat = Chat::new(core.clone());
+    effect({
+        let core = core.clone();
+        move || {
+            let _ = core.state::<Value>(serde_json::json!({
+                "op":"ai_foreground","active":lifecycle() == Lifecycle::Active,
+            }));
+        }
+    });
     let queue = queue::Queue::new(core.clone(), watch.clone());
     let browser = Browser::new(
         core.clone(),

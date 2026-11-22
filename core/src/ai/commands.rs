@@ -62,7 +62,7 @@ pub(super) fn dispatch(c: Value, root: PathBuf) -> Result<Value> {
         | "ai_game_audio"
         | "ai_usage" => conversations::dispatch(c, root),
         "ai_foreground" => {
-            FOREGROUND.store(c["active"] == true, Ordering::Relaxed);
+            super::foreground(c["active"] == true);
             Ok(Value::Null)
         }
         "ai_config" => {

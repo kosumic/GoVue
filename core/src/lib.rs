@@ -65,6 +65,9 @@ pub fn state_execute(request: String) -> String {
             .and_then(|command: Value| {
                 if command["op"] == "chat_notification_visibility" {
                     ai::chat_notification_visibility(&command)
+                } else if command["op"] == "ai_foreground" {
+                    ai::foreground(command["active"] == true);
+                    Ok(Value::Null)
                 } else if command["op"] == "chat_notification_foreground" {
                     ai::chat_notification_foreground(command["active"] == true);
                     Ok(Value::Null)
