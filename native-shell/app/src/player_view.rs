@@ -1,11 +1,13 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use govue_shell_runtime::{TranscriptReader, WatchPlayback, WatchSubtitles};
+use govue_shell_runtime::{PlaybackEvent, TranscriptReader, WatchPlayback, WatchSubtitles};
 use nsh_core::{PointerEvents, PressEvent, prelude::*};
 use serde_json::{Value, json};
 
 use crate::chat::Chat;
+use crate::queue::Queue;
+use crate::queue_view::queue_sheet;
 use crate::reader_view::timestamp;
 use crate::ui::{self, Palette, press};
 
@@ -17,8 +19,20 @@ const SPARKLES: &str =
 const PAUSE: &str = "M8 4h2v16H8zM15 4h2v16h-2z";
 const BACK: &str = "m12 19-7-7 7-7M5 12h14";
 const CHECK: &str = "m4 12 5 5L20 6";
+const PREVIOUS: &str = "M19 20 9 12l10-8zM5 4v16";
+const NEXT: &str = "m5 4 10 8-10 8zM19 4v16";
+const SETTINGS: &str = "M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8zM9 3h6l1 3 3-1 2 4-2 3 2 3-2 4-3-1-1 3H9l-1-3-3 1-2-4 2-3-2-3 2-4 3 1z";
+const QUEUE: &str = "M3 6h18M3 12h18M3 18h10m4-2 4 2-4 2z";
 
 type WriteSetting = Rc<dyn Fn(Value)>;
+type OpenVideo = Rc<dyn Fn(String)>;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Menu {
+    Subtitles,
+    More,
+    Queue,
+}
 
 #[derive(Clone)]
 pub struct PlayerControls {
@@ -27,10 +41,12 @@ pub struct PlayerControls {
     reader: TranscriptReader,
     chat: Chat,
     palette: Palette,
+    queue: Queue,
     settings: WriteSetting,
     visible: Signal<bool>,
-    menu: Signal<bool>,
+    menu: Signal<Option<Menu>>,
     activity: Signal<u64>,
+    ended: Signal<Option<u64>>,
 }
 
 impl PlayerControls {
@@ -40,6 +56,7 @@ impl PlayerControls {
         reader: TranscriptReader,
         chat: Chat,
         palette: Palette,
+        queue: Queue,
         settings: impl Fn(Value) + 'static,
     ) -> Self {
         let controller = Self {
@@ -48,10 +65,12 @@ impl PlayerControls {
             reader,
             chat,
             palette,
+            queue,
             settings: Rc::new(settings),
             visible: signal(true),
-            menu: signal(false),
+            menu: signal(None),
             activity: signal(0),
+            ended: signal(None),
         };
         let playing = computed({
             let watch = controller.watch.clone();
@@ -60,12 +79,20 @@ impl PlayerControls {
         effect({
             let controller = controller.clone();
             move || {
-                let _ = controller.activity.get();
-                if controller.visible.get() && !controller.menu.get() && playing.get() {
-                    let visible = controller.visible;
+                let revision = controller.activity.get();
+                if controller.visible.get()
+                    && controller.menu.with(Option::is_none)
+                    && playing.get()
+                {
+                    let controller = controller.clone();
                     spawn(async move {
                         timer(Duration::from_secs(3)).await;
-                        visible.set(false);
+                        if controller.activity.get_untracked() == revision
+                            && controller.menu.with_untracked(Option::is_none)
+                            && playing.get_untracked()
+                        {
+                            controller.visible.set(false);
+                        }
                     });
                 }
             }
@@ -78,7 +105,7 @@ impl PlayerControls {
             let controller = controller.clone();
             move || {
                 let _ = video.get();
-                controller.menu.set(false);
+                controller.menu.set(None);
                 controller.show();
             }
         });
@@ -135,9 +162,9 @@ impl PlayerControls {
     }
 
     pub fn close_menu(&self) -> bool {
-        let was_open = self.menu.get_untracked();
+        let was_open = self.menu.with_untracked(Option::is_some);
         if was_open {
-            self.menu.set(false);
+            self.menu.set(None);
         }
         was_open
     }
@@ -147,15 +174,46 @@ impl PlayerControls {
         self.activity.update(|value| *value += 1);
     }
 
-    pub fn view(&self, width: impl Fn() -> f32 + 'static, back: impl Fn() + 'static) -> View {
+    pub fn playback(&self, event: &PlaybackEvent, open: impl FnOnce(String) + 'static) {
+        let PlaybackEvent::Status { generation, status } = event else {
+            return;
+        };
+        if !self
+            .watch
+            .video()
+            .is_some_and(|video| video.generation == *generation)
+        {
+            return;
+        }
+        if status.state == "ended" {
+            if self.ended.get_untracked() != Some(*generation) {
+                self.ended.set(Some(*generation));
+                self.queue.advance("ended", open);
+            }
+        } else if self.ended.with_untracked(Option::is_some) {
+            self.ended.set(None);
+        }
+    }
+
+    pub fn view(
+        &self,
+        width: impl Fn() -> f32 + 'static,
+        back: impl Fn() + 'static,
+        open: impl Fn(String) + 'static,
+    ) -> View {
         let watch = self.watch.clone();
         let bounds = computed(move || watch.frame(width()));
         let panel = self.clone();
         let visible = self.visible;
         let tap = self.clone();
         let back = Rc::new(back);
+        let open: OpenVideo = Rc::new(open);
+        let navigate = open.clone();
         let menu = self.menu;
         let popup = self.clone();
+        let more = self.clone();
+        let queue = self.queue.clone();
+        let palette = self.palette;
         view()
             .absolute()
             .inset(px(0.0))
@@ -166,6 +224,7 @@ impl PlayerControls {
                     let tap = tap.clone();
                     let panel = panel.clone();
                     let back = back.clone();
+                    let open = navigate.clone();
                     view()
                         .absolute()
                         .left(move || px(bounds.get().left))
@@ -189,13 +248,21 @@ impl PlayerControls {
                         )
                         .child(when(
                             move || visible.get(),
-                            move || panel.chrome(bounds, back.clone()),
+                            move || panel.chrome(bounds, back.clone(), open.clone()),
                         ))
                 },
             ))
             .child(when(
-                move || menu.get() && bounds.get().visible,
+                move || menu.get() == Some(Menu::Subtitles) && bounds.get().visible,
                 move || popup.subtitle_menu(bounds),
+            ))
+            .child(when(
+                move || menu.get() == Some(Menu::More) && bounds.get().visible,
+                move || more.more_menu(bounds),
+            ))
+            .child(when(
+                move || menu.get() == Some(Menu::Queue) && bounds.get().visible,
+                move || queue_sheet(palette, queue.clone(), open.clone(), move || menu.set(None)),
             ))
     }
 
@@ -203,6 +270,7 @@ impl PlayerControls {
         &self,
         bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>,
         back: Rc<impl Fn() + 'static>,
+        open: OpenVideo,
     ) -> View {
         let menu = self.menu;
         let play = self.clone();
@@ -247,7 +315,14 @@ impl PlayerControls {
                             })
                             .into()
                         },
-                        move || menu.set(true),
+                        move || menu.set(Some(Menu::Subtitles)),
+                    ))
+                    .child(player_button(
+                        SETTINGS,
+                        "More options",
+                        48.0,
+                        || rgb(0xffffff).into(),
+                        move || menu.set(Some(Menu::More)),
                     )),
             )
             .child(
@@ -257,8 +332,18 @@ impl PlayerControls {
                     .right(px(0.0))
                     .top(percentage(0.5))
                     .mt(px(-32.0))
+                    .flex_row()
                     .items_center()
+                    .justify_center()
+                    .gap(px(16.0))
                     .pointer_events(PointerEvents::BoxNone)
+                    .child(self.skip_button(
+                        "Previous",
+                        PREVIOUS,
+                        "previous",
+                        open.clone(),
+                        |state| state.has_previous,
+                    ))
                     .child(
                         press()
                             .size(px(64.0))
@@ -275,7 +360,8 @@ impl PlayerControls {
                                 move || !paused.get(),
                                 || ui::icon(PAUSE, 31.0, || rgb(0xffffff).into()),
                             )),
-                    ),
+                    )
+                    .child(self.skip_button("Next", NEXT, "next", open, |state| state.has_next)),
             )
             .child(
                 view()
@@ -333,6 +419,74 @@ impl PlayerControls {
                             )),
                     )
                     .child(self.seek_bar(bounds)),
+            )
+    }
+
+    fn skip_button(
+        &self,
+        label: &'static str,
+        icon: &'static str,
+        direction: &'static str,
+        open: OpenVideo,
+        available: impl Fn(&crate::queue::QueueState) -> bool + 'static,
+    ) -> View {
+        let queue = self.queue.clone();
+        let enabled = computed(move || queue.signal().with(&available));
+        let queue = self.queue.clone();
+        press()
+            .size(px(48.0))
+            .rounded(px(24.0))
+            .bg(rgba(0x00000066))
+            .justify_center()
+            .items_center()
+            .label(label)
+            .opacity(move || if enabled.get() { 1.0 } else { 0.38_f32 })
+            .accessibility_state(move || AccessibilityState {
+                disabled: !enabled.get(),
+                ..Default::default()
+            })
+            .on_press(move || {
+                if enabled.get_untracked() {
+                    let open = open.clone();
+                    queue.advance(direction, move |url| open(url));
+                }
+            })
+            .child(ui::icon(icon, 24.0, || rgb(0xffffff).into()))
+    }
+
+    fn more_menu(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {
+        let menu = self.menu;
+        view()
+            .absolute()
+            .inset(px(0.0))
+            .child(
+                press()
+                    .absolute()
+                    .inset(px(0.0))
+                    .label("Close options")
+                    .on_press(move || menu.set(None)),
+            )
+            .child(
+                view()
+                    .absolute()
+                    .right(px(8.0))
+                    .top(move || px(bounds.get().top + 46.0))
+                    .w(px(240.0))
+                    .max_w(percentage(0.94))
+                    .rounded(px(12.0))
+                    .bg(rgba(0x262626fa))
+                    .child(
+                        press()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(12.0))
+                            .px(px(13.0))
+                            .min_h(px(48.0))
+                            .label("Queue")
+                            .on_press(move || menu.set(Some(Menu::Queue)))
+                            .child(ui::icon(QUEUE, 24.0, || rgb(0xffffff).into()))
+                            .child(text("Queue").text_size(px(15.0)).text_color(rgb(0xffffff))),
+                    ),
             )
     }
 
@@ -414,7 +568,7 @@ impl PlayerControls {
                     .absolute()
                     .inset(px(0.0))
                     .label("Close subtitles")
-                    .on_press(move || menu.set(false)),
+                    .on_press(move || menu.set(None)),
             )
             .child(
                 view()
@@ -467,7 +621,7 @@ impl PlayerControls {
                                         track.with(|track| track.id.clone())
                                     };
                                     settings(json!({"subtitleKey":key}));
-                                    menu.set(false);
+                                    menu.set(None);
                                 })
                                 .child(
                                     text(move || {

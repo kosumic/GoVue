@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
 use crate::chat::Chat;
+use crate::queue::Queue;
 use crate::settings_view::SettingsScreen;
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
@@ -52,6 +53,7 @@ pub struct Browser {
     captions: CaptionPage,
     watch: WatchPlayback,
     chat: Chat,
+    queue: Queue,
     settings_screen: Signal<Option<SettingsScreen>>,
     notice: Signal<Option<(String, u64)>>,
 }
@@ -63,6 +65,7 @@ impl Browser {
         watch: WatchPlayback,
         settings: Signal<Option<Map<String, Value>>>,
         chat: Chat,
+        queue: Queue,
         settings_screen: Signal<Option<SettingsScreen>>,
     ) -> Self {
         let (actions, pending) = mpsc::unbounded_channel();
@@ -76,6 +79,7 @@ impl Browser {
             captions,
             watch,
             chat,
+            queue,
             settings_screen,
             notice: signal(None),
         };
@@ -247,6 +251,15 @@ impl Browser {
                 self.chat.show(video);
             }
             Some("settings") => self.settings_screen.set(Some(SettingsScreen::Extensions)),
+            Some("context") => {
+                if self.core.state::<Value>(json!({"op":"browser_identity","url":document.url}))
+                    .is_ok_and(|identity| identity["videoId"].is_string() && identity["videoId"] == payload["videoId"])
+                {
+                    self.queue.update("context", json!({"videoId":payload["videoId"],
+                        "next":payload["next"],"previous":payload["previous"],"autoplay":payload["autoplay"]}));
+                }
+            }
+            Some("queueAdd") => self.queue.update("add", json!({"item":payload})),
             Some("appearance") if payload["url"] == document.url => {
                 if let Some(dark) = payload["dark"].as_bool() {
                     self.dark.set(dark);

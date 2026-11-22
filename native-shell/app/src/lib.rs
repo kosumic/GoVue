@@ -7,6 +7,8 @@ mod chat;
 mod chat_view;
 mod player_view;
 mod provider_view;
+mod queue;
+mod queue_view;
 mod reader_clock;
 mod reader_view;
 mod settings_view;
@@ -44,12 +46,14 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let settings = preferences.state;
     let settings_screen = signal(None);
     let chat = Chat::new(core.clone());
+    let queue = queue::Queue::new(core.clone(), watch.clone());
     let browser = Browser::new(
         core.clone(),
         captions,
         watch.clone(),
         settings,
         chat.clone(),
+        queue.clone(),
         settings_screen,
     );
     let theme = browser.clone();
@@ -86,6 +90,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         watch_reader.clone(),
         chat,
         palette,
+        queue,
         move |change| preferences.update(change),
     );
     on_back_press({
@@ -156,13 +161,17 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         },
     );
     let watch_bounds = watch.clone();
+    let playback_controls = controls.clone();
+    let next_video = browser.clone();
     let caption_controls = controls.clone();
     let navigate_back = browser.clone();
+    let navigate_video = browser.clone();
     let player_controls = controls.view(
         move || width.get(),
         move || {
             navigate_back.back();
         },
+        move |url| navigate_video.open(url),
     );
     view()
         .flex_1()
@@ -176,7 +185,13 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     width.set(bounds.size.width.0)
                 })
                 .child(browser.view())
-                .child(watch.view(move || width.get(), |_| {}))
+                .child(watch.view(
+                    move || width.get(),
+                    move |event| {
+                        let next_video = next_video.clone();
+                        playback_controls.playback(&event, move |url| next_video.open(url));
+                    },
+                ))
                 .child(subtitles.view(move || width.get(), move || caption_controls.visible()))
                 .child(player_controls)
                 .child(watch_transcript.view(move || {
