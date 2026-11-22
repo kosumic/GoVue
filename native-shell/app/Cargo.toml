@@ -24,6 +24,7 @@ nsh-core = "=0.6.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync"] }
+url = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 nsh-platform-android = { version = "=0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg"] }
@@ -36,4 +37,3 @@ objc2 = "0.6.5"
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "objc2"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSKeyValueObserving", "NSObject", "NSString", "NSURL", "NSURLRequest"] }
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIResponder", "UIView"] }
-url = "2"

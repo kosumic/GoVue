@@ -4,6 +4,8 @@ use nsh_core::{Checked, Dialog, DialogButton, DialogButtonStyle, element::dialog
 use serde_json::json;
 
 use crate::{
+    download_library::DOWNLOAD,
+    downloads::Downloads,
     queue::Queue,
     ui::{self, Palette, press},
 };
@@ -15,6 +17,7 @@ pub fn queue_sheet(
     p: Palette,
     queue: Queue,
     open: Rc<dyn Fn(String)>,
+    downloads: Downloads,
     close: impl Fn() + Clone + 'static,
 ) -> View {
     let state = queue.signal();
@@ -33,6 +36,8 @@ pub fn queue_sheet(
     let remove = queue.clone();
     let error = queue.clone();
     let dismiss = close.clone();
+    let download_all = downloads.clone();
+    let close_all = close.clone();
     view()
         .absolute()
         .inset(px(0.0))
@@ -116,6 +121,17 @@ pub fn queue_sheet(
                                 }
                             });
                         }))
+                        .child(ui::icon_button(p, DOWNLOAD, "Download queue", move || {
+                            let items = state.with_untracked(|state| {
+                                state.queue.iter().map(|item| json!({
+                                    "videoId":item.video_id,"title":item.title,"author":item.author
+                                })).collect::<Vec<_>>()
+                            });
+                            if !items.is_empty() {
+                                close_all();
+                                download_all.confirm("Queue", json!(items));
+                            }
+                        }))
                         .child(view().flex_1())
                         .child(
                             text("Autoplay")
@@ -170,6 +186,8 @@ pub fn queue_sheet(
                     move |item, _| {
                         let navigate = open.clone();
                         let close = close.clone();
+                        let close_download = close.clone();
+                        let download = downloads.clone();
                         let remove = remove.clone();
                         view()
                             .px(px(12.0))
@@ -199,6 +217,13 @@ pub fn queue_sheet(
                                             .text_color(move || p.muted()),
                                     ),
                             )
+                            .child(ui::icon_button(p, DOWNLOAD, "Download video", move || {
+                                close_download();
+                                let item = item.get_untracked();
+                                download.confirm("", json!([{
+                                    "videoId":item.video_id,"title":item.title,"author":item.author
+                                }]));
+                            }))
                             .child(ui::icon_button(
                                 p,
                                 ui::CLOSE,

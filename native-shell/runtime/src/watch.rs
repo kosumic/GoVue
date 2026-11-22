@@ -64,6 +64,7 @@ pub struct WatchVideo {
     pub title: String,
     pub author: String,
     pub generation: u64,
+    pub offline: bool,
     pub quality_height: u32,
     pub quality_fps: u32,
     pub qualities: Rc<[VideoQuality]>,
@@ -186,6 +187,49 @@ impl WatchPlayback {
 
     pub fn video(&self) -> Option<WatchVideo> {
         self.video.get()
+    }
+
+    pub fn offline(&self) -> bool {
+        self.video
+            .with(|video| video.as_ref().is_some_and(|video| video.offline))
+    }
+
+    /// Replace the mounted player with a file resolved by the download runner.
+    pub fn play_offline(
+        &self,
+        video_id: String,
+        title: String,
+        author: String,
+        uri: String,
+    ) -> Result<(), CoreError> {
+        let source = PlaybackSource::offline(uri)?;
+        self.cancel_pending();
+        self.session::<Value>("offline", json!({}))?;
+        self.session::<Value>(
+            "commit",
+            json!({"playback":{"videoId":video_id,"offline":true,"qualityHeight":0,"qualityFps":0}}),
+        )?;
+        if let Some(watch) = &self.page.borrow().watch {
+            watch.native_player(true);
+        }
+        self.fit.set(PlaybackFit::Contain);
+        self.status.set(None);
+        self.error.set(None);
+        let generation = self.player.replace(source, Some(0.0), true, 1.0);
+        self.video.set(Some(WatchVideo {
+            video_id,
+            title,
+            author,
+            generation,
+            offline: true,
+            quality_height: 0,
+            quality_fps: 0,
+            qualities: Rc::from([]),
+            audio_key: String::new(),
+            audio_tracks: Rc::from([]),
+            subtitles: Rc::from([]),
+        }));
+        Ok(())
     }
 
     pub(crate) fn settings(&self) -> Option<Map<String, Value>> {
@@ -329,6 +373,13 @@ impl WatchPlayback {
             .await;
         loop {
             timer(Duration::from_secs(5)).await;
+            if self.video.with_untracked(|current| {
+                current
+                    .as_ref()
+                    .is_none_or(|current| current.generation != video.generation)
+            }) {
+                break;
+            }
             let remember = self.settings.with_untracked(|settings| {
                 settings
                     .as_ref()
@@ -423,7 +474,7 @@ impl WatchPlayback {
                 let displayed = {
                     let mut page = self.page.borrow_mut();
                     page.media_ready = true;
-                    page.displayed
+                    page.displayed || self.offline()
                 };
                 if displayed {
                     watch.native_player(true);
@@ -470,17 +521,23 @@ impl WatchPlayback {
         {
             return;
         }
-        let retain = previous
-            .as_ref()
-            .zip(next.as_ref())
-            .is_some_and(|(a, b)| a.tab.is_same(&b.tab) && a.video_id == b.video_id)
+        let offline = self
+            .video
+            .with_untracked(|video| video.as_ref().is_some_and(|video| video.offline));
+        let retain = !offline
+            && previous
+                .as_ref()
+                .zip(next.as_ref())
+                .is_some_and(|(a, b)| a.tab.is_same(&b.tab) && a.video_id == b.video_id)
             && self.video.with_untracked(Option::is_some);
         self.cancel_pending();
         if !retain {
             if let Some(previous) = &previous {
                 previous.native_player(false);
             }
-            self.reset_player(false);
+            if !offline {
+                self.reset_player(false);
+            }
         }
         let id = next
             .as_ref()
@@ -493,9 +550,18 @@ impl WatchPlayback {
         page.watch = next;
         page.media_ready = false;
         page.displayed = retain;
+        if offline && let Some(watch) = &page.watch {
+            watch.native_player(true);
+        }
     }
 
     fn maybe_start(&self) {
+        if self
+            .video
+            .with_untracked(|video| video.as_ref().is_some_and(|video| video.offline))
+        {
+            return;
+        }
         let Some(settings) = self.settings.get_untracked() else {
             return;
         };
@@ -533,6 +599,12 @@ impl WatchPlayback {
     }
 
     fn start_source(&self, selection: Option<PlaybackSelection>, complete: Option<StreamResult>) {
+        if self
+            .video
+            .with_untracked(|video| video.as_ref().is_some_and(|video| video.offline))
+        {
+            return;
+        }
         let Some(settings) = self.settings.get_untracked() else {
             return;
         };
@@ -690,6 +762,7 @@ impl WatchPlayback {
             title: catalog["title"].as_str().unwrap_or_default().to_owned(),
             author: catalog["author"].as_str().unwrap_or_default().to_owned(),
             generation,
+            offline: false,
             quality_height: height,
             quality_fps: fps,
             qualities: qualities.into(),
@@ -745,6 +818,9 @@ impl WatchPlayback {
 
     pub fn close(&self) {
         self.cancel_pending();
+        let offline = self
+            .video
+            .with_untracked(|video| video.as_ref().is_some_and(|video| video.offline));
         let position = self
             .status
             .get_untracked()
@@ -754,9 +830,11 @@ impl WatchPlayback {
         page.displayed = false;
         if let Some(watch) = &page.watch {
             watch.native_player(false);
-            let video = json!(watch.video_id);
-            let position = json!(position);
-            watch.inject(&format!("window.__govue?.seek({video},{position});"));
+            if !offline {
+                let video = json!(watch.video_id);
+                let position = json!(position);
+                watch.inject(&format!("window.__govue?.seek({video},{position});"));
+            }
         }
     }
 

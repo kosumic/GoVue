@@ -12,6 +12,11 @@
         android:networkSecurityConfig="@xml/govue_network_security"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:allowBackup="false">
+        <provider
+            android:name="com.longbridge.nsh.FilesProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
         <service
             android:name="io.github.kaminarios.govue.coremodule.DownloadActivityService"
             android:exported="false"

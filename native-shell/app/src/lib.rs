@@ -8,6 +8,9 @@ mod ai_ios;
 mod browser;
 mod chat;
 mod chat_view;
+mod download_confirm;
+mod download_library;
+mod downloads;
 #[cfg(target_os = "ios")]
 mod ios_browser;
 mod pip;
@@ -22,9 +25,9 @@ mod settings_view;
 mod sponsors;
 mod ui;
 
-use govue_shell_runtime::{
-    CaptionPage, Core, PlaybackEvent, TranscriptReader, WatchPlayback, WatchSubtitles,
-};
+use std::rc::Rc;
+
+use govue_shell_runtime::{Core, PlaybackEvent, TranscriptReader, WatchPlayback, WatchSubtitles};
 #[cfg(target_os = "android")]
 use govue_shell_runtime::{PlayerRuntime, TokenRuntime};
 use nsh_core::{platform::Lifecycle, prelude::*};
@@ -33,6 +36,8 @@ use serde_json::{Value, json};
 use browser::Browser;
 use chat::Chat;
 use chat_view::ChatView;
+use download_library::DownloadLibrary;
+use downloads::Downloads;
 use player_view::PlayerControls;
 use player_window::PlayerWindow;
 use settings_view::{Preferences, SettingsView};
@@ -65,7 +70,7 @@ fn GoVue() -> impl IntoElement {
 }
 
 fn workspace(core: Core, watch: WatchPlayback) -> View {
-    let captions = CaptionPage::new(core.clone());
+    let downloads = Downloads::new(core.clone());
     let subtitles = WatchSubtitles::new(core.clone(), watch.clone());
     let preferences = Preferences::new(core.clone());
     let settings = preferences.state;
@@ -74,17 +79,24 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let queue = queue::Queue::new(core.clone(), watch.clone());
     let browser = Browser::new(
         core.clone(),
-        captions,
         watch.clone(),
         settings,
         chat.clone(),
         queue.clone(),
         settings_screen,
+        downloads.clone(),
     );
     let theme = browser.clone();
     let sponsors = sponsors::SponsorBlock::new(core.clone(), watch.clone(), settings, {
         let browser = browser.clone();
-        move || browser.active_video()
+        let watch = watch.clone();
+        move || {
+            if watch.offline() {
+                None
+            } else {
+                browser.active_video()
+            }
+        }
     });
     let palette = ui::Palette {
         dark: computed(move || theme.dark()),
@@ -93,11 +105,18 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let chat_view = ChatView::new(chat.clone(), palette);
     let has_watch_page = computed({
         let browser = browser.clone();
-        move || browser.active_video().is_some()
+        let watch = watch.clone();
+        move || watch.offline() || browser.active_video().is_some()
     });
+    let download_screen = downloads.destination;
     let can_present = computed({
         let chat = chat.clone();
-        move || has_watch_page.get() && !chat.visible() && settings_screen.with(Option::is_none)
+        move || {
+            has_watch_page.get()
+                && !chat.visible()
+                && settings_screen.with(Option::is_none)
+                && download_screen.with(Option::is_none)
+        }
     });
     let pip = pip::Pip::new(core.clone(), watch.clone(), queue.clone(), settings, {
         let browser = browser.clone();
@@ -112,6 +131,34 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         },
         move || can_present.get() && !pip_mode.get(),
     );
+    let library = DownloadLibrary::new(
+        downloads.clone(),
+        watch.clone(),
+        palette,
+        {
+            let window = player_window.clone();
+            move || window.set(true)
+        },
+        {
+            let browser = browser.clone();
+            move |url| browser.open(url)
+        },
+    );
+    let back_from_offline = Rc::new({
+        let library = downloads.clone();
+        let watch = watch.clone();
+        let window = player_window.clone();
+        move || {
+            if watch.offline() {
+                watch.close();
+                window.set(false);
+                library.open();
+                true
+            } else {
+                false
+            }
+        }
+    });
     effect({
         let window = player_window.clone();
         move || {
@@ -158,7 +205,12 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let controls = controls.clone();
         let watch_reader = watch_reader.clone();
         let window = player_window.clone();
+        let downloads = downloads.clone();
+        let offline = back_from_offline.clone();
         move || {
+            if downloads.back() {
+                return true;
+            }
             if settings_screen.with_untracked(Option::is_some) {
                 settings_screen.set(None);
                 return true;
@@ -174,14 +226,19 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 watch_reader.close();
                 return true;
             }
-            window.close() || browser.back()
+            offline() || window.close() || browser.back()
         }
     });
     let target = computed({
         let browser = browser.clone();
+        let watch = watch.clone();
         move || {
             (
-                browser.active_video(),
+                watch
+                    .video()
+                    .filter(|video| video.offline)
+                    .map(|video| video.video_id)
+                    .or_else(|| browser.active_video()),
                 settings.with(|settings| {
                     settings
                         .as_ref()
@@ -271,12 +328,16 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let player_controls = controls.view(
         move || width.get(),
         move || {
-            navigate_back.back();
+            if !back_from_offline() {
+                navigate_back.back();
+            }
         },
         move |url| navigate_video.open(url),
         player_window.clone(),
         pip.clone(),
+        downloads.clone(),
     );
+    let download_notice = downloads.notice;
     let root = view()
         .flex_1()
         .pt(move || {
@@ -364,6 +425,30 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(chat_panel)
                 .child(chat_transcript.view(|| 0.0, || 0.0))
                 .child(settings_view.view())
+                .child(library.view())
+                .child(download_confirm::download_confirm(
+                    palette, downloads, width, height,
+                ))
+                .child(when(
+                    move || download_notice.with(Option::is_some),
+                    move || {
+                        view()
+                            .absolute()
+                            .left(px(14.0))
+                            .right(px(14.0))
+                            .bottom(px(20.0))
+                            .rounded(px(10.0))
+                            .bg(rgba(0x272727f5))
+                            .px(px(12.0))
+                            .py(px(8.0))
+                            .pointer_events(nsh_core::PointerEvents::None)
+                            .child(
+                                text(move || download_notice.get().unwrap_or_default())
+                                    .text_size(px(13.0))
+                                    .text_color(rgb(0xffffff)),
+                            )
+                    },
+                ))
                 .child(browser.toast())
                 .child(pip.notice()),
         );

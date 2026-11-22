@@ -89,7 +89,7 @@ impl PlayerWindow {
         false
     }
 
-    fn set(&self, value: bool) {
+    pub fn set(&self, value: bool) {
         self.update(json!({"op":"player_fullscreen","enabled":value}));
     }
 

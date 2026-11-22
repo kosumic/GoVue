@@ -10,6 +10,8 @@ use nsh_core::{
 use serde_json::{Value, json};
 
 use crate::chat::Chat;
+use crate::download_library::DOWNLOAD;
+use crate::downloads::Downloads;
 use crate::pip::Pip;
 use crate::player_window::PlayerWindow;
 use crate::queue::Queue;
@@ -212,7 +214,7 @@ impl PlayerControls {
         if !self
             .watch
             .video()
-            .is_some_and(|video| video.generation == *generation)
+            .is_some_and(|video| video.generation == *generation && !video.offline)
         {
             return;
         }
@@ -233,6 +235,7 @@ impl PlayerControls {
         open: impl Fn(String) + 'static,
         window: PlayerWindow,
         pip: Pip,
+        downloads: Downloads,
     ) -> View {
         let watch = self.watch.clone();
         let bounds = computed(move || watch.frame(width()));
@@ -245,6 +248,7 @@ impl PlayerControls {
         let menu = self.menu;
         let popup = self.clone();
         let more = self.clone();
+        let download_menu = downloads.clone();
         let options = self.clone();
         let queue = self.queue.clone();
         let palette = self.palette;
@@ -298,7 +302,7 @@ impl PlayerControls {
             ))
             .child(when(
                 move || menu.get() == Some(Menu::More) && bounds.get().visible && !in_pip.get(),
-                move || more.more_menu(bounds, pip.clone()),
+                move || more.more_menu(bounds, pip.clone(), download_menu.clone()),
             ))
             .child(when(
                 move || {
@@ -312,7 +316,15 @@ impl PlayerControls {
             ))
             .child(when(
                 move || menu.get() == Some(Menu::Queue) && bounds.get().visible && !in_pip.get(),
-                move || queue_sheet(palette, queue.clone(), open.clone(), move || menu.set(None)),
+                move || {
+                    queue_sheet(
+                        palette,
+                        queue.clone(),
+                        open.clone(),
+                        downloads.clone(),
+                        move || menu.set(None),
+                    )
+                },
             ))
     }
 
@@ -334,6 +346,11 @@ impl PlayerControls {
         let video = self.watch.clone();
         let fullscreen = window.presented;
         let close_window = window.clone();
+        let offline = computed({
+            let watch = self.watch.clone();
+            move || watch.offline()
+        });
+        let fullscreen_back = back.clone();
         view()
             .absolute()
             .inset(px(0.0))
@@ -355,7 +372,7 @@ impl PlayerControls {
                             .justify_center()
                             .label("Navigate back")
                             .on_press(move || {
-                                if !close_window.close() {
+                                if offline.get_untracked() || !close_window.close() {
                                     back();
                                 }
                             })
@@ -494,7 +511,13 @@ impl PlayerControls {
                                             "Fullscreen"
                                         }
                                     })
-                                    .on_press(move || window.toggle())
+                                    .on_press(move || {
+                                        if offline.get_untracked() {
+                                            fullscreen_back();
+                                        } else {
+                                            window.toggle();
+                                        }
+                                    })
                                     .child(when(fullscreen, || {
                                         ui::icon(SHRINK, 24.0, || rgb(0xffffff).into())
                                     }))
@@ -517,7 +540,8 @@ impl PlayerControls {
         available: impl Fn(&crate::queue::QueueState) -> bool + 'static,
     ) -> View {
         let queue = self.queue.clone();
-        let enabled = computed(move || queue.signal().with(&available));
+        let watch = self.watch.clone();
+        let enabled = computed(move || !watch.offline() && queue.signal().with(&available));
         let queue = self.queue.clone();
         press()
             .size(px(48.0))
@@ -540,8 +564,14 @@ impl PlayerControls {
             .child(ui::icon(icon, 24.0, || rgb(0xffffff).into()))
     }
 
-    fn more_menu(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>, pip: Pip) -> View {
+    fn more_menu(
+        &self,
+        bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>,
+        pip: Pip,
+        downloads: Downloads,
+    ) -> View {
         let menu = self.menu;
+        let watch = self.watch.clone();
         let available = computed({
             let pip = pip.clone();
             move || pip.available()
@@ -593,6 +623,12 @@ impl PlayerControls {
                     }))
                     .child(player_menu_row("Queue", QUEUE, move || {
                         menu.set(Some(Menu::Queue))
+                    }))
+                    .child(player_menu_row("Download", DOWNLOAD, move || {
+                        if let Some(video) = watch.video() {
+                            menu.set(None);
+                            downloads.confirm("", json!([{"videoId":video.video_id,"title":video.title,"author":video.author}]));
+                        }
                     })),
             )
     }

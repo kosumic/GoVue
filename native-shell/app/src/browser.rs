@@ -15,6 +15,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
 use crate::chat::Chat;
+use crate::downloads::Downloads;
 use crate::queue::Queue;
 use crate::settings_view::SettingsScreen;
 use crate::ui::{Palette, press};
@@ -57,6 +58,7 @@ pub struct Browser {
     watch: WatchPlayback,
     chat: Chat,
     queue: Queue,
+    downloads: Downloads,
     settings_screen: Signal<Option<SettingsScreen>>,
     notice: Signal<Option<(String, u64)>>,
 }
@@ -64,25 +66,26 @@ pub struct Browser {
 impl Browser {
     pub fn new(
         core: Core,
-        captions: CaptionPage,
         watch: WatchPlayback,
         settings: Signal<Option<Map<String, Value>>>,
         chat: Chat,
         queue: Queue,
         settings_screen: Signal<Option<SettingsScreen>>,
+        downloads: Downloads,
     ) -> Self {
         let (actions, pending) = mpsc::unbounded_channel();
         let browser = Self {
+            captions: CaptionPage::new(core.clone()),
             core,
             state: signal(State::default()),
             retained: Rc::new(RefCell::new(HashMap::new())),
             settings,
             dark: signal(false),
             actions,
-            captions,
             watch,
             chat,
             queue,
+            downloads,
             settings_screen,
             notice: signal(None),
         };
@@ -190,14 +193,37 @@ impl Browser {
         let settings = self.settings;
         let chat = self.chat.clone();
         let settings_screen = self.settings_screen;
+        let download_screen = self.downloads.destination;
         let visible = computed(move || {
             active.get()
                 && !fullscreen.get()
                 && !chat.visible()
                 && settings_screen.with(Option::is_none)
+                && download_screen.with(Option::is_none)
         });
         let loading = signal(true);
         let failure = signal::<Option<String>>(None);
+        let summary = computed({
+            let native = native.clone();
+            let browser = self.clone();
+            move || {
+                if !active.get() || loading.get() {
+                    return None;
+                }
+                let document = native.current_document()?;
+                let video = browser.video_id(&document)?;
+                let completed = browser.downloads.completed(&video);
+                Some((document, video, completed))
+            }
+        });
+        effect({
+            let native = native.clone();
+            move || {
+                if let Some((document, video, completed)) = summary.get() {
+                    download_status(&native, &document, &video, completed);
+                }
+            }
+        });
         let renderer = native
             .view(
                 &self.captions,
@@ -333,11 +359,25 @@ impl Browser {
             }
             Some("back") => { self.back(); }
             Some("chat") => {
-                let video = self.core.state::<Value>(json!({"op":"browser_identity","url":document.url}))
-                    .ok().and_then(|identity| identity["videoId"].as_str().map(str::to_owned));
-                self.chat.show(video);
+                self.chat.show(self.video_id(&document));
             }
             Some("settings") => self.settings_screen.set(Some(SettingsScreen::Extensions)),
+            Some("library") => self.downloads.open(),
+            Some("download") if payload["type"] == "openManager" => self.downloads.open(),
+            Some("download") if payload["type"] == "openConfirm" => {
+                self.downloads.confirm("", json!([payload]));
+            }
+            Some("download") if payload["type"] == "openBatch" => {
+                self.downloads.confirm(payload["name"].as_str().unwrap_or("Playlist"), payload["items"].clone());
+            }
+            Some("download") if payload["type"] == "requestStatus" => {
+                if let Some(video) = payload["videoId"].as_str()
+                    && self.video_id(&document).as_deref() == Some(video)
+                    && let Some(tab) = self.retained.borrow().get(&id)
+                {
+                    download_status(tab, &document, video, self.downloads.completed(video));
+                }
+            }
             Some("context") => {
                 if self.core.state::<Value>(json!({"op":"browser_identity","url":document.url}))
                     .is_ok_and(|identity| identity["videoId"].is_string() && identity["videoId"] == payload["videoId"])
@@ -356,6 +396,13 @@ impl Browser {
                 "documentUrl":document.url,"generation":document.generation,"kind":payload["kind"]})),
             _ => {}
         }
+    }
+
+    fn video_id(&self, document: &BrowserDocument) -> Option<String> {
+        self.core
+            .state::<Value>(json!({"op":"browser_identity","url":document.url}))
+            .ok()
+            .and_then(|identity| identity["videoId"].as_str().map(str::to_owned))
     }
 
     pub fn open(&self, url: String) {
@@ -448,6 +495,14 @@ impl Browser {
             }
         }
     }
+}
+
+fn download_status(tab: &BrowserTab, document: &BrowserDocument, video: &str, completed: bool) {
+    let status = json!({"videoId":video,"watchPageDownloaded":completed});
+    tab.inject(
+        document,
+        &format!("window.dispatchEvent(new CustomEvent('downloadStatus',{{detail:{status}}}));"),
+    );
 }
 
 pub fn report(error: CoreError) {
