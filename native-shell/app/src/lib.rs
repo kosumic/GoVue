@@ -20,6 +20,8 @@ mod chat_activity;
 mod chat_game;
 mod chat_history;
 mod chat_markdown;
+#[cfg(target_os = "ios")]
+mod chat_notifications_ios;
 mod chat_read_aloud;
 mod chat_view;
 mod chat_viewport;
@@ -79,7 +81,7 @@ use govue_shell_runtime::{
     Core, PlaybackEvent, PlayerRuntime, TokenRuntime, TranscriptReader, WatchPlayback,
     WatchSubtitles,
 };
-use nsh_core::{platform::Lifecycle, prelude::*};
+use nsh_core::{PointerEvents, element::NativeEvent, platform::Lifecycle, prelude::*};
 use serde_json::{Value, json};
 
 use browser::Browser;
@@ -104,10 +106,12 @@ const APP_ID: &str = match option_env!("GOVUE_APP_ID") {
 #[cfg(target_os = "ios")]
 pub fn run_ios() {
     ai_ios::install();
+    chat_notifications_ios::install();
     downloads_ios::install();
     nsh_platform_ios::set_ui_sets(vec![nsh_base::registry()]);
     nsh_platform_ios::set_components(|components| {
         camera_ios::register(components);
+        chat_notifications_ios::register(components);
         speech_ios::register(components);
         ios_browser::register(components);
         downloads_ios::register(components);
@@ -143,8 +147,12 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     effect({
         let core = core.clone();
         move || {
+            let active = lifecycle() == Lifecycle::Active;
             let _ = core.state::<Value>(serde_json::json!({
-                "op":"ai_foreground","active":lifecycle() == Lifecycle::Active,
+                "op":"ai_foreground","active":active,
+            }));
+            let _ = core.state::<Value>(serde_json::json!({
+                "op":"chat_notification_foreground","active":active,
             }));
         }
     });
@@ -262,6 +270,15 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let words = word_tools::WordTools::new(core.clone(), palette, caption_audio, word_help);
     let chat_reader = TranscriptReader::new(core.clone());
     let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette, words.clone());
+    chat.track_notification_attention({
+        let chat_view = chat_view.clone();
+        let reader = chat_reader.clone();
+        move || chat_view.attends_conversation() && !reader.visible()
+    });
+    let notifications = chat_notifications(&chat, &chat_view, &chat_reader, move || {
+        settings_screen.set(None);
+        download_screen.set(None);
+    });
     let watch_reader = TranscriptReader::new(core.clone());
     let pause_setting = preferences.clone();
     let clock = reader_clock::ReaderClock::new(
@@ -651,9 +668,45 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             move || can_present.get() || mini_active.get(),
         ));
     root.child(chat_view.camera())
+        .child(notifications)
         .child(chat_view.speech())
         .child(chat_view.read_aloud())
         .child(words.native())
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())
+}
+
+fn chat_notifications(
+    chat: &Chat,
+    view: &ChatView,
+    reader: &TranscriptReader,
+    reveal: impl Fn() + 'static,
+) -> NativeView {
+    let chat = chat.clone();
+    let view = view.clone();
+    let reader = reader.clone();
+    native("govue/chat-notifications")
+        .absolute()
+        .size(px(1.0))
+        .opacity(0.0)
+        .pointer_events(PointerEvents::None)
+        .prop("observe", Value::Bool(true))
+        .prop("prepare", move || Value::Bool(chat.visible()))
+        .on_native_event(move |event: &NativeEvent| {
+            if event.name.as_ref() != "open" {
+                return;
+            }
+            let Some(id) = event.data.as_str().filter(|id| {
+                !id.is_empty()
+                    && id.len() <= 64
+                    && id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            }) else {
+                return;
+            };
+            reveal();
+            reader.close();
+            view.open_notification(id.into());
+        })
 }

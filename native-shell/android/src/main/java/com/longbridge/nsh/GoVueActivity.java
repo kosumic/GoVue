@@ -28,6 +28,7 @@ import io.github.kaminarios.govue.shell.NowPlaying;
 import io.github.kaminarios.govue.shell.PlayerRuntime;
 import io.github.kaminarios.govue.shell.PlayerPip;
 import io.github.kaminarios.govue.shell.PlayerWindow;
+import io.github.kaminarios.govue.shell.ReplyNotifications;
 import io.github.kaminarios.govue.shell.TokenRuntime;
 import io.github.kaminarios.govue.shell.VideoPlayer;
 import io.github.kaminarios.govue.shell.WordTranslation;
@@ -38,6 +39,7 @@ public final class GoVueActivity extends Activity {
     private final PlayerPip pip = new PlayerPip();
     private NshView view;
     private ChatSpeech speech;
+    private ReplyNotifications.Binding notifications;
     private OnBackInvokedCallback backCallback;
 
     @Override
@@ -47,6 +49,7 @@ public final class GoVueActivity extends Activity {
         DevActivity.edgeToEdge(this);
         view = new NshView(this);
         AiTransport.install(this);
+        notifications = ReplyNotifications.register(view, this);
         CastTransport.register(view, this);
         DownloadTransport.install(this);
         DownloadExport.register(view, this);
@@ -87,6 +90,7 @@ public final class GoVueActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         receive(intent);
+        notifications.drain();
     }
 
     private void receive(Intent intent) {
@@ -101,6 +105,7 @@ public final class GoVueActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        notifications.drain();
         pip.onResume();
     }
 

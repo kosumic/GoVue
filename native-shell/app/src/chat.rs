@@ -320,6 +320,27 @@ impl Chat {
         self.core.clone()
     }
 
+    pub fn track_notification_attention(&self, attending: impl Fn() -> bool + 'static) {
+        let chat = self.clone();
+        let target = computed(move || {
+            let visible = attending();
+            let current = if visible {
+                chat.current
+                    .with(|current| current.as_ref().map(|chat| chat.id.clone()))
+            } else {
+                None
+            };
+            (current, visible.then_some(SESSION))
+        });
+        let core = self.core.clone();
+        effect(move || {
+            let (chat, session) = target.get();
+            let _ = core.state::<Value>(json!({
+                "op":"chat_notification_visibility","chatId":chat,"sessionId":session,
+            }));
+        });
+    }
+
     pub async fn update_config(&self, request: Value) -> Result<Value, CoreError> {
         let config: Value = self.core.ai(request).await?;
         self.config.set(config.clone());

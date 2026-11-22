@@ -7,6 +7,8 @@ mod caption_overlay;
 mod captions;
 #[cfg(target_os = "android")]
 mod cast_android;
+#[cfg(target_os = "android")]
+mod chat_notifications_android;
 mod core;
 #[cfg(target_os = "android")]
 mod downloads_android;

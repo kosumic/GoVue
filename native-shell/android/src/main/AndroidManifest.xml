@@ -83,5 +83,15 @@
                 <data android:scheme="lingoplay" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="io.github.kaminarios.govue.shell.ReplyNotificationActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+        <activity-alias
+            android:name="io.github.kaminarios.govue.coremodule.ChatNotificationActivity"
+            android:exported="false"
+            android:targetActivity="io.github.kaminarios.govue.shell.ReplyNotificationActivity" />
     </application>
 </manifest>

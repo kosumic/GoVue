@@ -22,6 +22,7 @@ fn main() {
         "../ios/ChatCamera.swift",
         "../ios/ChatSpeech.swift",
         "../ios/ChatReadAloud.swift",
+        "../ios/ReplyNotifications.swift",
         "../ios/PlayerWindow.swift",
         "../ios/BrowserCache.swift",
         "../ios/PlayerPip.swift",

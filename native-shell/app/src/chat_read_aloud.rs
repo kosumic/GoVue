@@ -54,6 +54,10 @@ impl ReadAloud {
             .with(|playing| playing.as_ref().map(|(message, _)| message.clone()))
     }
 
+    pub fn response_active(&self) -> Option<String> {
+        self.active().filter(|id| !id.starts_with("word-example:"))
+    }
+
     pub fn clear(&self) {
         self.stop();
         self.error.set(None);

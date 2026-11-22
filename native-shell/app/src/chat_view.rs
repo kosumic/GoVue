@@ -143,7 +143,7 @@ impl ChatView {
             let reading = reading.clone();
             let chat = chat.clone();
             move || {
-                if let Some(id) = reading.active()
+                if let Some(id) = reading.response_active()
                     && !chat.current().is_some_and(|thread| {
                         thread
                             .messages
@@ -205,6 +205,20 @@ impl ChatView {
 
     pub fn provider_settings(&self) -> ProviderView {
         self.providers.clone()
+    }
+
+    pub fn attends_conversation(&self) -> bool {
+        self.chat.visible()
+            && matches!(self.layer.get(), Layer::Thread | Layer::Find)
+            && !self.usage_open.get()
+            && !self.chat.loading()
+    }
+
+    pub fn open_notification(&self, id: String) {
+        self.usage_open.set(false);
+        self.layer.set(Layer::Thread);
+        self.chat.show(None);
+        self.chat.open_saved(id, None);
     }
 
     fn edit(&self, message: Message) {
