@@ -5,7 +5,7 @@
   let documentGeneration = 0;
   let lastTransient = '';
   const post = (action, payload = {}) =>
-    window.ReactNativeWebView?.postMessage(
+    (window.__govuePageTransport ?? window.ReactNativeWebView)?.postMessage(
       JSON.stringify({
         type: 'litube',
         action,

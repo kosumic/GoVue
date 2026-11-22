@@ -379,7 +379,11 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     if matches!(
         op,
-        "browser_input" | "browser_identity" | "browser_layout" | "browser_position"
+        "browser_input"
+            | "browser_identity"
+            | "browser_user_agent"
+            | "browser_layout"
+            | "browser_position"
     ) {
         let _span = trace::Section::begin(c"GoVue core op: browser_boundary");
         return browser::boundary(&command);

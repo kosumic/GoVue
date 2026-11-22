@@ -105,6 +105,22 @@ pub(crate) fn boundary(command: &Value) -> Result<Value> {
             let url = youtube(crate::string(command, "url")?);
             Ok(json!({"youtube":url.is_some(),"videoId":url.as_ref().and_then(video)}))
         }
+        "browser_user_agent" => {
+            let agent = crate::string(command, "agent")?;
+            if agent.len() > 1000 || agent.chars().any(char::is_control) {
+                return Err("Invalid browser identity.".into());
+            }
+            let mut agent = agent
+                .replace("; wv", "")
+                .split_whitespace()
+                .filter(|part| !part.starts_with("Version/"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if agent.contains("Chrome/") && !agent.contains("Mobile") {
+                agent = agent.replace(" Safari/", " Mobile Safari/");
+            }
+            Ok(json!(agent))
+        }
         "browser_layout" => {
             let value = &command["layout"];
             let number = |key: &str| value[key].as_f64().filter(|n| n.is_finite());
@@ -441,22 +457,6 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     }
     if command["op"] == "browser_message_origin" {
         return Ok(json!(page_origin(command)));
-    }
-    if command["op"] == "browser_user_agent" {
-        let agent = crate::string(command, "agent")?;
-        if agent.len() > 1000 || agent.chars().any(char::is_control) {
-            return Err("Invalid browser identity.".into());
-        }
-        let mut agent = agent
-            .replace("; wv", "")
-            .split_whitespace()
-            .filter(|part| !part.starts_with("Version/"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if agent.contains("Chrome/") && !agent.contains("Mobile") {
-            agent = agent.replace(" Safari/", " Mobile Safari/");
-        }
-        return Ok(json!(agent));
     }
     let mut browsers = BROWSERS
         .get_or_init(Default::default)

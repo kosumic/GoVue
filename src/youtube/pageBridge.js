@@ -6,7 +6,7 @@
     const id = url.pathname === '/watch' ? url.searchParams.get('v') : url.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]{11})(?:\/|$)/)?.[1];
     return id && /^[\w-]{11}$/.test(id) ? id : null;
   };
-  const send = value => window.ReactNativeWebView?.postMessage(JSON.stringify(value));
+  const send = value => (window.__govuePageTransport ?? window.ReactNativeWebView)?.postMessage(JSON.stringify(value));
   let lastUrl = '';
   let documentVideo = videoId();
   let positionRequest = null;

@@ -147,7 +147,7 @@
         pending.delete(requestId);
         clearTimeout(timer); clearInterval(interval);
         if (!pending.size) transport.stop();
-        window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'captionPage', requestId, taskId: task.taskId,
+        (window.__govuePageTransport ?? window.ReactNativeWebView)?.postMessage(JSON.stringify({ type: 'captionPage', requestId, taskId: task.taskId,
           videoId: task.videoId, trackId: task.trackId, ok, ...ok && { source, format } }));
       };
       const sourceTrack = () => playerResponse(task.videoId)?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.find(track => track.vssId === sourceId);

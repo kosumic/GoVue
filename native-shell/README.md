@@ -13,6 +13,18 @@ signing identity in the eventual upgrade so Android retains that sandbox.
 starting an operation that publishes updates, then reload the affected state
 from Rust when its channel changes.
 
+The Android browser uses `androidx.webkit:webkit:1.14.0`. Register
+`io.github.kaminarios.govue.shell.BrowserTab` on `NshView` before starting the
+Rust app. Give each retained tab a `BrowserTab` with its initial URL and last
+document generation. Feed its view the current media options and keep it
+mounted while a GoVue screen covers it.
+
+`BrowserEvent::Navigation` supplies the URL, generation, and history state.
+`PageMessage` supplies the native origin and document. Check the owning tab,
+active video, and pending request before applying messages to Rust state.
+`BrowserTab::inject` targets a single document generation. The app handles
+external links and errors using the corresponding browser events.
+
 Register `io.github.kaminarios.govue.shell.PlayerRuntime` with the Android
 `NshView` before calling `runRustApp`. Construct the Rust `PlayerRuntime` in the
 player component and mount its hidden `view()`. Pass the pending media request
@@ -23,6 +35,7 @@ evaluation gets a fresh local WebView and returns the `n` and `sig` strings.
 From GoVue’s Nix Android environment, check the runtime crate.
 
 ```sh
+npm run page:build
 cargo clippy --locked --manifest-path native-shell/runtime/Cargo.toml \
   --target aarch64-linux-android -- -D warnings
 ```

@@ -8,7 +8,7 @@ export const MEDIA_BRIDGE = String.raw`
     return /^[\w-]{11}$/.test(value || '') ? value : null;
   };
   const player = () => document.getElementById('movie_player');
-  const post = value => window.ReactNativeWebView?.postMessage(JSON.stringify(value));
+  const post = value => (window.__govuePageTransport ?? window.ReactNativeWebView)?.postMessage(JSON.stringify(value));
   let settings = { adBlock:true, sponsorBlock:true, categories:['sponsor','selfpromo','interaction'] };
   let owner = id();
   let segments = [];
