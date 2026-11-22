@@ -10,6 +10,7 @@ import io.github.kaminarios.govue.shell.BrowserLaunches;
 import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
 import io.github.kaminarios.govue.shell.PlayerRuntime;
+import io.github.kaminarios.govue.shell.PlayerPip;
 import io.github.kaminarios.govue.shell.PlayerWindow;
 import io.github.kaminarios.govue.shell.TokenRuntime;
 import io.github.kaminarios.govue.shell.VideoPlayer;
@@ -17,6 +18,7 @@ import io.github.kaminarios.govue.shell.VideoPlayer;
 public final class GoVueActivity extends Activity {
     private final BrowserLaunches launches = new BrowserLaunches();
     private final PlayerWindow playerWindow = new PlayerWindow();
+    private final PlayerPip pip = new PlayerPip();
     private NshView view;
 
     @Override
@@ -32,6 +34,7 @@ public final class GoVueActivity extends Activity {
         CaptionOverlay.register(view);
         VideoPlayer.register(view);
         playerWindow.register(view, this);
+        pip.register(view, this);
         PlayerRuntime.register(view);
         TokenRuntime.register(view);
         setContentView(view);
@@ -44,6 +47,24 @@ public final class GoVueActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         launches.receive(intent);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        pip.onResume();
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        pip.onUserLeaveHint();
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean inPip, Configuration config) {
+        super.onPictureInPictureModeChanged(inPip, config);
+        pip.onModeChanged(inPip);
     }
 
     @Override

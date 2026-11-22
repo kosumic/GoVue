@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <permission android:name="${applicationId}.internal.PIP" android:protectionLevel="signature" />
+    <uses-permission android:name="${applicationId}.internal.PIP" />
     <application
         android:label="GoVue"
         android:icon="@drawable/govue_icon"
@@ -11,6 +13,7 @@
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:exported="true"
             android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

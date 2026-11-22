@@ -8,6 +8,7 @@ mod chat;
 mod chat_view;
 #[cfg(target_os = "ios")]
 mod ios_browser;
+mod pip;
 mod player_view;
 mod player_window;
 mod provider_view;
@@ -91,16 +92,22 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let browser = browser.clone();
         move || browser.active_video().is_some()
     });
+    let can_present = computed({
+        let chat = chat.clone();
+        move || has_watch_page.get() && !chat.visible() && settings_screen.with(Option::is_none)
+    });
+    let pip = pip::Pip::new(core.clone(), watch.clone(), queue.clone(), settings, {
+        let browser = browser.clone();
+        move |url| browser.open(url)
+    });
+    let pip_mode = pip.mode;
     let player_window = PlayerWindow::new(
         core.clone(),
         {
             let watch = watch.clone();
             move || watch.video().is_some()
         },
-        {
-            let chat = chat.clone();
-            move || has_watch_page.get() && !chat.visible() && settings_screen.with(Option::is_none)
-        },
+        move || can_present.get() && !pip_mode.get(),
     );
     effect({
         let window = player_window.clone();
@@ -194,7 +201,23 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let watch = watch.clone();
         move || {
             if let Some(settings) = settings.get() {
-                watch.configure(settings, lifecycle() == Lifecycle::Active);
+                let phase = lifecycle();
+                let pip = pip_mode.get();
+                let background = settings.get("backgroundPlayback") == Some(&Value::Bool(true));
+                watch.configure(settings, phase == Lifecycle::Active || pip);
+                if phase == Lifecycle::Background
+                    && !pip
+                    && !background
+                    && let Some(video) = watch.video()
+                {
+                    let watch = watch.clone();
+                    spawn(async move {
+                        timer(std::time::Duration::from_millis(350)).await;
+                        if lifecycle() == Lifecycle::Background && !pip_mode.get_untracked() {
+                            watch.player().pause(video.generation);
+                        }
+                    });
+                }
             }
         }
     });
@@ -202,11 +225,25 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let width = signal(0_f32);
     let height = signal(0_f32);
     let fullscreen = player_window.presented;
+    let immersive = computed(move || fullscreen.get() || pip_mode.get());
     let beside = computed(move || fullscreen.get() && width.get() > height.get());
     effect({
         let watch = watch.clone();
         let window = player_window.clone();
-        move || watch.present(window.frame(width.get(), height.get(), watch_reader.visible()))
+        move || {
+            if pip_mode.get() {
+                watch_reader.close();
+                watch.present(Some(govue_shell_runtime::EmbeddedVideoFrame {
+                    left: 0.0,
+                    top: 0.0,
+                    width: width.get().max(1.0),
+                    height: height.get().max(1.0),
+                    visible: true,
+                }));
+            } else {
+                watch.present(window.frame(width.get(), height.get(), watch_reader.visible()));
+            }
+        }
     });
     let chat_panel = chat_view.view(
         {
@@ -235,32 +272,33 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         },
         move |url| navigate_video.open(url),
         player_window.clone(),
+        pip.clone(),
     );
     let root = view()
         .flex_1()
         .pt(move || {
-            px(if fullscreen.get() {
+            px(if immersive.get() {
                 0.0
             } else {
                 safe_area().top.0
             })
         })
         .pb(move || {
-            px(if fullscreen.get() {
+            px(if immersive.get() {
                 0.0
             } else {
                 safe_area().bottom.0
             })
         })
         .pl(move || {
-            px(if fullscreen.get() {
+            px(if immersive.get() {
                 0.0
             } else {
                 safe_area().left.0
             })
         })
         .pr(move || {
-            px(if fullscreen.get() {
+            px(if immersive.get() {
                 0.0
             } else {
                 safe_area().right.0
@@ -276,13 +314,13 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     height.set(bounds.size.height.0);
                 })
                 .bg(move || {
-                    if fullscreen.get() {
+                    if immersive.get() {
                         rgb(0x000000).into()
                     } else {
                         palette.background()
                     }
                 })
-                .child(browser.view(fullscreen))
+                .child(browser.view(immersive))
                 .child(watch.view(
                     move || width.get(),
                     move |event| {
@@ -293,9 +331,15 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                         }
                     },
                 ))
-                .child(subtitles.view(move || width.get(), move || caption_controls.visible()))
+                .child(subtitles.view(
+                    move || width.get(),
+                    move || !pip_mode.get() && caption_controls.visible(),
+                ))
                 .child(player_controls)
-                .child(sponsors.view(move || width.get(), move || !sponsor_controls.menu_open()))
+                .child(sponsors.view(
+                    move || width.get(),
+                    move || !pip_mode.get() && !sponsor_controls.menu_open(),
+                ))
                 .child(watch_transcript.view(
                     move || {
                         if beside.get() {
@@ -317,12 +361,14 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(chat_panel)
                 .child(chat_transcript.view(|| 0.0, || 0.0))
                 .child(settings_view.view())
-                .child(browser.toast()),
+                .child(browser.toast())
+                .child(pip.notice()),
         );
     #[cfg(target_os = "android")]
     let root = root
         .child(browser.launches())
         .child(player_window.view())
+        .child(pip.view(move || watch.frame(width.get()), move || can_present.get()))
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view());
     root

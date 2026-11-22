@@ -36,6 +36,7 @@ android {
         java.srcDir nshJava
         jniLibs.srcDir nativeInputs.dir("jniLibs").asFile
         res.srcDir nativeInputs.dir("res").asFile
+        res.srcDir "../../modules/govue-core/android/src/main/res"
     }
 
     buildTypes {

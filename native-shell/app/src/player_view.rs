@@ -10,6 +10,7 @@ use nsh_core::{
 use serde_json::{Value, json};
 
 use crate::chat::Chat;
+use crate::pip::Pip;
 use crate::player_window::PlayerWindow;
 use crate::queue::Queue;
 use crate::queue_view::queue_sheet;
@@ -33,6 +34,7 @@ const SETTINGS: &str = "M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8zM9 3h6l1 3 3-1 2 4-2 3
 const QUEUE: &str = "M3 6h18M3 12h18M3 18h10m4-2 4 2-4 2z";
 const SPEED: &str = "M3 18a9 9 0 1 1 18 0H3zm9-2 4-5m-9 3h1m4-5v1";
 const AUDIO: &str = "M3 9h4l5-4v14l-5-4H3zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14";
+const PIP: &str = "M3 4h18v16H3zM12 11h7v6h-7z";
 
 type WriteSetting = Rc<dyn Fn(Value)>;
 type OpenVideo = Rc<dyn Fn(String)>;
@@ -230,6 +232,7 @@ impl PlayerControls {
         back: impl Fn() + 'static,
         open: impl Fn(String) + 'static,
         window: PlayerWindow,
+        pip: Pip,
     ) -> View {
         let watch = self.watch.clone();
         let bounds = computed(move || watch.frame(width()));
@@ -245,12 +248,13 @@ impl PlayerControls {
         let options = self.clone();
         let queue = self.queue.clone();
         let palette = self.palette;
+        let in_pip = pip.mode;
         view()
             .absolute()
             .inset(px(0.0))
             .pointer_events(PointerEvents::BoxNone)
             .child(when(
-                move || bounds.get().visible,
+                move || bounds.get().visible && !in_pip.get(),
                 move || {
                     let tap = tap.clone();
                     let panel = panel.clone();
@@ -287,12 +291,14 @@ impl PlayerControls {
                 },
             ))
             .child(when(
-                move || menu.get() == Some(Menu::Subtitles) && bounds.get().visible,
+                move || {
+                    menu.get() == Some(Menu::Subtitles) && bounds.get().visible && !in_pip.get()
+                },
                 move || popup.subtitle_menu(bounds),
             ))
             .child(when(
-                move || menu.get() == Some(Menu::More) && bounds.get().visible,
-                move || more.more_menu(bounds),
+                move || menu.get() == Some(Menu::More) && bounds.get().visible && !in_pip.get(),
+                move || more.more_menu(bounds, pip.clone()),
             ))
             .child(when(
                 move || {
@@ -300,11 +306,12 @@ impl PlayerControls {
                         menu.get(),
                         Some(Menu::Speed | Menu::Resize | Menu::Quality | Menu::Audio)
                     ) && bounds.get().visible
+                        && !in_pip.get()
                 },
                 move || options.preference_menu(bounds),
             ))
             .child(when(
-                move || menu.get() == Some(Menu::Queue) && bounds.get().visible,
+                move || menu.get() == Some(Menu::Queue) && bounds.get().visible && !in_pip.get(),
                 move || queue_sheet(palette, queue.clone(), open.clone(), move || menu.set(None)),
             ))
     }
@@ -533,8 +540,12 @@ impl PlayerControls {
             .child(ui::icon(icon, 24.0, || rgb(0xffffff).into()))
     }
 
-    fn more_menu(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {
+    fn more_menu(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>, pip: Pip) -> View {
         let menu = self.menu;
+        let available = computed({
+            let pip = pip.clone();
+            move || pip.available()
+        });
         view()
             .absolute()
             .inset(px(0.0))
@@ -564,6 +575,19 @@ impl PlayerControls {
                     .child(player_menu_row("Resize", EXPAND, move || {
                         menu.set(Some(Menu::Resize))
                     }))
+                    .child(
+                        player_menu_row("Picture-in-picture", PIP, move || {
+                            if available.get_untracked() {
+                                menu.set(None);
+                                pip.enter();
+                            }
+                        })
+                        .opacity(move || if available.get() { 1.0 } else { 0.38_f32 })
+                        .accessibility_state(move || AccessibilityState {
+                            disabled: !available.get(),
+                            ..Default::default()
+                        }),
+                    )
                     .child(player_menu_row("Audio track", AUDIO, move || {
                         menu.set(Some(Menu::Audio))
                     }))
