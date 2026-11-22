@@ -128,7 +128,11 @@ impl Queue {
                         player.play(video.generation);
                     }
                 } else if let Some(item) = result.next {
-                    open(item.address());
+                    let address = item.address();
+                    if let Some(video) = current {
+                        watch.expect_queue_target(video.generation, &address);
+                    }
+                    open(address);
                 }
             })),
         );

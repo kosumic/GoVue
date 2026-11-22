@@ -53,7 +53,7 @@ impl NativeComponent for NowPlaying {
     }
 
     fn set_prop(&mut self, name: &str, value: Option<&Value>) {
-        if name != "snapshot" {
+        if name != "snapshot" || value.is_some_and(|value| value["transition"] == true) {
             return;
         }
         if let Some(session) = self.session {

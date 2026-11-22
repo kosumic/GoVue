@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nsh_core::{element::Spawned, prelude::*};
 use serde::{Deserialize, de::DeserializeOwned};
@@ -129,6 +129,7 @@ pub struct WatchPlayback {
     presentation: Signal<Option<EmbeddedVideoFrame>>,
     settings: Signal<Option<Map<String, Value>>>,
     foreground: Signal<bool>,
+    queue_target: Signal<Option<(String, Instant)>>,
     fit: Signal<PlaybackFit>,
     video: Signal<Option<WatchVideo>>,
     status: Signal<Option<Rc<PlaybackStatus>>>,
@@ -151,6 +152,7 @@ impl WatchPlayback {
             presentation: signal(None),
             settings: signal(None),
             foreground: signal(false),
+            queue_target: signal(None),
             fit: signal(PlaybackFit::Contain),
             video: signal(None),
             status: signal(None),
@@ -185,11 +187,12 @@ impl WatchPlayback {
             return;
         }
         self.page.borrow_mut().tab = tab.cloned();
-        self.change_document(tab.and_then(|tab| {
+        let document = tab.and_then(|tab| {
             tab.document
                 .get_untracked()
                 .map(|state| (tab, state.document))
-        }));
+        });
+        self.change_document(document, tab.is_some());
         if let Some(watch) = self.page.borrow().watch.clone() {
             watch.inject("document.dispatchEvent(new Event('yt-navigate-finish'));");
         }
@@ -384,6 +387,9 @@ impl WatchPlayback {
                     })
                 {
                     status.set(Some(Rc::new(latest.clone())));
+                    if let Some(current) = video.get_untracked() {
+                        recovery.finish_queue_target(&current.video_id);
+                    }
                     if latest.state == "error" {
                         recovery.recover(*generation);
                     }
@@ -460,9 +466,9 @@ impl WatchPlayback {
         }
         match event {
             BrowserEvent::Navigation { document, .. } | BrowserEvent::Ready { document } => {
-                self.change_document(Some((tab, document.clone())));
+                self.change_document(Some((tab, document.clone())), false);
             }
-            BrowserEvent::Error { .. } => self.change_document(None),
+            BrowserEvent::Error { .. } => self.change_document(None, false),
             BrowserEvent::PageMessage {
                 document,
                 origin,
@@ -485,6 +491,62 @@ impl WatchPlayback {
             }
             _ => {}
         }
+    }
+
+    /// Lets a native queue action start its target in the background.
+    /// The next validated document must match the target before extraction starts.
+    pub fn expect_queue_target(&self, generation: u64, address: &str) {
+        if !self.settings.with_untracked(|settings| {
+            settings
+                .as_ref()
+                .and_then(|settings| settings.get("backgroundPlayback"))
+                == Some(&Value::Bool(true))
+        }) || !self.video.with_untracked(|video| {
+            video
+                .as_ref()
+                .is_some_and(|video| !video.offline && video.generation == generation)
+        }) {
+            return;
+        }
+        let identity: Value = match self
+            .core
+            .state(json!({"op":"browser_identity","url":address}))
+        {
+            Ok(identity) => identity,
+            Err(_) => return,
+        };
+        if let Some(target) = identity["videoId"].as_str() {
+            self.arm_queue_target(target.to_owned(), Duration::from_secs(20));
+        }
+    }
+
+    fn arm_queue_target(&self, video: String, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        self.queue_target.set(Some((video, deadline)));
+        let queued = self.queue_target;
+        self.owner.run(|| {
+            spawn(async move {
+                timer(timeout).await;
+                if queued.with_untracked(|target| {
+                    target.as_ref().is_some_and(|(_, time)| *time == deadline)
+                }) {
+                    queued.set(None);
+                }
+            });
+        });
+    }
+
+    fn finish_queue_target(&self, video: &str) {
+        if self
+            .queue_target
+            .with_untracked(|target| target.as_ref().is_some_and(|(target, _)| target == video))
+        {
+            self.queue_target.set(None);
+        }
+    }
+
+    pub fn queue_transition(&self) -> bool {
+        self.queue_target.with(Option::is_some)
     }
 
     fn message(&self, watch: &WatchDocument, event: &BrowserEvent, message: Value) {
@@ -522,7 +584,8 @@ impl WatchPlayback {
         }
     }
 
-    fn change_document(&self, next: Option<(&BrowserTab, BrowserDocument)>) {
+    fn change_document(&self, next: Option<(&BrowserTab, BrowserDocument)>, selecting_tab: bool) {
+        let waiting_for_document = selecting_tab && next.is_none();
         let next = next.and_then(|(tab, document)| {
             let identity: Value = self
                 .core
@@ -575,11 +638,24 @@ impl WatchPlayback {
         self.layout.set(None);
         self.error.set(None);
         let mut page = self.page.borrow_mut();
+        if !waiting_for_document
+            && self.queue_target.with_untracked(|target| {
+                target
+                    .as_ref()
+                    .is_some_and(|(target, deadline)| target != id || Instant::now() >= *deadline)
+            })
+        {
+            self.queue_target.set(None);
+        }
         page.watch = next;
         page.media_ready = false;
         page.displayed = retain;
         if offline && let Some(watch) = &page.watch {
             watch.native_player(true);
+        }
+        drop(page);
+        if self.queue_transition() {
+            self.maybe_start();
         }
     }
 
@@ -593,21 +669,35 @@ impl WatchPlayback {
         let Some(settings) = self.settings.get_untracked() else {
             return;
         };
-        let (id, pending) = {
+        let (id, pending, ready) = {
             let page = self.page.borrow();
-            let Some(watch) = page.watch.as_ref().filter(|_| page.media_ready) else {
+            let Some(watch) = page.watch.as_ref() else {
                 return;
             };
-            (watch.video_id.clone(), page.pending.is_some())
+            (
+                watch.video_id.clone(),
+                page.pending.is_some(),
+                page.media_ready,
+            )
         };
+        let requested = self.queue_target.with_untracked(|target| {
+            target
+                .as_ref()
+                .is_some_and(|(target, deadline)| target == &id && Instant::now() < *deadline)
+        });
+        let foreground = self.foreground.get_untracked()
+            || (requested && settings.get("backgroundPlayback") == Some(&Value::Bool(true)));
         if self
             .session(
                 "auto",
-                json!({"owner":id,"ready":true,"foreground":self.foreground.get_untracked(),
+                json!({"owner":id,"ready":ready || requested,"foreground":foreground,
             "pending":pending,"settings":settings}),
             )
             .unwrap_or(false)
         {
+            if requested {
+                self.arm_queue_target(id, Duration::from_secs(110));
+            }
             self.start();
         }
     }
@@ -657,6 +747,9 @@ impl WatchPlayback {
                     .unwrap_or(false)
                 {
                     return;
+                }
+                if result.is_err() {
+                    controller.finish_queue_target(&watch.video_id);
                 }
                 controller.page.borrow_mut().pending = None;
                 controller.preparing.set(false);
@@ -848,6 +941,7 @@ impl WatchPlayback {
     }
 
     pub fn close(&self) {
+        self.queue_target.set(None);
         self.cancel_pending();
         let offline = self
             .video

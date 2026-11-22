@@ -40,11 +40,18 @@ pub fn now_playing(
         .opacity(0.0)
         .pointer_events(PointerEvents::None)
         .prop("snapshot", move || {
+            let undisplayed = || {
+                if watch.queue_transition() {
+                    json!({"transition":true})
+                } else {
+                    Value::Null
+                }
+            };
             let Some(video) = watch.video() else {
-                return Value::Null;
+                return undisplayed();
             };
             let Some(status) = watch.status() else {
-                return Value::Null;
+                return undisplayed();
             };
             let (previous, next) = queue.with(|queue| {
                 (

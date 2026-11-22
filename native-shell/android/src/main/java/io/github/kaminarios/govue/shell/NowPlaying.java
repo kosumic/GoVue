@@ -79,6 +79,7 @@ public final class NowPlaying implements NshComponent {
     @Override
     public void setProp(String name, Object value) {
         if (!"snapshot".equals(name) || selected() != this) return;
+        if (value instanceof Map<?, ?> fields && Boolean.TRUE.equals(fields.get("transition"))) return;
         current = Snapshot.read(value);
         Intent service = new Intent(app, NowPlayingService.class);
         if (current == null) {
