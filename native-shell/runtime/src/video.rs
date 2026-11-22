@@ -91,6 +91,20 @@ pub enum PlaybackFit {
     Contain,
     Cover,
     Fill,
+    Width,
+    Height,
+}
+
+impl PlaybackFit {
+    pub fn from_setting(mode: &str) -> Self {
+        match mode {
+            "fill" => Self::Fill,
+            "zoom" => Self::Cover,
+            "width" => Self::Width,
+            "height" => Self::Height,
+            _ => Self::Contain,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]

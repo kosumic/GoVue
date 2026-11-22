@@ -1,7 +1,9 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use govue_shell_runtime::{PlaybackEvent, TranscriptReader, WatchPlayback, WatchSubtitles};
+use govue_shell_runtime::{
+    PlaybackEvent, PlaybackFit, TranscriptReader, WatchPlayback, WatchSubtitles,
+};
 use nsh_core::{PointerEvents, PressEvent, prelude::*};
 use serde_json::{Value, json};
 
@@ -27,6 +29,7 @@ const PREVIOUS: &str = "M19 20 9 12l10-8zM5 4v16";
 const NEXT: &str = "m5 4 10 8-10 8zM19 4v16";
 const SETTINGS: &str = "M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8zM9 3h6l1 3 3-1 2 4-2 3 2 3-2 4-3-1-1 3H9l-1-3-3 1-2-4 2-3-2-3 2-4 3 1z";
 const QUEUE: &str = "M3 6h18M3 12h18M3 18h10m4-2 4 2-4 2z";
+const SPEED: &str = "M3 18a9 9 0 1 1 18 0H3zm9-2 4-5m-9 3h1m4-5v1";
 
 type WriteSetting = Rc<dyn Fn(Value)>;
 type OpenVideo = Rc<dyn Fn(String)>;
@@ -35,6 +38,8 @@ type OpenVideo = Rc<dyn Fn(String)>;
 enum Menu {
     Subtitles,
     More,
+    Speed,
+    Resize,
     Queue,
 }
 
@@ -51,6 +56,7 @@ pub struct PlayerControls {
     menu: Signal<Option<Menu>>,
     activity: Signal<u64>,
     ended: Signal<Option<u64>>,
+    speeds: Signal<Vec<f64>>,
 }
 
 impl PlayerControls {
@@ -75,7 +81,17 @@ impl PlayerControls {
             menu: signal(None),
             activity: signal(0),
             ended: signal(None),
+            speeds: signal(Vec::new()),
         };
+        spawn({
+            let watch = controller.watch.clone();
+            let speeds = controller.speeds;
+            async move {
+                if let Ok(values) = watch.speeds().await {
+                    speeds.set(values);
+                }
+            }
+        });
         let playing = computed({
             let watch = controller.watch.clone();
             move || watch.status().is_some_and(|status| status.playing)
@@ -217,6 +233,7 @@ impl PlayerControls {
         let menu = self.menu;
         let popup = self.clone();
         let more = self.clone();
+        let options = self.clone();
         let queue = self.queue.clone();
         let palette = self.palette;
         view()
@@ -267,6 +284,12 @@ impl PlayerControls {
             .child(when(
                 move || menu.get() == Some(Menu::More) && bounds.get().visible,
                 move || more.more_menu(bounds),
+            ))
+            .child(when(
+                move || {
+                    matches!(menu.get(), Some(Menu::Speed | Menu::Resize)) && bounds.get().visible
+                },
+                move || options.preference_menu(bounds),
             ))
             .child(when(
                 move || menu.get() == Some(Menu::Queue) && bounds.get().visible,
@@ -519,18 +542,114 @@ impl PlayerControls {
                     .max_w(percentage(0.94))
                     .rounded(px(12.0))
                     .bg(rgba(0x262626fa))
+                    .child(player_menu_row("Playback speed", SPEED, move || {
+                        menu.set(Some(Menu::Speed))
+                    }))
+                    .child(player_menu_row("Resize", EXPAND, move || {
+                        menu.set(Some(Menu::Resize))
+                    }))
+                    .child(player_menu_row("Queue", QUEUE, move || {
+                        menu.set(Some(Menu::Queue))
+                    })),
+            )
+    }
+
+    fn preference_menu(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {
+        let p = self.palette;
+        let menu = self.menu;
+        let title = if menu.get_untracked() == Some(Menu::Speed) {
+            "Playback speed"
+        } else {
+            "Resize"
+        };
+        let entries = if menu.get_untracked() == Some(Menu::Speed) {
+            let watch = self.watch.clone();
+            let write = self.settings.clone();
+            view().child(each(
+                self.speeds,
+                |speed| speed.to_bits(),
+                move |speed, _| {
+                    let watch = watch.clone();
+                    let write = write.clone();
+                    let speed = speed.get_untracked();
+                    let label = if speed == 1.0 {
+                        "1× (Normal)".into()
+                    } else {
+                        format!("{speed}×")
+                    };
+                    let selected = computed({
+                        let watch = watch.clone();
+                        move || watch.status().is_some_and(|status| status.rate == speed)
+                    });
+                    player_option(p, label, selected, move || {
+                        watch.rate(speed);
+                        write(json!({"playbackSpeed":speed}));
+                        menu.set(None);
+                    })
+                },
+            ))
+        } else {
+            view().children(
+                [
+                    ("fit", "Fit"),
+                    ("fill", "Fill"),
+                    ("zoom", "Zoom"),
+                    ("width", "Fixed width"),
+                    ("height", "Fixed height"),
+                ]
+                .map(|(mode, label)| {
+                    let fit = PlaybackFit::from_setting(mode);
+                    let watch = self.watch.clone();
+                    let write = self.settings.clone();
+                    let selected = computed({
+                        let watch = watch.clone();
+                        move || watch.fit() == fit
+                    });
+                    player_option(p, label.into(), selected, move || {
+                        watch.resize(fit);
+                        write(json!({"resizeMode":mode}));
+                        menu.set(None);
+                    })
+                }),
+            )
+        };
+        view()
+            .absolute()
+            .inset(px(0.0))
+            .child(
+                press()
+                    .absolute()
+                    .inset(px(0.0))
+                    .label("Close options")
+                    .on_press(move || menu.set(None)),
+            )
+            .child(
+                view()
+                    .absolute()
+                    .right(px(8.0))
+                    .top(move || px(bounds.get().top + 46.0))
+                    .w(px(255.0))
+                    .max_w(percentage(0.94))
+                    .max_h(percentage(0.8))
+                    .rounded(px(12.0))
+                    .bg(move || p.raised())
                     .child(
-                        press()
+                        view()
                             .flex_row()
                             .items_center()
-                            .gap(px(12.0))
-                            .px(px(13.0))
-                            .min_h(px(48.0))
-                            .label("Queue")
-                            .on_press(move || menu.set(Some(Menu::Queue)))
-                            .child(ui::icon(QUEUE, 24.0, || rgb(0xffffff).into()))
-                            .child(text("Queue").text_size(px(15.0)).text_color(rgb(0xffffff))),
-                    ),
+                            .pl(px(13.0))
+                            .child(
+                                text(title)
+                                    .flex_1()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(15.0))
+                                    .text_color(move || p.ink()),
+                            )
+                            .child(ui::icon_button(p, ui::CLOSE, "Close options", move || {
+                                menu.set(None)
+                            })),
+                    )
+                    .child(scroll().max_h(px(300.0)).child(entries)),
             )
     }
 
@@ -717,6 +836,47 @@ fn error_button(p: Palette, title: &'static str, action: impl Fn() + 'static) ->
         .p(px(12.0))
         .on_press(action)
         .child(text(title).text_size(px(13.0)).text_color(move || p.ink()))
+}
+
+fn player_menu_row(title: &'static str, path: &'static str, action: impl Fn() + 'static) -> View {
+    press()
+        .flex_row()
+        .items_center()
+        .gap(px(12.0))
+        .px(px(13.0))
+        .min_h(px(48.0))
+        .label(title)
+        .on_press(action)
+        .child(ui::icon(path, 24.0, || rgb(0xffffff).into()))
+        .child(text(title).text_size(px(15.0)).text_color(rgb(0xffffff)))
+}
+
+fn player_option(
+    p: Palette,
+    title: String,
+    selected: Memo<bool>,
+    action: impl Fn() + 'static,
+) -> View {
+    press()
+        .flex_row()
+        .items_center()
+        .px(px(13.0))
+        .min_h(px(46.0))
+        .label(title.clone())
+        .on_press(action)
+        .accessibility_state(move || AccessibilityState {
+            selected: selected.get(),
+            ..Default::default()
+        })
+        .child(
+            text(title)
+                .flex_1()
+                .text_size(px(14.0))
+                .text_color(move || p.ink()),
+        )
+        .child(when(selected, move || {
+            ui::icon(CHECK, 20.0, move || p.ink())
+        }))
 }
 
 fn player_button(

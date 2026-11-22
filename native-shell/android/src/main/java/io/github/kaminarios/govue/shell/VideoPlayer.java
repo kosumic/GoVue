@@ -257,6 +257,10 @@ public final class VideoPlayer implements NshComponent {
                 } else if ("contain".equals(fit)) {
                     if (ratio > 1) y = 1 / ratio;
                     else x = ratio;
+                } else if ("width".equals(fit)) {
+                    y = 1 / ratio;
+                } else if ("height".equals(fit)) {
+                    x = ratio;
                 }
                 transform.setScale(x, y, width / 2f, height / 2f);
             }

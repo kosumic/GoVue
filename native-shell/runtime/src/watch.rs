@@ -151,7 +151,6 @@ impl WatchPlayback {
 
     /// Use the persisted settings snapshot from the app root.
     pub fn configure(&self, settings: Map<String, Value>, foreground: bool) {
-        self.fit.set(playback_fit(&settings));
         self.settings.set(Some(settings));
         self.foreground.set(foreground);
         self.maybe_start();
@@ -179,6 +178,24 @@ impl WatchPlayback {
 
     pub fn player(&self) -> &VideoPlayer {
         &self.player
+    }
+
+    pub fn fit(&self) -> PlaybackFit {
+        self.fit.get()
+    }
+
+    pub fn resize(&self, fit: PlaybackFit) {
+        self.fit.set(fit);
+    }
+
+    pub fn rate(&self, rate: f64) {
+        if let Some(video) = self.video.get_untracked() {
+            self.player.rate(video.generation, rate);
+        }
+    }
+
+    pub async fn speeds(&self) -> Result<Vec<f64>, CoreError> {
+        self.core.execute(json!({"op":"media_speeds"})).await
     }
 
     pub fn frame(&self, width: f32) -> EmbeddedVideoFrame {
@@ -530,7 +547,12 @@ impl WatchPlayback {
             json!({"playback":{"videoId":watch.video_id,"offline":false,
             "qualityHeight":height,"qualityFps":fps}}),
         )?;
-        self.fit.set(playback_fit(&settings));
+        self.fit.set(PlaybackFit::from_setting(
+            settings
+                .get("resizeMode")
+                .and_then(Value::as_str)
+                .unwrap_or("fit"),
+        ));
         self.status.set(None);
         let playing = previous.is_none_or(|status| status.playing || status.state == "error");
         let rate = settings
@@ -646,13 +668,5 @@ impl WatchPlayback {
         request["op"] = json!(format!("player_session_{action}"));
         request["sessionId"] = json!(self.session_id);
         self.core.state(request)
-    }
-}
-
-fn playback_fit(settings: &Map<String, Value>) -> PlaybackFit {
-    match settings.get("resizeMode").and_then(Value::as_str) {
-        Some("fill") => PlaybackFit::Fill,
-        Some("zoom") => PlaybackFit::Cover,
-        _ => PlaybackFit::Contain,
     }
 }
