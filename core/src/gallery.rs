@@ -3,11 +3,29 @@ use crate::Result;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 const LIMIT: u64 = 20 * 1024 * 1024;
+static TRANSFERS: AtomicUsize = AtomicUsize::new(0);
+
+struct Transfer;
+
+impl Drop for Transfer {
+    fn drop(&mut self) {
+        TRANSFERS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+struct Temporary(PathBuf);
+
+impl Drop for Temporary {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
 pub(crate) fn allowed(raw: &str) -> Result<Url> {
     let url = Url::parse(raw).map_err(|_| "Invalid image address.")?;
     if raw.len() > 8192
@@ -97,6 +115,77 @@ fn prune(root: &str, protect: Option<&Path>) {
         }
     }
 }
+
+fn publish(root: &str, key: &str, temporary: &Path) -> Result<Value> {
+    let metadata = image(temporary)?;
+    let extension = crate::string(&metadata, "extension")?;
+    let destination = directory(root).join(format!("{key}.{extension}"));
+    fs::rename(temporary, &destination).map_err(|_| "Could not cache image.")?;
+    let result = image(&destination)?;
+    prune(root, Some(&destination));
+    Ok(result)
+}
+
+pub(crate) fn fetch(command: &Value, root: &str) -> Result<Value> {
+    let mut plan = dispatch(&json!({"op":"gallery_request","url":command["url"]}), root)?;
+    if plan["image"].is_object() {
+        return Ok(plan["image"].take());
+    }
+    let active = TRANSFERS.fetch_add(1, Ordering::AcqRel);
+    let _transfer = Transfer;
+    if active >= 3 {
+        return Err("Images are still loading. Try again.".into());
+    }
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(16)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+    while let Some(request) = plan.get("request") {
+        let url = crate::string(request, "url")?;
+        let response = agent
+            .get(url)
+            .header("Accept", "image/*")
+            .header("User-Agent", "GoVue")
+            .call()
+            .map_err(|_| "Image could not load. Try again.")?;
+        let status = response.status().as_u16();
+        if (300..400).contains(&status) {
+            let location = response
+                .headers()
+                .get("Location")
+                .and_then(|value| value.to_str().ok());
+            plan = dispatch(
+                &json!({"op":"gallery_response","request":request,"response":{"status":status,"location":location}}),
+                root,
+            )?;
+            continue;
+        }
+        if !(200..300).contains(&status) {
+            break;
+        }
+        let key = crate::string(request, "key")?;
+        let folder = directory(root);
+        fs::create_dir_all(&folder).map_err(|_| "Could not create image storage.")?;
+        let mut nonce = [0; 8];
+        getrandom::getrandom(&mut nonce).map_err(|_| "Could not prepare the image cache.")?;
+        let path = folder.join(format!("{key}-{:016x}.part", u64::from_ne_bytes(nonce)));
+        let mut output = fs::File::create_new(&path).map_err(|_| "Could not save image.")?;
+        let temporary = Temporary(path);
+        let bytes = io::copy(
+            &mut response.into_body().into_reader().take(LIMIT + 1),
+            &mut output,
+        )
+        .map_err(|_| "Could not save image.")?;
+        if bytes > LIMIT {
+            return Err("Image exceeds the 20 MB limit.".into());
+        }
+        drop(output);
+        return publish(root, key, &temporary.0);
+    }
+    Err("Image could not load. Try again.".into())
+}
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     match crate::string(command, "op")? {
         "gallery_validate" => {
@@ -157,13 +246,19 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 return Err("Image could not load. Try again.".into());
             }
             let temporary = directory(root).join(format!("{cache_key}.part"));
-            let metadata = image(&temporary)?;
-            let extension = crate::string(&metadata, "extension")?;
-            let destination = directory(root).join(format!("{cache_key}.{extension}"));
-            fs::rename(&temporary, &destination).map_err(|_| "Could not cache image.")?;
-            let result = image(&destination)?;
-            prune(root, Some(&destination));
-            Ok(json!({"image":result}))
+            Ok(json!({"image":publish(root, &cache_key, &temporary)?}))
+        }
+        "gallery_export_file" => {
+            let plan = dispatch(&json!({"op":"gallery_request","url":command["url"]}), root)?;
+            let image = &plan["image"];
+            let source = Url::parse(crate::string(image, "uri")?)
+                .ok()
+                .and_then(|url| url.to_file_path().ok())
+                .ok_or("The image is no longer cached.")?;
+            let name = crate::string(image, "name")?;
+            let mut export = crate::downloads::runner::export_copy(&source, name)?;
+            export["mimeType"] = image["mimeType"].clone();
+            Ok(export)
         }
         _ => Err(crate::clean("Unknown gallery action.").into()),
     }

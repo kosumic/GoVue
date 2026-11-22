@@ -99,6 +99,12 @@ pub(crate) fn export_json(name: &str, data: &Value) -> Result<Value> {
         .map_err(|_| "Could not prepare this export.")?;
     Ok(json!({"uri":uri(&path)?,"name":name}))
 }
+
+pub(crate) fn export_copy(source: &Path, name: &str) -> Result<Value> {
+    let destination = export_destination(name)?;
+    fs::copy(source, &destination).map_err(|_| "The saved file is missing.")?;
+    Ok(json!({"uri":uri(&destination)?,"name":name}))
+}
 fn local(raw: &Value) -> Result<PathBuf> {
     raw.as_str()
         .and_then(|s| url::Url::parse(s).ok())
@@ -615,9 +621,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 return Ok(json!(uri(&file(name)?)?));
             }
             let export_name = super::publication::name(&value, name)?;
-            let destination = export_destination(&export_name)?;
-            fs::copy(file(name)?, &destination).map_err(|_| "The saved file is missing.")?;
-            return Ok(json!({"uri":uri(&destination)?,"name":export_name}));
+            return export_copy(&file(name)?, &export_name);
         }
         _ => return Err("Unknown download action.".into()),
     }

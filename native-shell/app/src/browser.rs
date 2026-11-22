@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 use crate::browser_card::{self, Card};
 use crate::chat::Chat;
 use crate::downloads::Downloads;
+use crate::gallery_view::{self, GalleryTarget};
 use crate::queue::Queue;
 use crate::settings_view::SettingsScreen;
 use crate::ui::{Palette, press};
@@ -65,6 +66,8 @@ pub struct Browser {
     notice: Signal<Option<(String, u64)>>,
     notice_revision: Signal<u64>,
     card: Signal<Option<Card>>,
+    gallery: Signal<Option<GalleryTarget>>,
+    gallery_revision: Signal<u64>,
 }
 
 impl Browser {
@@ -94,6 +97,8 @@ impl Browser {
             notice: signal(None),
             notice_revision: signal(0),
             card: signal(None),
+            gallery: signal(None),
+            gallery_revision: signal(0),
         };
         spawn(browser.clone().run(pending));
         #[cfg(target_os = "ios")]
@@ -429,6 +434,7 @@ impl Browser {
             Some("card") => {
                 if let Some(card) = Card::from_page(&self.core, payload) { self.card.set(Some(card)); }
             }
+            Some("gallery") => self.open_gallery(id, document, payload),
             Some("chat") => {
                 self.chat.show(self.video_id(&document));
             }
@@ -489,6 +495,60 @@ impl Browser {
             card.get()
                 .map(|card| browser_card::sheet(browser.clone(), card))
         })
+    }
+
+    fn open_gallery(&self, id: u64, document: BrowserDocument, payload: &Value) {
+        let revision = self.gallery_revision.get_untracked() + 1;
+        self.gallery_revision.set(revision);
+        let command =
+            json!({"op":"gallery_validate","urls":payload["urls"],"index":payload["index"]});
+        let browser = self.clone();
+        spawn(async move {
+            let result = browser.core.execute::<GalleryTarget>(command).await;
+            if browser.gallery_revision.get_untracked() != revision || !browser.active(id) {
+                return;
+            }
+            let still_current = browser
+                .retained
+                .borrow()
+                .get(&id)
+                .and_then(BrowserTab::current_document)
+                .is_some_and(|current| {
+                    current.generation == document.generation && current.url == document.url
+                });
+            if still_current {
+                match result {
+                    Ok(gallery) => browser.gallery.set(Some(gallery)),
+                    Err(error) => crate::downloads::alert(error.to_string()).await,
+                }
+            }
+        });
+    }
+
+    pub fn gallery_view(&self) -> impl IntoElement {
+        let gallery = self.gallery;
+        let browser = self.clone();
+        dynamic(move || {
+            let target = gallery.get()?;
+            let close = browser.clone();
+            Some(gallery_view::gallery(
+                browser.core.clone(),
+                browser.downloads.clone(),
+                target,
+                move || {
+                    close.close_gallery();
+                },
+            ))
+        })
+    }
+
+    pub fn close_gallery(&self) -> bool {
+        let open = self.gallery.with_untracked(Option::is_some);
+        if open {
+            self.gallery_revision.update(|revision| *revision += 1);
+            self.gallery.set(None);
+        }
+        open
     }
 
     pub fn close_card(&self) -> bool {

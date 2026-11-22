@@ -24,6 +24,7 @@ mod download_library;
 mod downloads;
 #[cfg(target_os = "ios")]
 mod downloads_ios;
+mod gallery_view;
 #[cfg(target_os = "ios")]
 mod ios_browser;
 #[cfg(target_os = "ios")]
@@ -259,7 +260,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let downloads = downloads.clone();
         let offline = back_from_offline.clone();
         move || {
-            if downloads.back() || browser.close_card() {
+            if downloads.back() || browser.close_gallery() || browser.close_card() {
                 return true;
             }
             if let Some(screen) = settings_screen.get_untracked() {
@@ -507,6 +508,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(settings_view.view())
                 .child(library.view())
                 .child(browser.card_view())
+                .child(browser.gallery_view())
                 .child(download_confirm::download_confirm(
                     palette, downloads, width, height,
                 ))

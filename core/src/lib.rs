@@ -379,6 +379,9 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     if op == "app_check_update" {
         return app::check_update(&command);
     }
+    if op == "gallery_fetch" {
+        return gallery::fetch(&command, root);
+    }
     // These reads take immutable snapshots under their own short lock scopes.
     if op == "restore" {
         return transcript::restore(&command, root);
