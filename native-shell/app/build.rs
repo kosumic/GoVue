@@ -29,6 +29,8 @@ fn main() {
         "../ios/NowPlaying.swift",
         "../ios/IsolatedRuntime.swift",
         "../ios/GameRenderer.swift",
+        "../ios/WordTools.swift",
+        "../../modules/govue-core/ios/CaptionSelectionSurface.swift",
         "../../modules/govue-core/ios/DownloadMux.swift",
         "../../modules/govue-core/ios/FileExport.swift",
         "../../modules/govue-core/ios/IosDownloadHttp.swift",

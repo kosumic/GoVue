@@ -195,6 +195,10 @@ impl ChatView {
         self.games.audio.view()
     }
 
+    pub fn caption_audio(&self) -> crate::caption_audio::CaptionAudio {
+        self.games.audio.clone()
+    }
+
     fn edit(&self, message: Message) {
         self.reasoning_open.set(false);
         let original = self

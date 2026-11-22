@@ -6,6 +6,7 @@ use nsh_core::{element::input, prelude::*, share::ShareRequest};
 
 use crate::reader_clock::ReaderClock;
 use crate::ui::{self, Palette, press};
+use crate::word_tools::{CaptionLine, WordTools};
 
 const REFRESH: &str = "M20 11a8 8 0 1 0-2.3 6m2.3-13v7h-7";
 const SHARE: &str = "M8.7 10.4l6.7-3.8M8.7 13.6l6.7 3.8M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm12-7a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm0 14a3 3 0 1 1-6 0 3 3 0 0 1 6 0z";
@@ -23,10 +24,11 @@ pub struct ReaderView {
     clock: Option<ReaderClock>,
     following: Signal<bool>,
     jump: Signal<u64>,
+    words: WordTools,
 }
 
 impl ReaderView {
-    pub fn new(reader: TranscriptReader, palette: Palette) -> Self {
+    pub fn new(reader: TranscriptReader, palette: Palette, words: WordTools) -> Self {
         let documents = computed({
             let reader = reader.clone();
             move || reader.snapshot().filter(|_| reader.visible())
@@ -42,6 +44,7 @@ impl ReaderView {
             clock: None,
             following: signal(true),
             jump: signal(0),
+            words,
         };
         effect({
             let panel = panel.clone();
@@ -408,6 +411,7 @@ impl ReaderView {
         let query = self.query;
         let follow = self.following;
         let jump = self.jump;
+        let words = self.words.clone();
         let indices = computed(move || {
             results.with(|results| {
                 results
@@ -481,10 +485,45 @@ impl ReaderView {
                     move || indices.with(Vec::len),
                     move |row| {
                         let playback = playback.clone();
+                        let word_clock = playback.clone();
+                        let word_seek = playback.clone().map(|clock| {
+                            move |seconds| {
+                                follow.set(true);
+                                jump.update(|revision| *revision += 1);
+                                clock.seek(seconds);
+                            }
+                        });
+                        let words = words.clone();
+                        let word_line = move || {
+                            let index = indices.with(|rows| rows.get(row.index()).copied())?;
+                            let document = documents.get()?;
+                            let data = &document.document(track)?.data;
+                            let caption = data.segments.get(index)?;
+                            Some(CaptionLine {
+                                video: data.video_id.clone(),
+                                track: data.track_id.clone(),
+                                index,
+                                start: caption.start,
+                                text: caption.text.clone(),
+                            })
+                        };
+                        let word_panel = words.clone();
+                        let selecting = move || {
+                            word_line()
+                                .is_some_and(|line| word_panel.source().as_ref() == Some(&line))
+                        };
                         let selected = move || {
                             active.get().is_some_and(|active| {
                                 indices.with(|rows| rows.get(row.index()).copied()) == Some(active)
                             })
+                        };
+                        let word_position = move || {
+                            if !selected() {
+                                return None;
+                            }
+                            let clock = word_clock.as_ref()?;
+                            let snapshot = documents.get()?;
+                            clock.position(&snapshot.video_id)
                         };
                         view()
                             .mx(px(20.0))
@@ -509,7 +548,9 @@ impl ReaderView {
                             })
                             .when_some(playback, |row_view, playback| {
                                 row_view.role(AccessibilityRole::Button).on_press(move || {
-                                    if let Some(line) = segment(row.index()) {
+                                    if !selecting()
+                                        && let Some(line) = segment(row.index())
+                                    {
                                         follow.set(true);
                                         jump.update(|revision| *revision += 1);
                                         playback.seek(line.start);
@@ -524,14 +565,9 @@ impl ReaderView {
                                 .text_size(px(10.0))
                                 .text_color(move || p.muted()),
                             )
-                            .child(
-                                text(move || {
-                                    segment(row.index()).map_or_else(String::new, |line| line.text)
-                                })
-                                .text_size(px(15.0))
-                                .line_height(px(23.0))
-                                .text_color(move || p.ink()),
-                            )
+                            .child(words.line(word_line, word_position, word_seek, move || {
+                                follow.set(false)
+                            }))
                     },
                 )
                 .element_ref(&list)

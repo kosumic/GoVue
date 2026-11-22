@@ -9,6 +9,7 @@ import io.github.kaminarios.govue.shell.AiTransport;
 import io.github.kaminarios.govue.shell.BrowserLaunches;
 import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
+import io.github.kaminarios.govue.shell.CaptionWords;
 import io.github.kaminarios.govue.shell.CastTransport;
 import io.github.kaminarios.govue.shell.ChatCamera;
 import io.github.kaminarios.govue.shell.ChatSpeech;
@@ -22,6 +23,7 @@ import io.github.kaminarios.govue.shell.PlayerPip;
 import io.github.kaminarios.govue.shell.PlayerWindow;
 import io.github.kaminarios.govue.shell.TokenRuntime;
 import io.github.kaminarios.govue.shell.VideoPlayer;
+import io.github.kaminarios.govue.shell.WordTranslation;
 
 public final class GoVueActivity extends Activity {
     private final BrowserLaunches launches = new BrowserLaunches();
@@ -44,6 +46,8 @@ public final class GoVueActivity extends Activity {
         BrowserTab.register(view);
         launches.register(view);
         CaptionOverlay.register(view);
+        CaptionWords.register(view);
+        WordTranslation.register(view);
         ChatCamera.register(view, this);
         view.registerComponent("govue/chat-speech", context -> {
             speech = new ChatSpeech(this, context);

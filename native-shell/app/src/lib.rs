@@ -68,6 +68,9 @@ mod speech_ios;
 mod sponsors;
 mod subtitle_style;
 mod ui;
+#[cfg(target_os = "ios")]
+mod word_ios;
+mod word_tools;
 
 use std::rc::Rc;
 
@@ -103,6 +106,7 @@ pub fn run_ios() {
         ios_browser::register(components);
         downloads_ios::register(components);
         game_ios::register(components);
+        word_ios::register(components);
         now_playing_ios::register(components);
         ios_runtimes::register(components);
         player_window_ios::register(components);
@@ -241,8 +245,9 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             }
         }
     });
+    let words = word_tools::WordTools::new(core.clone(), palette, chat_view.caption_audio());
     let chat_reader = TranscriptReader::new(core.clone());
-    let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette);
+    let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette, words.clone());
     let watch_reader = TranscriptReader::new(core.clone());
     let pause_setting = preferences.clone();
     let clock = reader_clock::ReaderClock::new(
@@ -262,7 +267,36 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         },
     );
     let watch_transcript =
-        reader_view::ReaderView::new(watch_reader.clone(), palette).with_playback(clock);
+        reader_view::ReaderView::new(watch_reader.clone(), palette, words.clone())
+            .with_playback(clock);
+    effect({
+        let words = words.clone();
+        let chat = chat_reader.clone();
+        let watch = watch_reader.clone();
+        move || {
+            if let Some(source) = words.source() {
+                let current = [chat.clone(), watch.clone()].into_iter().any(|reader| {
+                    reader.visible()
+                        && reader.snapshot().is_some_and(|snapshot| {
+                            (0..snapshot.track_ids.len())
+                                .filter_map(|index| snapshot.document(index))
+                                .any(|document| {
+                                    document.data.video_id == source.video
+                                        && document.data.track_id == source.track
+                                        && document
+                                            .data
+                                            .segments
+                                            .get(source.index)
+                                            .is_some_and(|caption| caption.text == source.text)
+                                })
+                        })
+                });
+                if !current || lifecycle() == Lifecycle::Background {
+                    words.close();
+                }
+            }
+        }
+    });
     let controls = PlayerControls::new(
         watch.clone(),
         subtitles.clone(),
@@ -282,11 +316,12 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let downloads = downloads.clone();
         let settings_view = settings_view.clone();
         let offline = back_from_offline.clone();
+        let words = words.clone();
         move || {
             if downloads.back() || browser.close_gallery() || browser.close_card() {
                 return true;
             }
-            if settings_view.back() {
+            if settings_view.back() || words.close() {
                 return true;
             }
             if chat_reader.visible() {
@@ -557,6 +592,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(controls.error_view())
                 .child(chat_panel)
                 .child(chat_transcript.view(|| 0.0, || 0.0))
+                .child(words.popup())
                 .child(mini_controls)
                 .child(settings_view.view())
                 .child(library.view())
@@ -602,6 +638,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     root.child(chat_view.camera())
         .child(chat_view.speech())
         .child(chat_view.read_aloud())
+        .child(words.native())
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())
 }
