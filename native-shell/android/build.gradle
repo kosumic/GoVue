@@ -1,0 +1,54 @@
+plugins {
+    id "com.android.application" version "9.2.1"
+}
+
+def source = providers.environmentVariable("NSH_SOURCE")
+        .orElse(rootProject.layout.projectDirectory.dir("../../../nsh").asFile.absolutePath)
+def nshJava = file("${source.get()}/crates/nsh-platform-android/java")
+if (!new File(nshJava, "com/longbridge/nsh/NshView.java").isFile()) {
+    throw new GradleException("Set NSH_SOURCE to the Native Shell v0.6.1 source checkout.")
+}
+
+def govue = rootProject.layout.projectDirectory.dir("../..")
+def nativeInputs = layout.buildDirectory.dir("govue").get()
+def version = new groovy.json.JsonSlurper().parse(govue.file("package.json").asFile).version
+def parts = version.tokenize(".").collect { it.toInteger() }
+
+android {
+    namespace "io.github.kaminarios.govue.shell"
+    compileSdk 37
+
+    defaultConfig {
+        applicationId "io.github.kaminarios.govue.nsh"
+        minSdk 26
+        targetSdk 36
+        versionCode parts[0] * 1000000 + parts[1] * 1000 + parts[2]
+        versionName version
+        ndk { abiFilters "arm64-v8a" }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets.main {
+        java.srcDir nshJava
+        jniLibs.srcDir nativeInputs.dir("jniLibs").asFile
+        res.srcDir nativeInputs.dir("res").asFile
+    }
+
+    buildTypes {
+        release {
+            // The development app has a separate application ID.
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+dependencies {
+    implementation "androidx.webkit:webkit:1.14.0"
+    implementation "androidx.media3:media3-exoplayer:1.9.1"
+    implementation "androidx.media3:media3-exoplayer-dash:1.9.1"
+    implementation "androidx.media3:media3-exoplayer-hls:1.9.1"
+}

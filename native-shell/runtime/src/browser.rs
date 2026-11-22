@@ -152,6 +152,10 @@ impl BrowserTab {
         self.element.command("navigate", json!(url));
     }
 
+    pub fn current_document(&self) -> Option<BrowserDocument> {
+        self.document.get().map(|state| state.document)
+    }
+
     pub fn back(&self) {
         self.element.command("back", Value::Null);
     }

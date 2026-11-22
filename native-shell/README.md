@@ -6,6 +6,18 @@ gestures, and feature behavior. Preserve the YouTube launch screen, Chat in
 the bottom navigation and video player, and the existing player controls
 for subtitles and the transcript reader.
 
+Build the standalone Android app with GoVue's Nix Android toolchain, Gradle
+9.4.1, and the Native Shell v0.6.1 sources at `../nsh`. Set `NSH_SOURCE`
+for a different checkout location and `GRADLE` for a different Gradle
+executable. The build uses the Node dependencies for the shared page bundles.
+
+```sh
+nix develop path:. --command bash native-shell/android/build-release.sh
+```
+
+The ARM64 release APK is in `native-shell/android/build/outputs/apk/release`.
+During migration its application ID is `io.github.kaminarios.govue.nsh`.
+
 On Android, construct `Core::android()` in the Native Shell app root. It uses
 GoVue’s existing app-private `files/transcripts` directory. Reuse the app ID and
 signing identity in the eventual upgrade so Android retains that sandbox.
