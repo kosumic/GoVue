@@ -2,9 +2,11 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use govue_shell_runtime::{
-    PlaybackEvent, PlaybackFit, TranscriptReader, WatchPlayback, WatchSubtitles,
+    PlaybackEvent, PlaybackFit, PlaybackSelection, TranscriptReader, WatchPlayback, WatchSubtitles,
 };
-use nsh_core::{PointerEvents, PressEvent, prelude::*};
+use nsh_core::{
+    Dialog, DialogButton, DialogButtonStyle, PointerEvents, PressEvent, element::dialog, prelude::*,
+};
 use serde_json::{Value, json};
 
 use crate::chat::Chat;
@@ -30,6 +32,7 @@ const NEXT: &str = "m5 4 10 8-10 8zM19 4v16";
 const SETTINGS: &str = "M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8zM9 3h6l1 3 3-1 2 4-2 3 2 3-2 4-3-1-1 3H9l-1-3-3 1-2-4 2-3-2-3 2-4 3 1z";
 const QUEUE: &str = "M3 6h18M3 12h18M3 18h10m4-2 4 2-4 2z";
 const SPEED: &str = "M3 18a9 9 0 1 1 18 0H3zm9-2 4-5m-9 3h1m4-5v1";
+const AUDIO: &str = "M3 9h4l5-4v14l-5-4H3zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14";
 
 type WriteSetting = Rc<dyn Fn(Value)>;
 type OpenVideo = Rc<dyn Fn(String)>;
@@ -40,6 +43,8 @@ enum Menu {
     More,
     Speed,
     Resize,
+    Quality,
+    Audio,
     Queue,
 }
 
@@ -287,7 +292,10 @@ impl PlayerControls {
             ))
             .child(when(
                 move || {
-                    matches!(menu.get(), Some(Menu::Speed | Menu::Resize)) && bounds.get().visible
+                    matches!(
+                        menu.get(),
+                        Some(Menu::Speed | Menu::Resize | Menu::Quality | Menu::Audio)
+                    ) && bounds.get().visible
                 },
                 move || options.preference_menu(bounds),
             ))
@@ -526,6 +534,7 @@ impl PlayerControls {
         view()
             .absolute()
             .inset(px(0.0))
+            .z_index(1)
             .child(
                 press()
                     .absolute()
@@ -542,11 +551,17 @@ impl PlayerControls {
                     .max_w(percentage(0.94))
                     .rounded(px(12.0))
                     .bg(rgba(0x262626fa))
+                    .child(player_menu_row("Quality", SETTINGS, move || {
+                        menu.set(Some(Menu::Quality))
+                    }))
                     .child(player_menu_row("Playback speed", SPEED, move || {
                         menu.set(Some(Menu::Speed))
                     }))
                     .child(player_menu_row("Resize", EXPAND, move || {
                         menu.set(Some(Menu::Resize))
+                    }))
+                    .child(player_menu_row("Audio track", AUDIO, move || {
+                        menu.set(Some(Menu::Audio))
                     }))
                     .child(player_menu_row("Queue", QUEUE, move || {
                         menu.set(Some(Menu::Queue))
@@ -557,65 +572,70 @@ impl PlayerControls {
     fn preference_menu(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {
         let p = self.palette;
         let menu = self.menu;
-        let title = if menu.get_untracked() == Some(Menu::Speed) {
-            "Playback speed"
-        } else {
-            "Resize"
-        };
-        let entries = if menu.get_untracked() == Some(Menu::Speed) {
-            let watch = self.watch.clone();
-            let write = self.settings.clone();
-            view().child(each(
-                self.speeds,
-                |speed| speed.to_bits(),
-                move |speed, _| {
-                    let watch = watch.clone();
-                    let write = write.clone();
-                    let speed = speed.get_untracked();
-                    let label = if speed == 1.0 {
-                        "1× (Normal)".into()
-                    } else {
-                        format!("{speed}×")
-                    };
-                    let selected = computed({
-                        let watch = watch.clone();
-                        move || watch.status().is_some_and(|status| status.rate == speed)
-                    });
-                    player_option(p, label, selected, move || {
-                        watch.rate(speed);
-                        write(json!({"playbackSpeed":speed}));
-                        menu.set(None);
-                    })
-                },
-            ))
-        } else {
-            view().children(
-                [
-                    ("fit", "Fit"),
-                    ("fill", "Fill"),
-                    ("zoom", "Zoom"),
-                    ("width", "Fixed width"),
-                    ("height", "Fixed height"),
-                ]
-                .map(|(mode, label)| {
-                    let fit = PlaybackFit::from_setting(mode);
-                    let watch = self.watch.clone();
-                    let write = self.settings.clone();
-                    let selected = computed({
-                        let watch = watch.clone();
-                        move || watch.fit() == fit
-                    });
-                    player_option(p, label.into(), selected, move || {
-                        watch.resize(fit);
-                        write(json!({"resizeMode":mode}));
-                        menu.set(None);
-                    })
-                }),
-            )
+        let (title, entries) = match menu.get_untracked() {
+            Some(Menu::Quality) => ("Quality", self.quality_choices()),
+            Some(Menu::Audio) => ("Audio track", self.audio_choices()),
+            Some(Menu::Speed) => {
+                let watch = self.watch.clone();
+                let write = self.settings.clone();
+                (
+                    "Playback speed",
+                    view().child(each(
+                        self.speeds,
+                        |speed| speed.to_bits(),
+                        move |speed, _| {
+                            let watch = watch.clone();
+                            let write = write.clone();
+                            let speed = speed.get_untracked();
+                            let label = if speed == 1.0 {
+                                "1× (Normal)".into()
+                            } else {
+                                format!("{speed}×")
+                            };
+                            let selected = computed({
+                                let watch = watch.clone();
+                                move || watch.status().is_some_and(|status| status.rate == speed)
+                            });
+                            player_option(p, label, selected, move || {
+                                watch.rate(speed);
+                                write(json!({"playbackSpeed":speed}));
+                                menu.set(None);
+                            })
+                        },
+                    )),
+                )
+            }
+            _ => (
+                "Resize",
+                view().children(
+                    [
+                        ("fit", "Fit"),
+                        ("fill", "Fill"),
+                        ("zoom", "Zoom"),
+                        ("width", "Fixed width"),
+                        ("height", "Fixed height"),
+                    ]
+                    .map(|(mode, label)| {
+                        let fit = PlaybackFit::from_setting(mode);
+                        let watch = self.watch.clone();
+                        let write = self.settings.clone();
+                        let selected = computed({
+                            let watch = watch.clone();
+                            move || watch.fit() == fit
+                        });
+                        player_option(p, label.into(), selected, move || {
+                            watch.resize(fit);
+                            write(json!({"resizeMode":mode}));
+                            menu.set(None);
+                        })
+                    }),
+                ),
+            ),
         };
         view()
             .absolute()
             .inset(px(0.0))
+            .z_index(1)
             .child(
                 press()
                     .absolute()
@@ -651,6 +671,102 @@ impl PlayerControls {
                     )
                     .child(scroll().max_h(px(300.0)).child(entries)),
             )
+    }
+
+    fn quality_choices(&self) -> View {
+        let watch = self.watch.clone();
+        let controls = self.clone();
+        view()
+            .child(self.quality_choice("Auto".into(), 0, 0))
+            .child(each(
+                move || {
+                    watch
+                        .video()
+                        .map_or_else(Vec::new, |video| video.qualities.to_vec())
+                },
+                |quality| (quality.height, quality.fps),
+                move |quality, _| {
+                    let quality = quality.get_untracked();
+                    controls.quality_choice(quality.label, quality.height, quality.fps.unwrap_or(0))
+                },
+            ))
+    }
+
+    fn quality_choice(&self, label: String, height: u32, fps: u32) -> View {
+        let watch = self.watch.clone();
+        let selected = computed(move || {
+            watch.video().is_some_and(|video| {
+                video.quality_height == height && (fps == 0 || video.quality_fps == fps)
+            })
+        });
+        let controls = self.clone();
+        player_option(self.palette, label, selected, move || {
+            controls.switch_stream(
+                PlaybackSelection::Quality { height, fps },
+                json!({"qualityHeight":height,"qualityFps":fps}),
+            );
+        })
+    }
+
+    fn audio_choices(&self) -> View {
+        let watch = self.watch.clone();
+        let controls = self.clone();
+        view()
+            .child(self.audio_choice("Default".into(), String::new()))
+            .child(each(
+                move || {
+                    watch
+                        .video()
+                        .map_or_else(Vec::new, |video| video.audio_tracks.to_vec())
+                },
+                |audio| audio.key.clone(),
+                move |audio, _| {
+                    let audio = audio.get_untracked();
+                    controls.audio_choice(audio.label, audio.key)
+                },
+            ))
+    }
+
+    fn audio_choice(&self, label: String, key: String) -> View {
+        let watch = self.watch.clone();
+        let current = key.clone();
+        let selected = computed(move || {
+            watch
+                .video()
+                .is_some_and(|video| video.audio_key == current)
+        });
+        let controls = self.clone();
+        player_option(self.palette, label, selected, move || {
+            controls.switch_stream(
+                PlaybackSelection::Audio(key.clone()),
+                json!({"audioKey":key}),
+            );
+        })
+    }
+
+    fn switch_stream(&self, selection: PlaybackSelection, settings: Value) {
+        self.menu.set(None);
+        let write = self.settings.clone();
+        self.watch
+            .select_stream(selection, move |result| match result {
+                Ok(()) => write(settings),
+                Err(message) => {
+                    spawn(async move {
+                        dialog(Dialog {
+                            id: 0,
+                            title: Some("Could not change playback".into()),
+                            message: Some(message),
+                            buttons: vec![DialogButton {
+                                text: "OK".into(),
+                                style: DialogButtonStyle::Default,
+                            }],
+                            cancelable: true,
+                            sheet: false,
+                        })
+                        .await;
+                    });
+                }
+            });
     }
 
     fn seek_bar(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {

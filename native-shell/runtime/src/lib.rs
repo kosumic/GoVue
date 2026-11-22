@@ -34,4 +34,6 @@ pub use video::{
     PlaybackSource, PlaybackStatus, VideoPlayer, VideoTrack,
 };
 #[cfg(target_os = "android")]
-pub use watch::{SubtitleTrack, WatchPlayback, WatchVideo};
+pub use watch::{
+    AudioTrack, PlaybackSelection, SubtitleTrack, VideoQuality, WatchPlayback, WatchVideo,
+};

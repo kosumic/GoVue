@@ -65,8 +65,31 @@ pub struct WatchVideo {
     pub generation: u64,
     pub quality_height: u32,
     pub quality_fps: u32,
+    pub qualities: Rc<[VideoQuality]>,
+    pub audio_key: String,
+    pub audio_tracks: Rc<[AudioTrack]>,
     pub subtitles: Rc<[SubtitleTrack]>,
 }
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct VideoQuality {
+    pub height: u32,
+    pub fps: Option<u32>,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct AudioTrack {
+    pub key: String,
+    pub label: String,
+}
+
+pub enum PlaybackSelection {
+    Quality { height: u32, fps: u32 },
+    Audio(String),
+}
+
+type StreamResult = Box<dyn FnOnce(Result<(), String>)>;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SubtitleTrack {
@@ -80,6 +103,7 @@ pub struct SubtitleTrack {
 #[derive(Clone)]
 pub struct WatchPlayback {
     core: Core,
+    owner: Owner,
     session_id: u64,
     player: VideoPlayer,
     page: Rc<RefCell<Page>>,
@@ -99,6 +123,7 @@ impl WatchPlayback {
         let session_id = core.state(json!({"op":"player_session_create"}))?;
         let watch = Self {
             core,
+            owner: Owner::current(),
             session_id,
             player: VideoPlayer::new(),
             page: Rc::new(RefCell::new(Page::default())),
@@ -455,6 +480,20 @@ impl WatchPlayback {
     }
 
     pub fn start(&self) {
+        self.start_source(None, None);
+    }
+
+    pub fn select_stream(
+        &self,
+        selection: PlaybackSelection,
+        complete: impl FnOnce(Result<(), String>) + 'static,
+    ) {
+        if self.video.with_untracked(Option::is_some) && !self.preparing.get_untracked() {
+            self.start_source(Some(selection), Some(Box::new(complete)));
+        }
+    }
+
+    fn start_source(&self, selection: Option<PlaybackSelection>, complete: Option<StreamResult>) {
         let Some(settings) = self.settings.get_untracked() else {
             return;
         };
@@ -469,22 +508,38 @@ impl WatchPlayback {
         self.preparing.set(true);
         self.error.set(None);
         let controller = self.clone();
-        let task = spawn(async move {
-            let result = controller.prepare(&watch, attempt, settings).await;
-            if !controller
-                .session("finish", json!({"token":token}))
-                .unwrap_or(false)
-            {
-                return;
-            }
-            controller.page.borrow_mut().pending = None;
-            controller.preparing.set(false);
-            if let Err(error) = result {
-                let displayed = controller.video.with_untracked(Option::is_some);
-                controller.page.borrow_mut().displayed = displayed;
-                watch.native_player(displayed);
-                controller.error.set(Some(error.to_string()));
-            }
+        let task = self.owner.run(|| {
+            spawn(async move {
+                let result = controller
+                    .prepare(&watch, attempt, settings, selection.as_ref())
+                    .await;
+                if !controller
+                    .session("finish", json!({"token":token}))
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                controller.page.borrow_mut().pending = None;
+                controller.preparing.set(false);
+                match result {
+                    Ok(()) => {
+                        if let Some(complete) = complete {
+                            complete(Ok(()));
+                        }
+                    }
+                    Err(error) => {
+                        let displayed = controller.video.with_untracked(Option::is_some);
+                        controller.page.borrow_mut().displayed = displayed;
+                        watch.native_player(displayed);
+                        let message = error.to_string();
+                        if let Some(complete) = complete {
+                            complete(Err(message));
+                        } else {
+                            controller.error.set(Some(message));
+                        }
+                    }
+                }
+            })
         });
         self.page.borrow_mut().pending = Some((token, task));
     }
@@ -494,6 +549,7 @@ impl WatchPlayback {
         watch: &WatchDocument,
         attempt: Attempt,
         mut settings: Map<String, Value>,
+        selection: Option<&PlaybackSelection>,
     ) -> Result<(), CoreError> {
         let previous = self.status.get_untracked();
         let position = if let Some(previous) = &previous {
@@ -516,24 +572,44 @@ impl WatchPlayback {
             ));
         }
         settings.extend(attempt.settings);
+        let mut quality = (attempt.height, attempt.fps);
+        let current = self.video.get_untracked();
+        let mut audio_key = current
+            .as_ref()
+            .map(|video| video.audio_key.as_str())
+            .or_else(|| settings.get("audioKey").and_then(Value::as_str))
+            .unwrap_or_default();
+        match selection {
+            Some(PlaybackSelection::Quality { height, fps }) => quality = (*height, *fps),
+            Some(PlaybackSelection::Audio(key)) => audio_key = key,
+            None => {}
+        }
         let source = PlaybackSource::prepare_android(
             &self.core,
             PlaybackRequest {
                 catalog: &catalog,
-                height: attempt.height,
-                fps: attempt.fps,
-                audio_key: settings
-                    .get("audioKey")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
+                height: quality.0,
+                fps: quality.1,
+                audio_key,
                 user_agent: &agent,
-                allow_fallback: true,
+                allow_fallback: selection.is_none(),
             },
         )
         .await?;
         let live = catalog["live"] == true;
+        let qualities = if live {
+            Vec::new()
+        } else {
+            self.core
+                .execute::<Vec<VideoQuality>>(
+                    json!({"op":"media_playback_choices","catalog":catalog}),
+                )
+                .await
+                .unwrap_or_default()
+        };
+        let previous = self.status.get_untracked().or(previous);
         let position = if previous.is_some() && !live {
-            position
+            previous.as_ref().map(|status| status.position)
         } else {
             self.core.execute(json!({"op":"player_resume","videoId":watch.video_id,
                 "position":position.or(catalog["position"].as_f64()),"duration":catalog["duration"],"live":live})).await?
@@ -547,18 +623,27 @@ impl WatchPlayback {
             json!({"playback":{"videoId":watch.video_id,"offline":false,
             "qualityHeight":height,"qualityFps":fps}}),
         )?;
-        self.fit.set(PlaybackFit::from_setting(
-            settings
-                .get("resizeMode")
-                .and_then(Value::as_str)
-                .unwrap_or("fit"),
-        ));
+        if previous.is_none() {
+            self.fit.set(PlaybackFit::from_setting(
+                settings
+                    .get("resizeMode")
+                    .and_then(Value::as_str)
+                    .unwrap_or("fit"),
+            ));
+        }
         self.status.set(None);
-        let playing = previous.is_none_or(|status| status.playing || status.state == "error");
-        let rate = settings
-            .get("playbackSpeed")
-            .and_then(Value::as_f64)
-            .unwrap_or(1.0);
+        let playing = previous
+            .as_ref()
+            .is_none_or(|status| status.playing || status.state == "error");
+        let rate = previous.as_ref().map_or_else(
+            || {
+                settings
+                    .get("playbackSpeed")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0)
+            },
+            |status| status.rate,
+        );
         let generation = self.player.replace(source, position, playing, rate);
         self.video.set(Some(WatchVideo {
             video_id: watch.video_id.clone(),
@@ -567,6 +652,11 @@ impl WatchPlayback {
             generation,
             quality_height: height,
             quality_fps: fps,
+            qualities: qualities.into(),
+            audio_key: audio_key.to_owned(),
+            audio_tracks: Vec::<AudioTrack>::deserialize(&catalog["audioTracks"])
+                .unwrap_or_default()
+                .into(),
             subtitles: Vec::<SubtitleTrack>::deserialize(&catalog["subtitles"])
                 .unwrap_or_default()
                 .into(),
