@@ -7,6 +7,8 @@ mod core;
 mod player;
 mod tokens;
 mod video;
+#[cfg(target_os = "android")]
+mod watch;
 
 pub use browser::{BrowserDocument, BrowserEvent, BrowserOptions, BrowserTab};
 pub use caption_overlay::{
@@ -20,3 +22,5 @@ pub use video::{
     EmbeddedVideoFrame, PageVideoLayout, PlaybackEvent, PlaybackFit, PlaybackRequest,
     PlaybackSource, PlaybackStatus, VideoPlayer, VideoTrack,
 };
+#[cfg(target_os = "android")]
+pub use watch::{WatchPlayback, WatchVideo};

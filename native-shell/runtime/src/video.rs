@@ -85,7 +85,7 @@ impl PlaybackSource {
     }
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PlaybackFit {
     Contain,
@@ -169,7 +169,7 @@ struct Load {
     rate: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackStatus {
     pub state: String,

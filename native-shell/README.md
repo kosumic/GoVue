@@ -51,6 +51,13 @@ generation returned by `VideoPlayer::replace`. Use status positions for
 captions and player controls. The player releases its previous loopback
 routes after the native replacement is applied.
 
+On Android, `WatchPlayback` connects the retained browser and player. Give
+it the watch tab, persisted settings, and foreground state. Pass the tab's
+browser events to `receive` and mount `view` in the browser's workspace.
+The controller probes the page position before taking over, scopes
+extraction to the active document, and keeps the source when navigating
+within the same video.
+
 Register `io.github.kaminarios.govue.shell.PlayerRuntime` with the Android
 `NshView` before calling `runRustApp`. Construct the Rust `PlayerRuntime` in the
 player component and mount its hidden `view()`. Pass the pending media request
