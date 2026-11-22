@@ -1,8 +1,6 @@
 import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import globals from 'globals';
-import reactHooks from 'eslint-plugin-react-hooks';
-import tseslint from 'typescript-eslint';
 
 export default defineConfig([
   globalIgnores([
@@ -15,7 +13,7 @@ export default defineConfig([
     'videos/**/assets/vendor/**', 'videos/**/.hyperframes/**', 'videos/**/renders/**',
   ]),
   {
-    files: ['**/*.{js,jsx,cjs,mjs,ts,tsx}'],
+    files: ['**/*.{js,cjs,mjs}'],
     extends: [js.configs.recommended],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
@@ -26,21 +24,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['**/*.{ts,tsx}'],
-    extends: [tseslint.configs.recommended],
-    rules: {
-      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true, argsIgnorePattern: '^_' }],
-    },
-  },
-  {
     files: ['core/src/cast/assets/player.js'],
     languageOptions: { globals: { dashjs: 'readonly' } },
-  },
-  {
-    files: ['App.tsx', 'src/**/*.{ts,tsx}'],
-    plugins: { 'react-hooks': reactHooks },
-    rules: {
-      'react-hooks/rules-of-hooks': 'error',
-    },
   },
 ]);

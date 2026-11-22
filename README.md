@@ -366,10 +366,10 @@ The release workflow compares the tag and each packaged version.
 
 ### Validation
 
-Verify behavior on a live Android device, then run `npm run check` in the Nix
-shell with the root development dependencies installed. This also checks the
-previous frontend during migration. CI builds and lints the Native Shell
-Android APK and compiles the unsigned iOS device app.
+Verify behavior on a live Android device, then run `npm ci` and `npm run check`
+at the repository root in the Nix shell. The checks cover the shared browser
+scripts and Rust core. CI also builds and lints the Native Shell Android
+APK and compiles the unsigned iOS device app.
 See the [CI documentation](.github/CI.md).
 
 ## Project status

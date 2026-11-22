@@ -4,8 +4,7 @@ CI runs on pushes and pull requests targeting `master`, weekly, and manually.
 Rust and JavaScript checks run independently. Android builds and lints the
 standalone Native Shell `arm64-v8a` release APK with the preview app ID and test
 signing key.
-JavaScript checks include
-ESLint's recommended JavaScript and TypeScript rules and React's rules of hooks.
+JavaScript checks cover the shared browser bridges and game renderer fixtures.
 `npm run lint` rejects warnings and unused ESLint disable directives; it also runs
 as part of `npm run check`. Generated and vendored sources are excluded from lint.
 The Android job removes the hosted runner's preinstalled Android SDK and unused
@@ -26,16 +25,8 @@ Java/Kotlin around the Android build. Gradle's build cache is disabled so CodeQL
 observes compilation of the Android host.
 Both analyses upload results to GitHub code scanning.
 
-`npm ci` also applies temporary, version-checked security backports in
-`scripts/patch-security-dependencies.ts`. `braces` 3.0.3 bounds parser nesting
-and validates supplied AST depth/cycles using
-[upstream PR #88](https://github.com/micromatch/braces/pull/88).
-`node-forge` 1.4.2 rejects surplus nested RSA DigestAlgorithm elements using
-[upstream PR #1152](https://github.com/digitalbazaar/forge/pull/1152).
-Behavioral regressions run in `npm test`. Remove each backport after upgrading
-to an upstream release that fixes its advisory; installation fails on version
-or source changes so the patches cannot silently stop applying. These local
-backports do not clear Dependabot's version-based alerts.
+Release builds install the page bundler from `native-shell/package-lock.json`.
+The root lockfile adds the browser test and lint tools used by CI.
 
 On `master`, the Android build also resolves the root project's `releaseRuntimeClasspath`
 and generates a dependency graph containing the app's transitive native runtime
@@ -83,8 +74,6 @@ before running the release workflow. An in-place upgrade requires the same
 distribution signing key as the installed APK.
 
 Dependabot updates are squash-merged after the entire CI workflow succeeds.
-TypeScript stays within Expo SDK 58's supported `~6.0.3` range; update its
-Dependabot bound when upgrading Expo.
 The automation verifies the author, repository, base branch, and tested commit,
 then merges with `--match-head-commit`. It skips updates when the base branch has
 advanced since testing. This uses the built-in `GITHUB_TOKEN` and does not require
