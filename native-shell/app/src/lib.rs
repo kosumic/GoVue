@@ -15,6 +15,8 @@ mod downloads;
 mod downloads_ios;
 #[cfg(target_os = "ios")]
 mod ios_browser;
+#[cfg(target_os = "ios")]
+mod ios_runtimes;
 mod now_playing;
 #[cfg(target_os = "ios")]
 mod now_playing_ios;
@@ -33,9 +35,10 @@ mod ui;
 
 use std::rc::Rc;
 
-use govue_shell_runtime::{Core, PlaybackEvent, TranscriptReader, WatchPlayback, WatchSubtitles};
-#[cfg(target_os = "android")]
-use govue_shell_runtime::{PlayerRuntime, TokenRuntime};
+use govue_shell_runtime::{
+    Core, PlaybackEvent, PlayerRuntime, TokenRuntime, TranscriptReader, WatchPlayback,
+    WatchSubtitles,
+};
 use nsh_core::{platform::Lifecycle, prelude::*};
 use serde_json::{Value, json};
 
@@ -62,6 +65,7 @@ pub fn run_ios() {
         ios_browser::register(components);
         downloads_ios::register(components);
         now_playing_ios::register(components);
+        ios_runtimes::register(components);
     });
     nsh_ios_app::run_rust(
         nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"),
@@ -474,10 +478,9 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         .child(browser.launches())
         .child(now_playing)
         .child(player_window.view())
-        .child(pip.view(move || watch.frame(width.get()), move || can_present.get()))
-        .child(PlayerRuntime::new().view())
-        .child(TokenRuntime::new(core).view());
+        .child(pip.view(move || watch.frame(width.get()), move || can_present.get()));
     #[cfg(target_os = "ios")]
     let root = root.child(now_playing);
-    root
+    root.child(PlayerRuntime::new().view())
+        .child(TokenRuntime::new(core).view())
 }
