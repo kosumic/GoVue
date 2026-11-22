@@ -1,7 +1,12 @@
-use nsh_core::{element::input, prelude::*};
+use nsh_core::{
+    KeyboardTaps,
+    element::{Input, input},
+    prelude::*,
+};
 use serde_json::{Value, json};
 
 use crate::chat::Chat;
+use crate::provider_model::{self, ModelDraft};
 use crate::ui::{self, Palette, press};
 
 const PLUS: &str = "M12 5v14m-7-7h14";
@@ -20,7 +25,9 @@ pub struct ProviderView {
     owner: Owner,
     draft: Signal<Option<Value>>,
     key: Signal<String>,
-    model: Signal<Option<String>>,
+    model: Signal<Option<ModelDraft>>,
+    model_query: Signal<String>,
+    remove_model: Signal<bool>,
     instruction: Signal<Option<String>>,
     advanced: Signal<bool>,
     busy: Signal<bool>,
@@ -37,6 +44,8 @@ impl ProviderView {
             draft: signal(None),
             key: signal(String::new()),
             model: signal(None),
+            model_query: signal(String::new()),
+            remove_model: signal(false),
             instruction: signal(None),
             advanced: signal(false),
             busy: signal(false),
@@ -46,9 +55,14 @@ impl ProviderView {
     }
 
     pub fn back(&self) -> bool {
+        if self.remove_model.get_untracked() {
+            self.remove_model.set(false);
+            return true;
+        }
         if self.model.get_untracked().is_some() {
             self.revision.update(|revision| *revision += 1);
             self.model.set(None);
+            self.error.set(None);
             return true;
         }
         if self.draft.get_untracked().is_some() {
@@ -70,40 +84,42 @@ impl ProviderView {
         let model = self.model;
         let error = self.error;
         let busy = self.busy;
-        view().flex_1().min_h(px(0.0)).child(
-            scroll().flex_1().child(
-                view()
-                    .w_full()
-                    .max_w(px(720.0))
-                    .self_center()
-                    .p(px(20.0))
-                    .pb(px(48.0))
-                    .gap(px(14.0))
-                    .child(when(
-                        move || draft.with(Option::is_none),
-                        move || listing.list(),
-                    ))
-                    .child(when(
-                        move || draft.with(Option::is_some) && model.with(Option::is_none),
-                        move || form.connection(),
-                    ))
-                    .child(when(
-                        move || model.with(Option::is_some),
-                        move || model_form.model(),
-                    ))
-                    .child(when(busy, move || {
-                        help(p, || "Saving or contacting provider…".into())
-                    }))
-                    .child(when(
-                        move || error.with(Option::is_some),
-                        move || {
-                            text(move || error.get().unwrap_or_default())
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xff0000))
-                        },
-                    )),
-            ),
-        )
+        let remove = self.remove_model;
+        let removal = self.clone();
+        view()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(when(
+                move || draft.with(Option::is_none),
+                move || page(p, listing.list(), busy, error),
+            ))
+            .child(when(
+                move || draft.with(Option::is_some) && model.with(Option::is_none),
+                move || page(p, form.connection(), busy, error),
+            ))
+            .child(when(
+                move || model.with(Option::is_some),
+                move || page(p, model_form.model(), busy, error),
+            ))
+            .child(when(remove, move || {
+                let removal = removal.clone();
+                let detail = model.with_untracked(|model| {
+                    model
+                        .as_ref()
+                        .map(|model| string(&model.model, "name"))
+                        .unwrap_or_default()
+                });
+                removal_dialog(
+                    p,
+                    "Remove model?",
+                    detail,
+                    move || remove.set(false),
+                    move || {
+                        remove.set(false);
+                        removal.delete_model();
+                    },
+                )
+            }))
     }
 
     fn list(&self) -> View {
@@ -160,6 +176,7 @@ impl ProviderView {
         self.key.set(String::new());
         self.error.set(None);
         self.model.set(None);
+        self.model_query.set(String::new());
         self.draft.set(Some(provider));
     }
 
@@ -168,8 +185,8 @@ impl ProviderView {
         let draft = self.draft;
         let key = self.key;
         let submit = self.clone();
-        let reload = self.clone();
-        let model = self.model;
+        let models = self.clone();
+        let back = self.clone();
         let saved =
             move || draft.with(|draft| draft.as_ref().is_some_and(|p| !string(p, "id").is_empty()));
         let enabled =
@@ -199,6 +216,11 @@ impl ProviderView {
                 .child(text(*label).text_size(px(12.0)).text_color(move || p.ink()))
         });
         view().gap(px(14.0))
+            .child(view().flex_row().items_center().gap(px(8.0))
+                .child(ui::icon_button(p, ui::BACK, "Back in provider settings", move || { back.back(); }))
+                .child(text(move || draft.with(|draft| draft.as_ref().map_or_else(String::new, |draft| {
+                    if string(draft,"id").is_empty() { "New connection".into() } else { string(draft,"label") }
+                }))).text_size(px(19.0)).font_weight(FontWeight::SEMIBOLD).text_color(move || p.ink())))
             .child(draft_field(p, draft, "Connection name", "label", ""))
             .child(action(p, "Enabled", move || change(draft,"enabled",json!(!enabled()))))
             .child(field(p,"API key", "Leave blank to keep saved key", true, false,
@@ -209,36 +231,183 @@ impl ProviderView {
             .child(view().flex_row().flex_wrap().gap(px(8.0)).children(options))
             .child(draft_field(p,draft,"User-Agent","customUserAgent","Use provider default"))
             .child(action(p,"Save connection",move ||submit.save()))
-            .child(when(saved, move || {
-                let reload = reload.clone();
-                view().gap(px(14.0))
-                    .child(section(p,"Saved models"))
-                    .child(view().flex_row().gap(px(8.0))
-                        .child(action(p,"Refresh model list",move ||reload.refresh()))
-                        .child(action(p,"Add model ID",move ||model.set(Some(String::new())))))
-                    .child(each(move || draft.with(|draft|draft.as_ref().map_or_else(Vec::new, |p|array(p,"models"))),
-                        |model|string(model,"id"),
-                        move |row,_| text(move ||row.with(|row|string(row,"name"))).py(px(5.0))
-                            .text_size(px(14.0)).text_color(move ||p.ink())))
-            }))
+            .child(when(saved, move || models.saved_models()))
+    }
+
+    fn saved_models(&self) -> View {
+        let p = self.palette;
+        let draft = self.draft;
+        let query = self.model_query;
+        let busy = self.busy;
+        let add = self.clone();
+        let refresh = self.clone();
+        let edit = self.clone();
+        let reorder = self.clone();
+        view()
+            .gap(px(14.0))
+            .child(section(p, "Saved models"))
+            .child(
+                view()
+                    .flex_row()
+                    .gap(px(8.0))
+                    .child(
+                        action(p, "Refresh model list", move || refresh.refresh()).disabled(busy),
+                    )
+                    .child(action(p, "Add model ID", move || add.edit_model(None)).disabled(busy)),
+            )
+            .child(field(
+                p,
+                "Search saved models",
+                "",
+                false,
+                false,
+                move || query.get(),
+                move |value| query.set(value.into()),
+            ))
+            .child(each(
+                move || {
+                    let query = query.get().to_lowercase();
+                    let models = draft.with(|draft| {
+                        draft
+                            .as_ref()
+                            .map_or_else(Vec::new, |draft| array(draft, "models"))
+                    });
+                    let count = models.len();
+                    models
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, model)| {
+                            format!("{} {}", string(model, "id"), string(model, "name"))
+                                .to_lowercase()
+                                .contains(&query)
+                        })
+                        .take(80)
+                        .map(|(index, model)| (model, index > 0, index + 1 < count))
+                        .collect::<Vec<_>>()
+                },
+                |(model, _, _)| string(model, "id"),
+                move |row, _| {
+                    let edit = edit.clone();
+                    let reorder = reorder.clone();
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(
+                            press()
+                                .flex_1()
+                                .min_h(px(48.0))
+                                .justify_center()
+                                .disabled(busy)
+                                .label(move || {
+                                    row.with(|(model, _, _)| {
+                                        format!("Configure {}", string(model, "name"))
+                                    })
+                                })
+                                .on_press(move || {
+                                    edit.edit_model(Some(
+                                        row.with_untracked(|(model, _, _)| model.clone()),
+                                    ))
+                                })
+                                .child(
+                                    text(move || row.with(|(model, _, _)| string(model, "name")))
+                                        .text_size(px(14.0))
+                                        .text_color(move || p.ink()),
+                                )
+                                .child(help(p, move || {
+                                    row.with(|(model, _, _)| {
+                                        let id = string(model, "id");
+                                        let selected = draft.with(|draft| {
+                                            draft.as_ref().is_some_and(|draft| draft["model"] == id)
+                                        });
+                                        format!(
+                                            "{id}{}{}",
+                                            if model["hidden"] == true {
+                                                " · Hidden"
+                                            } else {
+                                                ""
+                                            },
+                                            if selected { " · Selected" } else { "" }
+                                        )
+                                    })
+                                })),
+                        )
+                        .child(dynamic(move || {
+                            let (model, up, down) = row.get();
+                            let reorder = reorder.clone();
+                            let id = string(&model, "id");
+                            provider_model::order(p, up, down, busy, move |delta| {
+                                reorder.reorder_model(&id, delta)
+                            })
+                        }))
+                        .child(ui::icon(ui::NEXT, 17.0, move || p.muted()))
+                },
+            ))
     }
 
     fn model(&self) -> View {
         let p = self.palette;
-        let model = self.model;
         let save = self.clone();
+        let back = self.clone();
+        let remove = self.remove_model;
         view()
-            .gap(px(14.0))
-            .child(field(
+            .gap(px(10.0))
+            .child(ui::icon_button(
                 p,
-                "Model ID",
-                "",
-                false,
-                false,
-                move || model.get().unwrap_or_default(),
-                move |id| model.set(Some(id.into())),
+                ui::BACK,
+                "Back in provider settings",
+                move || {
+                    back.back();
+                },
             ))
-            .child(action(p, "Save model", move || save.save_model()))
+            .child(provider_model::editor(
+                p,
+                self.model,
+                self.busy,
+                move || save.save_model(),
+                move || remove.set(true),
+            ))
+    }
+
+    fn provider_id(&self) -> String {
+        self.draft.with_untracked(|draft| {
+            draft
+                .as_ref()
+                .map(|draft| string(draft, "id"))
+                .unwrap_or_default()
+        })
+    }
+
+    fn edit_model(&self, model: Option<Value>) {
+        if self.busy.get_untracked() {
+            return;
+        }
+        self.error.set(None);
+        let Some(model) = model else {
+            self.model
+                .set(Some(ModelDraft::new(json!({"id":""}), Value::Null, false)));
+            return;
+        };
+        let id = self.provider_id();
+        let pane = self.clone();
+        let revision = self.revision.get_untracked();
+        self.busy.set(true);
+        self.owner.run(|| {
+            spawn(async move {
+                let result = pane
+                    .chat
+                    .core()
+                    .ai(json!({"op":"ai_model_options","id":id,"model":model["id"]}))
+                    .await;
+                pane.busy.set(false);
+                if pane.revision.get_untracked() == revision {
+                    match result {
+                        Ok(options) => pane.model.set(Some(ModelDraft::new(model, options, true))),
+                        Err(error) => pane.error.set(Some(error.to_string())),
+                    }
+                }
+            });
+        });
     }
 
     fn save(&self) {
@@ -260,25 +429,55 @@ impl ProviderView {
     }
 
     fn save_model(&self) {
-        let Some(model) = self
-            .model
-            .get_untracked()
-            .filter(|model| !model.trim().is_empty())
-        else {
+        let Some(model) = self.model.get_untracked() else {
             return;
         };
-        let id = self
-            .draft
-            .with_untracked(|draft| draft.as_ref().map_or_else(String::new, |p| string(p, "id")));
+        match model.request(self.provider_id()) {
+            Ok(request) => self.update_models(request),
+            Err(error) => self.error.set(Some(error.into())),
+        }
+    }
+
+    fn delete_model(&self) {
+        if let Some(model) = self.model.get_untracked() {
+            self.update_models(
+                json!({"op":"ai_remove_model","id":self.provider_id(),"model":model.model["id"]}),
+            );
+        }
+    }
+
+    fn reorder_model(&self, model_id: &str, delta: isize) {
+        let mut ids = self.draft.with_untracked(|draft| {
+            draft
+                .as_ref()
+                .map(|draft| {
+                    array(draft, "models")
+                        .iter()
+                        .map(|model| string(model, "id"))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        });
+        if let Some(index) = ids.iter().position(|id| id == model_id)
+            && let Some(other) = index
+                .checked_add_signed(delta)
+                .filter(|other| *other < ids.len())
+        {
+            ids.swap(index, other);
+            self.update_models(json!({"op":"ai_reorder","id":self.provider_id(),"ids":ids}));
+        }
+    }
+
+    fn update_models(&self, request: Value) {
+        let id = self.provider_id();
         let update = self.clone();
-        self.mutate(
-            json!({"op":"ai_save_model","id":id,"model":{"id":model.trim(),"name":model.trim()}}),
-            move |config| {
-                if let Some(saved) = saved_provider(&config, &id) {
-                    update.edit(saved);
-                }
-            },
-        );
+        self.mutate(request, move |config| {
+            if let Some(saved) = saved_provider(&config, &id) {
+                change(update.draft, "models", saved["models"].clone());
+                change(update.draft, "model", saved["model"].clone());
+                update.model.set(None);
+            }
+        });
     }
 
     fn refresh(&self) {
@@ -352,7 +551,7 @@ fn array(value: &Value, key: &str) -> Vec<Value> {
     value[key].as_array().cloned().unwrap_or_default()
 }
 
-fn string(value: &Value, key: &str) -> String {
+pub(super) fn string(value: &Value, key: &str) -> String {
     value[key].as_str().unwrap_or_default().to_owned()
 }
 
@@ -388,7 +587,7 @@ fn draft_field(
     )
 }
 
-fn field(
+pub(super) fn field(
     p: Palette,
     label: &'static str,
     placeholder: &'static str,
@@ -396,6 +595,26 @@ fn field(
     multiline: bool,
     value: impl Fn() -> String + 'static,
     change: impl Fn(&str) + 'static,
+) -> View {
+    field_control(
+        p,
+        label,
+        input()
+            .label(label)
+            .placeholder(placeholder)
+            .value(value)
+            .on_change(change)
+            .masked(masked)
+            .multiline(multiline),
+        multiline,
+    )
+}
+
+pub(super) fn field_control(
+    p: Palette,
+    label: &'static str,
+    input: Input,
+    multiline: bool,
 ) -> View {
     view()
         .gap(px(7.0))
@@ -406,13 +625,7 @@ fn field(
                 .text_color(move || p.ink()),
         )
         .child(
-            input()
-                .label(label)
-                .placeholder(placeholder)
-                .value(value)
-                .on_change(change)
-                .masked(masked)
-                .multiline(multiline)
+            input
                 .min_h(px(if multiline { 100.0 } else { 44.0 }))
                 .bg(move || p.background())
                 .rounded(px(10.0))
@@ -425,21 +638,21 @@ fn field(
         )
 }
 
-fn section(p: Palette, value: &'static str) -> Text {
+pub(super) fn section(p: Palette, value: &'static str) -> Text {
     text(value)
         .text_size(px(17.0))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(move || p.ink())
 }
 
-fn help(p: Palette, value: impl Fn() -> String + 'static) -> Text {
+pub(super) fn help(p: Palette, value: impl Fn() -> String + 'static) -> Text {
     text(value)
         .text_size(px(12.0))
         .line_height(px(19.0))
         .text_color(move || p.muted())
 }
 
-fn action(p: Palette, label: &'static str, action: impl Fn() + 'static) -> View {
+pub(super) fn action(p: Palette, label: &'static str, action: impl Fn() + 'static) -> View {
     press()
         .min_h(px(44.0))
         .px(px(14.0))
@@ -454,6 +667,75 @@ fn action(p: Palette, label: &'static str, action: impl Fn() + 'static) -> View 
                 .text_size(px(13.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(move || p.ink()),
+        )
+}
+
+fn page(p: Palette, content: View, busy: Signal<bool>, error: Signal<Option<String>>) -> Scroll {
+    scroll()
+        .flex_1()
+        .keyboard_taps(KeyboardTaps::Handled)
+        .child(
+            view()
+                .w_full()
+                .max_w(px(720.0))
+                .self_center()
+                .p(px(20.0))
+                .pb(px(48.0))
+                .gap(px(14.0))
+                .child(content)
+                .child(when(busy, move || {
+                    help(p, || "Saving or contacting provider…".into())
+                }))
+                .child(when(
+                    move || error.with(Option::is_some),
+                    move || {
+                        text(move || error.get().unwrap_or_default())
+                            .text_size(px(13.0))
+                            .text_color(rgb(0xd32f2f))
+                    },
+                )),
+        )
+}
+
+pub(super) fn removal_dialog(
+    p: Palette,
+    title: &'static str,
+    detail: String,
+    close: impl Fn() + Clone + 'static,
+    remove: impl Fn() + 'static,
+) -> View {
+    view()
+        .absolute()
+        .inset(px(0.0))
+        .z_index(2)
+        .justify_center()
+        .child(
+            press()
+                .absolute()
+                .inset(px(0.0))
+                .bg(rgba(0x00000080))
+                .label("Close confirmation")
+                .on_press(close.clone()),
+        )
+        .child(
+            view()
+                .w_full()
+                .max_w(px(340.0))
+                .self_center()
+                .gap(px(16.0))
+                .p(px(20.0))
+                .rounded(px(18.0))
+                .bg(move || p.background())
+                .child(section(p, title))
+                .child(help(p, move || detail.clone()))
+                .child(
+                    view()
+                        .flex_row()
+                        .justify_end()
+                        .gap(px(10.0))
+                        .child(action(p, "Keep", close))
+                        .child(action(p, "Remove", remove)),
+                ),
         )
 }
 
