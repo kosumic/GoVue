@@ -319,12 +319,13 @@ impl VideoPlayer {
         &self,
         frame: impl Fn() -> EmbeddedVideoFrame + 'static,
         fit: impl Fn() -> PlaybackFit + 'static,
+        corner_radius: impl Fn() -> f32 + 'static,
         on_event: impl Fn(PlaybackEvent) + 'static,
     ) -> impl IntoElement {
         let frame = computed(frame);
         #[cfg(target_os = "ios")]
         {
-            ios::surface(self.clone(), frame, computed(fit), on_event)
+            ios::surface(self.clone(), frame, computed(fit), corner_radius, on_event)
         }
         #[cfg(not(target_os = "ios"))]
         self.view(fit, on_event)
@@ -333,6 +334,8 @@ impl VideoPlayer {
             .top(move || px(frame.with(|frame| frame.top)))
             .w(move || px(frame.with(|frame| frame.width)))
             .h(move || px(frame.with(|frame| frame.height)))
+            .rounded(move || px(corner_radius()))
+            .overflow_hidden()
             .opacity(move || {
                 if frame.with(|frame| frame.visible) {
                     1.0_f32

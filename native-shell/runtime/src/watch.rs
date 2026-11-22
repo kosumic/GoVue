@@ -365,6 +365,7 @@ impl WatchPlayback {
     pub fn view(
         &self,
         width: impl Fn() -> f32 + 'static,
+        corner_radius: impl Fn() -> f32 + 'static,
         on_event: impl Fn(PlaybackEvent) + 'static,
     ) -> impl IntoElement {
         let watch = self.clone();
@@ -375,6 +376,7 @@ impl WatchPlayback {
         self.player.embedded_view(
             move || watch.frame(width()),
             move || fit.get(),
+            corner_radius,
             move |event| {
                 if let PlaybackEvent::Status {
                     generation,

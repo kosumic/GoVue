@@ -18,6 +18,7 @@ pub(super) fn surface(
     player: VideoPlayer,
     bounds: Memo<EmbeddedVideoFrame>,
     fit: Memo<PlaybackFit>,
+    corner_radius: impl Fn() -> f32 + 'static,
     on_event: impl Fn(PlaybackEvent) + 'static,
 ) -> View {
     let source = player.load;
@@ -29,6 +30,7 @@ pub(super) fn surface(
         .w(move || px(bounds.get().width))
         .h(move || px(bounds.get().height))
         .bg(rgb(0x000000))
+        .rounded(move || px(corner_radius()))
         .overflow_hidden()
         .pointer_events(PointerEvents::None)
         .opacity(move || {

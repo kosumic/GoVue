@@ -24,6 +24,7 @@ mod ios_browser;
 mod ios_host;
 #[cfg(target_os = "ios")]
 mod ios_runtimes;
+mod mini_player;
 mod now_playing;
 #[cfg(target_os = "ios")]
 mod now_playing_ios;
@@ -228,7 +229,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         watch_reader.clone(),
         chat,
         palette,
-        queue,
+        queue.clone(),
         preferences.clone(),
     );
     on_back_press({
@@ -317,12 +318,18 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
 
     let width = signal(0_f32);
     let height = signal(0_f32);
+    let mini_active = computed({
+        let browser = browser.clone();
+        move || browser.mini_active() && !pip_window.get()
+    });
+    let mini = mini_player::MiniPlayer::new(core.clone(), mini_active, width, height);
     let fullscreen = player_window.presented;
     let immersive = computed(move || fullscreen.get() || pip_window.get());
     let beside = computed(move || fullscreen.get() && width.get() > height.get());
     effect({
         let watch = watch.clone();
         let window = player_window.clone();
+        let mini = mini.clone();
         move || {
             if pip_window.get() {
                 watch_reader.close();
@@ -333,6 +340,9 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     height: height.get().max(1.0),
                     visible: true,
                 }));
+            } else if let Some(frame) = mini.frame() {
+                watch_reader.close();
+                watch.present(Some(frame));
             } else {
                 watch.present(window.frame(width.get(), height.get(), watch_reader.visible()));
             }
@@ -359,7 +369,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let navigate_back = browser.clone();
     let navigate_video = browser.clone();
     let player_controls = controls.view(
-        move || width.get(),
+        move || (width.get(), mini_active.get()),
         move || {
             if !back_from_offline() {
                 navigate_back.back();
@@ -372,6 +382,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     );
     let download_notice = downloads.notice;
     let download_export = downloads.export_view();
+    let mini_controls = mini.view(watch.clone(), browser.clone(), queue, controls.clone());
     let root = view()
         .flex_1()
         .pt(move || {
@@ -420,24 +431,32 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     }
                 })
                 .child(browser.view(immersive))
-                .child(watch.view(
-                    move || width.get(),
-                    move |event| {
-                        let next_video = next_video.clone();
-                        playback_controls.playback(&event, move |url| next_video.open(url));
-                        if matches!(event, PlaybackEvent::Status { .. }) {
-                            sponsor_ticks.sample();
-                        }
-                    },
-                ))
+                .child(
+                    view()
+                        .absolute()
+                        .inset(px(0.0))
+                        .pointer_events(nsh_core::PointerEvents::None)
+                        .z_index(move || i32::from(mini_active.get()))
+                        .child(watch.view(
+                            move || width.get(),
+                            move || if mini_active.get() { 16.0 } else { 0.0 },
+                            move |event| {
+                                let next_video = next_video.clone();
+                                playback_controls.playback(&event, move |url| next_video.open(url));
+                                if matches!(event, PlaybackEvent::Status { .. }) {
+                                    sponsor_ticks.sample();
+                                }
+                            },
+                        )),
+                )
                 .child(subtitles.view(
                     move || width.get(),
-                    move || !pip_mode.get() && caption_controls.visible(),
+                    move || !pip_mode.get() && !mini_active.get() && caption_controls.visible(),
                 ))
-                .child(player_controls)
+                .child(player_controls.z_index(move || if mini_active.get() { 3 } else { 0 }))
                 .child(sponsors.view(
                     move || width.get(),
-                    move || !pip_mode.get() && !sponsor_controls.menu_open(),
+                    move || !pip_mode.get() && !mini_active.get() && !sponsor_controls.menu_open(),
                 ))
                 .child(watch_transcript.view(
                     move || {
@@ -459,6 +478,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(controls.error_view())
                 .child(chat_panel)
                 .child(chat_transcript.view(|| 0.0, || 0.0))
+                .child(mini_controls)
                 .child(settings_view.view())
                 .child(library.view())
                 .child(download_confirm::download_confirm(
@@ -492,7 +512,10 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let root = root
         .child(now_playing)
         .child(player_window.view())
-        .child(pip.view(move || watch.frame(width.get()), move || can_present.get()));
+        .child(pip.view(
+            move || watch.frame(width.get()),
+            move || can_present.get() || mini_active.get(),
+        ));
     root.child(chat_view.camera())
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())

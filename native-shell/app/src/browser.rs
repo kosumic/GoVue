@@ -26,6 +26,7 @@ struct State {
     tabs: Vec<Tab>,
     active_id: u64,
     can_go_back: bool,
+    suspended_watch_id: Option<u64>,
     transient: String,
     target: Option<Target>,
 }
@@ -103,6 +104,18 @@ impl Browser {
             });
         }
         browser.post("state", json!({}));
+        effect({
+            let browser = browser.clone();
+            move || {
+                if browser
+                    .state
+                    .with(|state| state.suspended_watch_id.is_some())
+                    && !browser.mini_eligible()
+                {
+                    browser.dismiss_mini();
+                }
+            }
+        });
         browser
     }
 
@@ -122,6 +135,37 @@ impl Browser {
             .state::<Value>(json!({"op":"browser_identity","url":url}))
             .ok()
             .and_then(|identity| identity["videoId"].as_str().map(str::to_owned))
+    }
+
+    fn mini_eligible(&self) -> bool {
+        self.watch.video().is_some_and(|video| !video.offline)
+            && self.settings.with(|settings| {
+                settings
+                    .as_ref()
+                    .and_then(|settings| settings.get("miniPlayer"))
+                    == Some(&Value::Bool(true))
+            })
+    }
+
+    pub fn mini_active(&self) -> bool {
+        self.state.with(|state| state.suspended_watch_id.is_some()) && self.mini_eligible()
+    }
+
+    pub fn restore_mini(&self) {
+        self.chat.close();
+        self.post("restore_watch", json!({}));
+    }
+
+    pub fn dismiss_mini(&self) {
+        if self
+            .state
+            .with_untracked(|state| state.suspended_watch_id.is_some())
+        {
+            if !self.watch.offline() {
+                self.watch.close();
+            }
+            self.post("drop_watch", json!({}));
+        }
     }
 
     pub fn view(&self, fullscreen: Memo<bool>) -> View {
@@ -198,7 +242,9 @@ impl Browser {
             move || {
                 if active.get() {
                     browser.captions.select(Some(&native));
-                    browser.watch.select(Some(&native));
+                    if state.with(|state| state.suspended_watch_id.is_none()) {
+                        browser.watch.select(Some(&native));
+                    }
                 }
             }
         });
@@ -439,6 +485,10 @@ impl Browser {
             self.post("dismiss", json!({}));
             return true;
         }
+        if state.can_go_back && self.mini_eligible() && self.active_video().is_some() {
+            self.post("back", json!({}));
+            return true;
+        }
         if let Some(tab) = self.retained.borrow().get(&state.active_id)
             && tab
                 .current_document()
@@ -485,6 +535,12 @@ impl Browser {
                         continue;
                     }
                 }
+            }
+            if matches!(
+                request["op"].as_str(),
+                Some("browser_open" | "browser_back")
+            ) {
+                request["suspendWatch"] = json!(self.mini_eligible());
             }
             match self.core.execute::<State>(request).await {
                 Ok(mut state) => {

@@ -241,7 +241,7 @@ impl PlayerControls {
 
     pub fn view(
         &self,
-        width: impl Fn() -> f32 + 'static,
+        viewport: impl Fn() -> (f32, bool) + 'static,
         back: impl Fn() + 'static,
         open: impl Fn(String) + 'static,
         window: PlayerWindow,
@@ -249,7 +249,8 @@ impl PlayerControls {
         downloads: Downloads,
     ) -> View {
         let watch = self.watch.clone();
-        let bounds = computed(move || watch.frame(width()));
+        let viewport = computed(viewport);
+        let bounds = computed(move || watch.frame(viewport.get().0));
         let panel = self.clone();
         let visible = self.visible;
         let tap = self.clone();
@@ -272,7 +273,7 @@ impl PlayerControls {
             .inset(px(0.0))
             .pointer_events(PointerEvents::BoxNone)
             .child(when(
-                move || bounds.get().visible && !in_pip.get(),
+                move || bounds.get().visible && !in_pip.get() && !viewport.get().1,
                 move || {
                     let tap = tap.clone();
                     let panel = panel.clone();
@@ -1005,7 +1006,7 @@ impl PlayerControls {
             )
     }
 
-    fn toggle(&self) {
+    pub fn toggle(&self) {
         if let Some(video) = self.watch.video() {
             let player = self.watch.player();
             let status = self.watch.status();
@@ -1022,6 +1023,10 @@ impl PlayerControls {
             }
             self.show();
         }
+    }
+
+    pub fn open_queue(&self) {
+        self.menu.set(Some(Menu::Queue));
     }
 
     fn subtitle_menu(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {
