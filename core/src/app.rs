@@ -56,7 +56,7 @@ const FEATURED: &[Notice] = &[
         "LiTube",
         "GPL-3.0",
         "https://github.com/HydeYYHH/Litube",
-        "GoVue is a React Native and Rust port of LiTube. Its browser scripts and player icons are copied or adapted from LiTube.",
+        "GoVue is based on LiTube. Its browser scripts and player icons are copied or adapted from LiTube.",
         include_str!("../../notices/LiTube-GPL-3.0.txt"),
     ),
     Notice::featured(
@@ -88,28 +88,12 @@ const FEATURED: &[Notice] = &[
         ),
     ),
     Notice::featured(
-        "markdown",
-        "Enriched Markdown & dependencies",
-        "MIT and third-party notices",
-        "https://github.com/software-mansion/enriched-markdown",
-        "GoVue renders AI replies and video summaries with Enriched Markdown, including its parser, syntax, Unicode, and math components.",
-        include_str!("../../notices/EnrichedMarkdown-ThirdParty.txt"),
-    ),
-    Notice::featured(
-        "speech",
-        "Expo Speech Recognition",
-        "MIT",
-        "https://github.com/jamsch/expo-speech-recognition",
-        "GoVue uses Expo Speech Recognition for chat voice input.",
-        include_str!("../../notices/Expo-Speech-Recognition-MIT.txt"),
-    ),
-    Notice::featured(
-        "video",
-        "Expo Video",
-        "MIT",
-        "https://github.com/expo/expo/tree/main/packages/expo-video",
-        "GoVue builds Expo Video from source with local playback and picture-in-picture fixes.",
-        include_str!("../../notices/Expo-Video-MIT.txt"),
+        "nativeshell",
+        "Native Shell",
+        "Apache-2.0",
+        "https://github.com/longbridge/nsh",
+        "GoVue uses Native Shell for its native UI, system integration, and rich text rendering.",
+        include_str!("../../notices/NativeShell-Apache-2.0.txt"),
     ),
     Notice::featured(
         "jsonwebtoken",
@@ -137,26 +121,7 @@ const FEATURED: &[Notice] = &[
     ),
 ];
 
-const NATIVE: &[Notice] = &[
-    Notice::featured(
-        "nativeshell",
-        "Native Shell",
-        "Apache-2.0",
-        "https://github.com/longbridge/nsh",
-        "GoVue uses Native Shell for its native UI, system integration, and rich text rendering.",
-        include_str!("../../notices/NativeShell-Apache-2.0.txt"),
-    ),
-    Notice::featured(
-        "litube",
-        "LiTube",
-        "GPL-3.0",
-        "https://github.com/HydeYYHH/Litube",
-        "GoVue is based on LiTube. Its browser scripts and player icons are copied or adapted from LiTube.",
-        include_str!("../../notices/LiTube-GPL-3.0.txt"),
-    ),
-];
-
-fn notices(native: bool) -> Result<impl Iterator<Item = &'static Notice>> {
+fn notices() -> Result<impl Iterator<Item = &'static Notice>> {
     #[derive(Deserialize)]
     struct Bundle {
         notices: Vec<Notice>,
@@ -168,27 +133,16 @@ fn notices(native: bool) -> Result<impl Iterator<Item = &'static Notice>> {
     });
     bundle
         .as_ref()
-        .map(move |bundle| {
-            let featured = FEATURED.iter().filter(move |notice| {
-                !native || !matches!(&*notice.id, "litube" | "markdown" | "speech" | "video")
-            });
-            let format = if native { NATIVE } else { &[] };
-            let dependencies = bundle
-                .notices
-                .iter()
-                .filter(move |notice| !native || notice.category == "cargo");
-            featured.chain(format).chain(dependencies)
-        })
+        .map(|bundle| FEATURED.iter().chain(&bundle.notices))
         .map_err(Clone::clone)
 }
 
 pub fn dispatch(command: &Value) -> Result<Value> {
-    let native = command["runtime"] == "nativeShell";
     match crate::string(command, "op")? {
-        "app_licenses" => Ok(json!(notices(native)?.collect::<Vec<_>>())),
+        "app_licenses" => Ok(json!(notices()?.collect::<Vec<_>>())),
         "app_license" => {
             let id = crate::string(command, "id")?;
-            notices(native)?
+            notices()?
                 .find(|notice| notice.id == id)
                 .map(|notice| json!({"text": notice.text}))
                 .ok_or_else(|| "Unknown license notice.".into())

@@ -218,7 +218,7 @@ pub fn licenses(core: Core, p: Palette, open: Signal<Option<SettingsScreen>>) ->
             failed.set(false);
             spawn(async move {
                 match core
-                    .execute::<Vec<Notice>>(json!({"op":"app_licenses","runtime":"nativeShell"}))
+                    .execute::<Vec<Notice>>(json!({"op":"app_licenses"}))
                     .await
                 {
                     Ok(list) => notices.set(list),
@@ -261,7 +261,7 @@ fn license(p: Palette, core: Core, notice: Notice) -> View {
         error.set(false);
         spawn(async move {
             match core
-                .execute::<Value>(json!({"op":"app_license","runtime":"nativeShell","id":id}))
+                .execute::<Value>(json!({"op":"app_license","id":id}))
                 .await
             {
                 Ok(result) => body.set(result["text"].as_str().map(str::to_owned)),

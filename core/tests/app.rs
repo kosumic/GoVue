@@ -81,13 +81,7 @@ fn every_bundled_notice_is_available_through_the_offline_json_boundary() {
         assert!(content["value"]["text"].as_str().unwrap().len() > 100);
     }
     assert_eq!(categories, HashSet::from(["featured", "npm", "cargo"]));
-    for title in [
-        "LiTube",
-        "lucide-react-native",
-        "react-native",
-        "uniffi",
-        "serde",
-    ] {
+    for title in ["LiTube", "Native Shell", "bgutils-js", "uniffi", "serde"] {
         assert!(
             notices.iter().any(|notice| notice["title"] == title),
             "Missing {title}"
