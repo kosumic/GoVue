@@ -4,6 +4,7 @@ import android.graphics.Color;
 import android.graphics.Matrix;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.TextureView;
 import android.widget.FrameLayout;
 
@@ -23,6 +24,7 @@ import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
+import androidx.media3.exoplayer.DecoderCounters;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
@@ -61,6 +63,10 @@ public final class VideoPlayer implements NshComponent {
     private boolean videoEnabled = true;
     private boolean destroyed;
     private int startupHeight;
+    private long sourceStartedAt;
+    private Long firstFrameMs;
+    private String videoDecoder;
+    private String audioDecoder;
 
     public static void register(NshView view) {
         view.registerComponent("govue/video-player", VideoPlayer::new);
@@ -99,15 +105,22 @@ public final class VideoPlayer implements NshComponent {
         });
         player.addAnalyticsListener(new AnalyticsListener() {
             @Override
+            public void onVideoDecoderInitialized(EventTime event, String name, long time, long duration) {
+                if (isCurrent(event)) videoDecoder = name;
+            }
+
+            @Override
+            public void onAudioDecoderInitialized(EventTime event, String name, long time, long duration) {
+                if (isCurrent(event)) audioDecoder = name;
+            }
+
+            @Override
             public void onRenderedFirstFrame(EventTime event, Object output, long renderTimeMs) {
-                if (!isCurrent() || !videoEnabled || event.timeline.isEmpty()
-                        || event.windowIndex < 0 || event.windowIndex >= event.timeline.getWindowCount()
-                        || !mediaId.equals(event.timeline.getWindow(event.windowIndex, new Timeline.Window()).mediaItem.mediaId)) {
-                    return;
-                }
+                if (!isCurrent(event) || !videoEnabled) return;
                 texture.setAlpha(1);
                 if (firstFrame) return;
                 firstFrame = true;
+                firstFrameMs = Math.max(0, renderTimeMs - sourceStartedAt);
                 if (startupHeight > 0) {
                     startupHeight = 0;
                     player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
@@ -140,6 +153,9 @@ public final class VideoPlayer implements NshComponent {
         generation = revision;
         hasSource = false;
         firstFrame = false;
+        firstFrameMs = null;
+        videoDecoder = null;
+        audioDecoder = null;
         texture.setAlpha(0);
         main.removeCallbacks(tick);
         player.stop();
@@ -187,6 +203,7 @@ public final class VideoPlayer implements NshComponent {
         long position = load.get("position") instanceof Number seconds ? millis(seconds) : C.TIME_UNSET;
         player.setMediaSource(factory.createMediaSource(item.build()), position);
         hasSource = true;
+        sourceStartedAt = SystemClock.elapsedRealtime();
         player.setPlayWhenReady(Boolean.TRUE.equals(load.get("playing")));
         player.prepare();
     }
@@ -194,6 +211,12 @@ public final class VideoPlayer implements NshComponent {
     private boolean isCurrent() {
         MediaItem current = player.getCurrentMediaItem();
         return hasSource && !destroyed && current != null && mediaId.equals(current.mediaId);
+    }
+
+    private boolean isCurrent(AnalyticsListener.EventTime event) {
+        return isCurrent() && !event.timeline.isEmpty()
+                && event.windowIndex >= 0 && event.windowIndex < event.timeline.getWindowCount()
+                && mediaId.equals(event.timeline.getWindow(event.windowIndex, new Timeline.Window()).mediaItem.mediaId);
     }
 
     @Override
@@ -291,7 +314,44 @@ public final class VideoPlayer implements NshComponent {
         status.put("playing", player.isPlaying());
         status.put("rate", player.getPlaybackParameters().speed);
         status.put("errorCode", error);
+        long liveOffset = player.getCurrentLiveOffset();
+        status.put("liveOffset", liveOffset >= 0 ? liveOffset / 1000.0 : null);
+        status.put("diagnostics", diagnosticSample());
         emit("status", Collections.singletonMap("status", status));
+    }
+
+    private Map<String, Object> diagnosticSample() {
+        Map<String, Object> sample = new LinkedHashMap<>();
+        sample.put("sampledAt", SystemClock.elapsedRealtime());
+        sample.put("firstFrameMs", firstFrameMs);
+        sample.put("videoDecoder", videoDecoder);
+        sample.put("audioDecoder", audioDecoder);
+        DecoderCounters counts = player.getVideoDecoderCounters();
+        if (counts != null) {
+            counts.ensureUpdated();
+            sample.put("renderedFrames", counts.renderedOutputBufferCount);
+            sample.put("droppedFrames", counts.droppedBufferCount);
+        }
+        Format video = player.getVideoFormat();
+        if (video != null) {
+            sample.put("width", video.width);
+            sample.put("height", video.height);
+            sample.put("nominalFps", Float.isFinite(video.frameRate) ? video.frameRate : null);
+            sample.put("videoCodec", video.codecs == null ? video.sampleMimeType : video.codecs);
+            sample.put("videoBitrate", video.bitrate);
+        }
+        Format audio = player.getAudioFormat();
+        if (audio != null) {
+            sample.put("audioCodec", audio.codecs == null ? audio.sampleMimeType : audio.codecs);
+            sample.put("audioBitrate", audio.bitrate);
+            sample.put("audioChannels", audio.channelCount);
+            sample.put("audioSampleRate", audio.sampleRate);
+        }
+        var display = container.getDisplay();
+        if (display != null && Float.isFinite(display.getRefreshRate())) {
+            sample.put("refreshRate", display.getRefreshRate());
+        }
+        return sample;
     }
 
     private void emitTracks() {

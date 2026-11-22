@@ -61,7 +61,7 @@ private final class PlayerPip: NSObject, AVPictureInPictureControllerDelegate {
     private func attach(_ token: UInt64, attempts: Int) {
         guard token == generation, controller == nil, AVPictureInPictureController.isPictureInPictureSupported() else { return }
         let identifier = "govue-video-\(token)"
-        if let root = view?.window, let layer = videoLayer(in: root, identifier: identifier),
+        if let root = view?.window, let layer = govuePlayerLayer(in: root, identifier: identifier),
            let player = layer.player, let controller = AVPictureInPictureController(playerLayer: layer) {
             controller.delegate = self
             controller.canStartPictureInPictureAutomaticallyFromInline = autoEnter
@@ -86,16 +86,6 @@ private final class PlayerPip: NSObject, AVPictureInPictureControllerDelegate {
             retry = next
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(125), execute: next)
         }
-    }
-
-    private func videoLayer(in view: UIView, identifier: String) -> AVPlayerLayer? {
-        if view.accessibilityIdentifier == identifier {
-            return view.layer.sublayers?.compactMap { $0 as? AVPlayerLayer }.first
-        }
-        for child in view.subviews {
-            if let layer = videoLayer(in: child, identifier: identifier) { return layer }
-        }
-        return nil
     }
 
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {

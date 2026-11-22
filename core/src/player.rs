@@ -11,7 +11,7 @@ static WRITES: Mutex<()> = Mutex::new(());
 mod caption;
 pub(crate) mod caption_color;
 mod cast;
-mod diagnostics;
+pub(crate) mod diagnostics;
 pub(crate) mod gestures;
 mod mini;
 mod orientation;

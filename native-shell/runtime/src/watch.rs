@@ -218,6 +218,14 @@ impl WatchPlayback {
             .with(|video| video.as_ref().is_some_and(|video| video.offline))
     }
 
+    pub fn live(&self) -> bool {
+        self.catalog.with(|catalog| {
+            catalog
+                .as_ref()
+                .is_some_and(|(_, catalog)| catalog["live"] == true)
+        })
+    }
+
     /// Replace the mounted player with a file resolved by the download runner.
     pub fn play_offline(
         &self,

@@ -1,8 +1,19 @@
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use nsh_core::{AudioSession, PointerEvents, ResizeMode, prelude::*};
+use serde_json::json;
 
 use super::{EmbeddedVideoFrame, Load, PlaybackEvent, PlaybackFit, PlaybackStatus, VideoPlayer};
+
+unsafe extern "C" {
+    fn govue_ios_player_sample(
+        generation: u64,
+        offset: *mut f64,
+        video_bitrate: *mut f64,
+        audio_bitrate: *mut f64,
+    );
+}
 
 #[derive(Clone, Copy, PartialEq)]
 struct Status {
@@ -90,6 +101,7 @@ fn clip(
         duration: None,
     });
     let aspect = signal(16.0_f32 / 9.0);
+    let size = signal((0.0_f64, 0.0_f64));
     let decoded = computed(move || {
         let frame = bounds.get();
         let ratio = aspect.get();
@@ -127,6 +139,19 @@ fn clip(
             } else {
                 "paused"
             };
+            let size: (f64, f64) = size.get();
+            let mut live_offset = -1.0;
+            let mut video_bitrate = -1.0;
+            let mut audio_bitrate = -1.0;
+            // SAFETY: The native playback effect runs on the UI thread. Swift only writes these out parameters during the call.
+            unsafe {
+                govue_ios_player_sample(
+                    generation,
+                    &raw mut live_offset,
+                    &raw mut video_bitrate,
+                    &raw mut audio_bitrate,
+                );
+            }
             emit(PlaybackEvent::Status {
                 generation,
                 status: PlaybackStatus {
@@ -137,6 +162,15 @@ fn clip(
                     playing,
                     rate,
                     error_code: status.failed.then(|| "PlaybackFailed".into()),
+                    live_offset: (live_offset.is_finite() && live_offset >= 0.0)
+                        .then_some(live_offset),
+                    diagnostics: json!({
+                        "sampledAt": SystemTime::now().duration_since(UNIX_EPOCH).ok().map(|time| time.as_millis() as u64),
+                        "width": size.0,
+                        "height": size.1,
+                        "videoBitrate": video_bitrate,
+                        "audioBitrate": audio_bitrate,
+                    }),
                 },
             });
         }
@@ -166,9 +200,13 @@ fn clip(
             move || emit(PlaybackEvent::Applied { generation })
         })
         .on_load(move |info: &VideoInfo| {
-            let size = info.size;
-            if size.width.0 > 0 && size.height.0 > 0 {
-                aspect.set(size.width.0 as f32 / size.height.0 as f32);
+            let dimensions = info.size;
+            if dimensions.width.0 > 0 && dimensions.height.0 > 0 {
+                size.set((
+                    f64::from(dimensions.width.0),
+                    f64::from(dimensions.height.0),
+                ));
+                aspect.set(dimensions.width.0 as f32 / dimensions.height.0 as f32);
             }
             if let Some(position) = start_position {
                 seek.seek(position);

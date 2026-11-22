@@ -10,12 +10,14 @@ use nsh_core::{
 };
 use serde_json::{Value, json};
 
+use crate::browser_card::{SHARE, share_video};
 use crate::cast_view::{CAST, CastView};
 use crate::chat::Chat;
 use crate::download_library::DOWNLOAD;
 use crate::downloads::Downloads;
 use crate::pip::Pip;
 use crate::player_gestures::{GestureActions, PlayerGestures};
+use crate::player_info;
 use crate::player_window::PlayerWindow;
 use crate::queue::Queue;
 use crate::queue_view::queue_sheet;
@@ -44,6 +46,8 @@ const AUDIO: &str = "M3 9h4l5-4v14l-5-4H3zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0
 const PIP: &str = "M3 4h18v16H3zM12 11h7v6h-7z";
 const LOCK: &str = "M5 11h14v10H5zM8 11V7a4 4 0 1 1 8 0v4m-4 4v2";
 const UNLOCK: &str = "M5 11h14v10H5zM8 11V7a4 4 0 0 1 7.5-2m-3.5 10v2";
+const ADD: &str = "M12 5v14m-7-7h14";
+const LOOP: &str = "m17 1 4 4-4 4m4-4H7a4 4 0 0 0-4 4v2m4 12-4-4 4-4m-4 4h14a4 4 0 0 0 4-4v-2";
 
 type OpenVideo = Rc<dyn Fn(String)>;
 
@@ -58,6 +62,7 @@ enum Menu {
     Queue,
     Style,
     Segments,
+    Info,
 }
 
 #[derive(Clone)]
@@ -296,6 +301,9 @@ impl PlayerControls {
         let palette = self.palette;
         let in_pip = pip.mode;
         let fullscreen = window.presented;
+        let diagnostic_watch = self.watch.clone();
+        let diagnostic_sample =
+            player_info::monitor(self.settings.core(), self.watch.clone(), bounds, fullscreen);
         let scope = computed({
             let watch = self.watch.clone();
             move || {
@@ -476,6 +484,17 @@ impl PlayerControls {
                     })
                 },
             ))
+            .child(when(
+                move || menu.get() == Some(Menu::Info) && bounds.get().visible && !in_pip.get(),
+                move || {
+                    player_info::dialog(
+                        palette,
+                        diagnostic_watch.clone(),
+                        diagnostic_sample,
+                        move || menu.set(None),
+                    )
+                },
+            ))
     }
 
     fn chrome(
@@ -490,6 +509,23 @@ impl PlayerControls {
         let state = self.watch.clone();
         let paused = computed(move || !state.status().is_some_and(|status| status.playing));
         let clock = self.watch.clone();
+        let live = computed({
+            let watch = self.watch.clone();
+            move || watch.live()
+        });
+        let live_clock = self.watch.clone();
+        let seek_live = self.clone();
+        let wide = computed(move || bounds.get().width >= 440.0);
+        let title = self.watch.clone();
+        let author = self.watch.clone();
+        let chapters = self.watch.clone();
+        let has_chapters = computed(move || {
+            chapters
+                .video()
+                .is_some_and(|video| !video.chapters.is_empty())
+        });
+        let loop_queue = self.queue.clone();
+        let loop_mode = self.queue.signal();
         let captions = self.subs.clone();
         let transcript = self.reader.clone();
         let chat = self.chat.clone();
@@ -535,7 +571,87 @@ impl PlayerControls {
                                 || ui::icon(BACK, 24.0, || rgb(0xffffff).into()),
                             )),
                     )
-                    .child(view().flex_1())
+                    .child(
+                        view()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(when(fullscreen, move || {
+                                let title = title.clone();
+                                let author = author.clone();
+                                view()
+                                    .min_w(px(0.0))
+                                    .child(
+                                        text(move || {
+                                            title.video().map_or_else(
+                                                || "Loading video…".into(),
+                                                |video| video.title,
+                                            )
+                                        })
+                                        .truncate()
+                                        .text_size(px(16.0))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(0xffffff)),
+                                    )
+                                    .child(
+                                        text(move || {
+                                            author
+                                                .video()
+                                                .map(|video| video.author)
+                                                .unwrap_or_default()
+                                        })
+                                        .truncate()
+                                        .text_size(px(12.0))
+                                        .text_color(rgba(0xffffffbb)),
+                                    )
+                            })),
+                    )
+                    .child(when(wide, move || {
+                        let queue = loop_queue.clone();
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .child(player_button(
+                                QUEUE,
+                                "Queue",
+                                44.0,
+                                || rgb(0xffffff).into(),
+                                move || menu.set(Some(Menu::Queue)),
+                            ))
+                            .child(when(has_chapters, move || {
+                                player_button(
+                                    SEGMENTS,
+                                    "Chapters",
+                                    44.0,
+                                    || rgb(0xffffff).into(),
+                                    move || menu.set(Some(Menu::Segments)),
+                                )
+                            }))
+                            .child(when(
+                                move || !has_chapters.get(),
+                                move || {
+                                    player_button(
+                                        SEGMENTS,
+                                        "Segments",
+                                        44.0,
+                                        || rgb(0xffffff).into(),
+                                        move || menu.set(Some(Menu::Segments)),
+                                    )
+                                },
+                            ))
+                            .child(dynamic(move || {
+                                let queue = queue.clone();
+                                let (title, active) = loop_mode.with(|state| {
+                                    (loop_title(&state.loop_mode), state.loop_mode != "next")
+                                });
+                                player_button(
+                                    LOOP,
+                                    title,
+                                    44.0,
+                                    move || rgb(if active { 0xff0000 } else { 0xffffff }).into(),
+                                    move || queue.update("loop", json!({})),
+                                )
+                            }))
+                    }))
                     .child(
                         player_button(
                             CAST,
@@ -547,20 +663,23 @@ impl PlayerControls {
                         .disabled(offline)
                         .opacity(move || if offline.get() { 0.45_f32 } else { 1.0 }),
                     )
-                    .child(player_button(
-                        CC,
-                        "Subtitles",
-                        48.0,
-                        move || {
-                            rgb(if captions.selected() {
-                                0xffffff
-                            } else {
-                                0xe6e6e6
-                            })
-                            .into()
-                        },
-                        move || menu.set(Some(Menu::Subtitles)),
-                    ))
+                    .child(
+                        player_button(
+                            CC,
+                            "Subtitles",
+                            48.0,
+                            move || {
+                                rgb(if captions.selected() {
+                                    0xffffff
+                                } else {
+                                    0xe6e6e6
+                                })
+                                .into()
+                            },
+                            move || menu.set(Some(Menu::Subtitles)),
+                        )
+                        .on_long_press(move || menu.set(Some(Menu::Style))),
+                    )
                     .child(player_button(
                         SETTINGS,
                         "More options",
@@ -620,22 +739,72 @@ impl PlayerControls {
                             .items_center()
                             .h(px(44.0))
                             .pointer_events(PointerEvents::BoxNone)
-                            .child(
-                                text(move || {
-                                    clock.status().map_or_else(
-                                        || "0:00 / 0:00".into(),
-                                        |status| {
+                            .child(when(
+                                move || !live.get(),
+                                move || {
+                                    let clock = clock.clone();
+                                    text(move || {
+                                        clock.status().map_or_else(
+                                            || "0:00 / 0:00".into(),
+                                            |status| {
+                                                format!(
+                                                    "{} / {}",
+                                                    timestamp(status.position),
+                                                    timestamp(status.duration.unwrap_or(0.0))
+                                                )
+                                            },
+                                        )
+                                    })
+                                    .text_size(px(14.0))
+                                    .text_color(rgb(0xffffff))
+                                },
+                            ))
+                            .child(when(live, move || {
+                                let disabled = live_clock.clone();
+                                let clock = live_clock.clone();
+                                let seek_live = seek_live.clone();
+                                press()
+                                    .h(px(44.0))
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(4.0))
+                                    .label("Seek to live")
+                                    .disabled(move || {
+                                        !disabled
+                                            .status()
+                                            .is_some_and(|status| status.live_offset.is_some())
+                                    })
+                                    .on_press(move || seek_live.seek_live())
+                                    .child(
+                                        text(move || {
                                             format!(
-                                                "{} / {}",
-                                                timestamp(status.position),
-                                                timestamp(status.duration.unwrap_or(0.0))
+                                                "{} /",
+                                                timestamp(
+                                                    clock
+                                                        .status()
+                                                        .map_or(0.0, |status| status.position)
+                                                )
                                             )
-                                        },
+                                        })
+                                        .text_size(px(14.0))
+                                        .text_color(rgb(0xffffff)),
                                     )
-                                })
-                                .text_size(px(14.0))
-                                .text_color(rgb(0xffffff)),
-                            )
+                                    .child(
+                                        text("LIVE")
+                                            .text_size(px(14.0))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(rgb(0xff0000)),
+                                    )
+                            }))
+                            .child(when(has_chapters, move || {
+                                player_button(
+                                    SEGMENTS,
+                                    "Chapters",
+                                    36.0,
+                                    || rgb(0xffffff).into(),
+                                    move || menu.set(Some(Menu::Segments)),
+                                )
+                            }))
                             .child(view().flex_1())
                             .child(player_button(
                                 TRANSCRIPT,
@@ -661,6 +830,15 @@ impl PlayerControls {
                                     }
                                 },
                             ))
+                            .child(when(wide, move || {
+                                player_button(
+                                    SPEED,
+                                    "Playback speed",
+                                    44.0,
+                                    || rgb(0xffffff).into(),
+                                    move || menu.set(Some(Menu::Speed)),
+                                )
+                            }))
                             .child(
                                 press()
                                     .size(px(44.0))
@@ -734,6 +912,20 @@ impl PlayerControls {
     ) -> View {
         let menu = self.menu;
         let watch = self.watch.clone();
+        let sharing = self.watch.clone();
+        let adding = self.watch.clone();
+        let queue = self.queue.clone();
+        let loop_state = queue.signal();
+        let loop_queue = queue.clone();
+        let compact = move || bounds.get().width < 440.0;
+        let menu_height = move || {
+            let height = nsh_core::element::window().height.0;
+            let content = if compact() { 14.0 } else { 10.0 } * 48.0;
+            px((height - bounds.get().top - 60.0)
+                .max(112.0)
+                .min(height * 0.7)
+                .min(content))
+        };
         let cast = self.cast.clone();
         let offline = computed({
             let watch = self.watch.clone();
@@ -767,16 +959,19 @@ impl PlayerControls {
                     .absolute()
                     .right(px(8.0))
                     .top(move || px(bounds.get().top + 46.0))
-                    .w(px(240.0))
+                    .w(px(194.0))
                     .max_w(percentage(0.94))
+                    .h(menu_height)
                     .rounded(px(12.0))
                     .bg(rgba(0x262626fa))
+                    .overflow_hidden()
+                    .child(scroll().flex_1().min_h(px(0.0)).child(view()
                     .child(player_menu_row("Quality", SETTINGS, move || {
                         menu.set(Some(Menu::Quality))
-                    }))
-                    .child(player_menu_row("Playback speed", SPEED, move || {
+                    }).disabled(offline))
+                    .child(when(compact, move || player_menu_row("Playback speed", SPEED, move || {
                         menu.set(Some(Menu::Speed))
-                    }))
+                    })))
                     .child(player_menu_row("Resize", EXPAND, move || {
                         menu.set(Some(Menu::Resize))
                     }))
@@ -803,22 +998,61 @@ impl PlayerControls {
                     .child(player_menu_row("Subtitle style", CC, move || {
                         menu.set(Some(Menu::Style))
                     }))
-                    .child(player_menu_row("Queue", QUEUE, move || {
+                    .child(player_menu_row("Info", player_info::INFORMATION, move || menu.set(Some(Menu::Info))))
+                    .child(when(compact, move || player_menu_row("Queue", QUEUE, move || {
                         menu.set(Some(Menu::Queue))
-                    }))
-                    .child(when(has_chapters, move || {
+                    })))
+                    .child(when(move || compact() && has_chapters.get(), move || {
                         player_menu_row("Chapters", SEGMENTS, move || menu.set(Some(Menu::Segments)))
                     }))
-                    .child(when(move || !has_chapters.get(), move || {
+                    .child(when(move || compact() && !has_chapters.get(), move || {
                         player_menu_row("Segments", SEGMENTS, move || menu.set(Some(Menu::Segments)))
+                    }))
+                    .child(when(compact, move || {
+                        let loop_queue = loop_queue.clone();
+                        dynamic(move || {
+                            let loop_queue = loop_queue.clone();
+                            let title = loop_state.with(|state| loop_title(&state.loop_mode));
+                            player_menu_row(title, LOOP, move || loop_queue.update("loop", json!({})))
+                        })
                     }))
                     .child(player_menu_row("Download", DOWNLOAD, move || {
                         if let Some(video) = watch.video() {
                             menu.set(None);
                             downloads.confirm("", json!([{"videoId":video.video_id,"title":video.title,"author":video.author}]));
                         }
-                    })),
+                    }))
+                    .child(player_menu_row("Add to queue", ADD, move || {
+                        if let Some(video) = adding.video() {
+                            queue.add(json!({"videoId":video.video_id,"title":video.title,"author":video.author}), || {});
+                        }
+                    }))
+                    .child(player_menu_row("Share", SHARE, move || {
+                        if let Some(video) = sharing.video() {
+                            share_video(format!("https://www.youtube.com/watch?v={}", video.video_id));
+                        }
+                    }))))
             )
+    }
+
+    fn seek_live(&self) {
+        let (Some(video), Some(status)) = (self.watch.video(), self.watch.status()) else {
+            return;
+        };
+        let Some(offset) = status.live_offset else {
+            return;
+        };
+        let core = self.settings.core();
+        let watch = self.watch.clone();
+        spawn(async move {
+            if let Ok(advance) = core
+                .execute::<f64>(json!({"op":"player_live_seek","offset":offset}))
+                .await
+                && let Some(current) = watch.status()
+            {
+                watch.seek(video.generation, current.position + advance);
+            }
+        });
     }
 
     fn preference_menu(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {
@@ -1320,6 +1554,15 @@ fn player_menu_row(title: &'static str, path: &'static str, action: impl Fn() + 
         .on_press(action)
         .child(ui::icon(path, 24.0, || rgb(0xffffff).into()))
         .child(text(title).text_size(px(15.0)).text_color(rgb(0xffffff)))
+}
+
+fn loop_title(mode: &str) -> &'static str {
+    match mode {
+        "repeat" => "Loop one",
+        "pause" => "Pause at end",
+        "shuffle" => "Shuffle",
+        _ => "Play next",
+    }
 }
 
 fn player_option(

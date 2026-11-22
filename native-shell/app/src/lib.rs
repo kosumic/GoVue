@@ -43,6 +43,7 @@ mod pip;
 #[cfg(target_os = "ios")]
 mod pip_ios;
 mod player_gestures;
+mod player_info;
 mod player_view;
 mod player_window;
 #[cfg(target_os = "ios")]

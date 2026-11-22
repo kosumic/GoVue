@@ -37,7 +37,7 @@ fn text(value: &Value, key: &str) -> Option<String> {
     clippy::cast_precision_loss,
     reason = "Frame rates and drop ratios are approximate display measurements."
 )]
-pub(super) fn sample(command: &Value) -> Result<Value> {
+pub(crate) fn sample(command: &Value) -> Result<Value> {
     let id = command["videoId"]
         .as_str()
         .filter(|s| crate::video_id(s))
@@ -64,6 +64,7 @@ pub(super) fn sample(command: &Value) -> Result<Value> {
         .as_u64()
         .unwrap_or(0)
         .min(1_000_000_000);
+    let counters_available = raw["renderedFrames"].is_u64() && raw["droppedFrames"].is_u64();
     let dropped = raw["droppedFrames"]
         .as_u64()
         .unwrap_or(0)
@@ -99,7 +100,7 @@ pub(super) fn sample(command: &Value) -> Result<Value> {
     while monitor.buffers.len() > 120 {
         monitor.buffers.pop_front();
     }
-    let eligible = state == "playing" && raw["visible"] == true;
+    let eligible = state == "playing" && raw["visible"] == true && counters_available;
     if !eligible || at < monitor.grace {
         monitor.frames.clear();
     } else {
@@ -128,7 +129,7 @@ pub(super) fn sample(command: &Value) -> Result<Value> {
     let mut result = json!({
         "nominalFps":nominal,"renderedFps":fps,"expectedFps":expected,
         "renderedFrames":rendered,"droppedFrames":dropped,
-        "droppedRatio":(rendered+dropped>0).then(||dropped as f64/(rendered+dropped) as f64),
+        "droppedRatio":(counters_available && rendered+dropped>0).then(||dropped as f64/(rendered+dropped) as f64),
         "firstFrameMs":raw["firstFrameMs"].as_u64().filter(|v|*v<=604_800_000),
         "bufferingMs":monitor.buffer_at.map_or(0,|t|at-t),
         "bufferCount":monitor.buffers.len(),"playbackState":state

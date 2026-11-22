@@ -257,6 +257,8 @@ impl CastView {
                     playing,
                     rate: next.speed.unwrap_or(1.0),
                     error_code: None,
+                    live_offset: None,
+                    diagnostics: Value::Null,
                 }),
             );
         } else if let Some(old) = old {

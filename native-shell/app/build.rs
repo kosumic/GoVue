@@ -25,6 +25,7 @@ fn main() {
         "../ios/PlayerWindow.swift",
         "../ios/BrowserCache.swift",
         "../ios/PlayerPip.swift",
+        "../ios/PlayerSample.swift",
         "../ios/NowPlaying.swift",
         "../ios/IsolatedRuntime.swift",
         "../../modules/govue-core/ios/DownloadMux.swift",

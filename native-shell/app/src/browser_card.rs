@@ -10,7 +10,7 @@ use crate::{
 };
 
 const QUEUE: &str = "M3 6h18M3 12h18M3 18h10m4-3v6m-3-3h6";
-const SHARE: &str = "m8 10 8-4m-8 8 8 4M8 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0m14-8a3 3 0 1 1-6 0 3 3 0 0 1 6 0m0 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0";
+pub const SHARE: &str = "m8 10 8-4m-8 8 8 4M8 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0m14-8a3 3 0 1 1-6 0 3 3 0 0 1 6 0m0 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0";
 
 #[derive(Clone, PartialEq)]
 pub struct Card {

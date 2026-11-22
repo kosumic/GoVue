@@ -211,6 +211,9 @@ pub struct PlaybackStatus {
     pub playing: bool,
     pub rate: f64,
     pub error_code: Option<String>,
+    pub live_offset: Option<f64>,
+    #[serde(default)]
+    pub diagnostics: Value,
 }
 
 #[derive(Debug, Deserialize)]
