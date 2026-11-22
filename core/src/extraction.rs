@@ -969,15 +969,48 @@ pub(crate) fn resolve(
     fresh: bool,
     observe: &impl Fn(Option<u64>) -> Result<()>,
 ) -> Result<Value> {
+    resolve_request(
+        root,
+        json!({"kind":kind,"videoId":id,"trackId":track,"audioKey":audio,"fresh":fresh}),
+        observe,
+    )
+}
+
+/// Resolve a watch catalog on a native worker. The caller keeps the token
+/// runtime mounted and supplies a cancellation check for this watch request.
+pub fn resolve_media_catalog(
+    root: &str,
+    video_id: &str,
+    user_agent: &str,
+    fresh: bool,
+    active: impl Fn() -> bool,
+) -> std::result::Result<Value, String> {
+    resolve_request(
+        root,
+        json!({"kind":"media","videoId":video_id,"userAgent":user_agent,"fresh":fresh}),
+        &|_| {
+            if active() {
+                Ok(())
+            } else {
+                Err("Extraction cancelled.".into())
+            }
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn resolve_request(
+    root: &str,
+    mut command: Value,
+    observe: &impl Fn(Option<u64>) -> Result<()>,
+) -> Result<Value> {
     let mut nonce = [0u8; 12];
     getrandom::getrandom(&mut nonce).map_err(|_| "Could not create extraction identity.")?;
     let request = format!("worker:{}", crate::hex(&nonce));
     observe(None)?;
-    crate::request(
-        &json!({"op":"extract_start","requestId":request,"kind":kind,
-        "videoId":id,"trackId":track,"audioKey":audio,"fresh":fresh}),
-        root,
-    )?;
+    command["op"] = json!("extract_start");
+    command["requestId"] = json!(request);
+    crate::request(&command, root)?;
     let result = (|| {
         loop {
             let result = crate::request(&json!({"op":"extract_poll","requestId":request}), root)?;

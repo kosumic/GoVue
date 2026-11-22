@@ -4,6 +4,7 @@ import { WebPoMinter } from 'bgutils-js/webpo';
 // Network and native APIs are unavailable in this dedicated renderer. Rust
 // fetches challenge bytes and owns each job; this adapter only executes them.
 const signals = new Map();
+const post = reply => (window.__govueTokenTransport ?? window.ReactNativeWebView)?.postMessage(JSON.stringify(reply));
 const release = requestId => {
   const state = signals.get(requestId);
   signals.delete(requestId);
@@ -29,11 +30,11 @@ window.runExtractionToken = async (requestId, task) => {
       release(requestId);
     } else throw Error();
     if (typeof value !== 'string' || !value || value.length > 2_000_000) throw Error();
-    window.ReactNativeWebView.postMessage(JSON.stringify({ requestId, taskId: task.taskId, value }));
+    post({ requestId, taskId: task.taskId, value });
   } catch {
     release(requestId);
-    window.ReactNativeWebView.postMessage(JSON.stringify({ requestId, taskId: task.taskId, error: true }));
+    post({ requestId, taskId: task.taskId, error: true });
   }
 };
 window.releaseExtractionToken = release;
-window.ReactNativeWebView.postMessage(JSON.stringify({ ready: true }));
+post({ ready: true });

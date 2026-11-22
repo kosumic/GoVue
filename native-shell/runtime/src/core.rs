@@ -1,6 +1,9 @@
 use std::fmt;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 use govue_core::CoreEvents;
 use nsh_core::element::blocking;
@@ -102,6 +105,27 @@ impl Core {
         govue_core::register_caption_page(adapter, video, &self.storage).map_err(CoreError::Request)
     }
 
+    /// Resolve the watch video using the shared extraction jobs. Dropping this
+    /// future cancels the job even after its worker has started.
+    pub async fn resolve_media(
+        &self,
+        video_id: String,
+        user_agent: String,
+        fresh: bool,
+    ) -> Result<Value, CoreError> {
+        let cancel = MediaCancellation(Arc::new(AtomicBool::new(false)));
+        let stopped = cancel.0.clone();
+        let storage = self.storage.clone();
+        blocking(move || {
+            govue_core::resolve_media_catalog(&storage, &video_id, &user_agent, fresh, || {
+                !stopped.load(Ordering::Acquire)
+            })
+            .map_err(CoreError::Request)
+        })
+        .await
+        .map_err(|_| CoreError::WorkerStopped)?
+    }
+
     pub async fn execute<T: DeserializeOwned + Send + 'static>(
         &self,
         request: Value,
@@ -125,6 +149,14 @@ impl Core {
         blocking(move || decode(&execute(request.to_string(), storage)))
             .await
             .map_err(|_| CoreError::WorkerStopped)?
+    }
+}
+
+struct MediaCancellation(Arc<AtomicBool>);
+
+impl Drop for MediaCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
     }
 }
 

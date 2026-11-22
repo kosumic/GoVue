@@ -58,6 +58,12 @@ ID to `evaluate`, then cancel that request when its video or document changes.
 Rust manages the queue, timeouts, cancellation, and request IDs. Each
 evaluation gets a fresh local WebView and returns the `n` and `sig` strings.
 
+Register `io.github.kaminarios.govue.shell.TokenRuntime` with the same
+host. Mount one Rust `TokenRuntime` beside `Core` to handle the shared
+extractor's verification tasks. Each request retains its own local WebView
+from snapshot through mint. The interpreter runs without network access,
+cookies, or a native JavaScript interface.
+
 From GoVue’s Nix Android environment, check the runtime crate.
 
 ```sh

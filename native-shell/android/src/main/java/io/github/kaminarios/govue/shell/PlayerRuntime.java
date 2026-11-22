@@ -1,23 +1,15 @@
 package io.github.kaminarios.govue.shell;
 
-import android.annotation.SuppressLint;
-import android.webkit.ConsoleMessage;
-import android.webkit.CookieManager;
 import android.webkit.RenderProcessGoneDetail;
-import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
-import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
 import com.longbridge.nsh.NshComponent;
 import com.longbridge.nsh.NshComponentContext;
 import com.longbridge.nsh.NshView;
 
-import java.io.ByteArrayInputStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -27,15 +19,6 @@ import org.json.JSONObject;
 /** Executes extracted player code in a local document without a JavaScript bridge. */
 public final class PlayerRuntime implements NshComponent {
     private static final String COMPONENT = "govue/player-runtime";
-    private static final String LOCAL_URL = "about:blank";
-    private static final String DOCUMENT = "<!doctype html>"
-            + "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
-            + "script-src 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; "
-            + "base-uri 'none'; form-action 'none'\">"
-            + "<script>"
-            + "for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection']) "
-            + "Object.defineProperty(window, name, {value: undefined, writable: false, configurable: false});"
-            + "</script>";
     private static final int MAX_SOURCE = 2_000_000;
     private static final int MAX_SIGNATURE = 10_000;
     private static final int MAX_REPLY = 130_000;
@@ -85,40 +68,16 @@ public final class PlayerRuntime implements NshComponent {
         pending = job;
         try {
             renderer = new WebView(context.getContext());
-            configure(renderer);
-            renderer.setWebChromeClient(new WebChromeClient() {
-                @Override
-                public boolean onConsoleMessage(ConsoleMessage message) {
-                    return true;
-                }
-            });
+            IsolatedWebView.configure(renderer);
             renderer.setWebViewClient(new LocalDocument(job, source));
             container.addView(renderer, new FrameLayout.LayoutParams(1, 1));
-            renderer.loadDataWithBaseURL(null, DOCUMENT, "text/html", "UTF-8", null);
+            renderer.loadDataWithBaseURL(null, IsolatedWebView.DOCUMENT, "text/html", "UTF-8", null);
         } catch (RuntimeException failure) {
             complete(job, null);
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    @SuppressWarnings("deprecation")
-    private static void configure(WebView view) {
-        WebSettings settings = view.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setBlockNetworkLoads(true);
-        settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
-        settings.setAllowFileAccessFromFileURLs(false);
-        settings.setAllowUniversalAccessFromFileURLs(false);
-        settings.setDomStorageEnabled(false);
-        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setSupportMultipleWindows(false);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(view, false);
-    }
-
-    private final class LocalDocument extends WebViewClient {
+    private final class LocalDocument extends IsolatedWebView.Client {
         private final Job job;
         private String source;
 
@@ -128,19 +87,8 @@ public final class PlayerRuntime implements NshComponent {
         }
 
         @Override
-        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-            return true;
-        }
-
-        @Override
-        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-            if (request.isForMainFrame() && LOCAL_URL.equals(request.getUrl().toString())) return null;
-            return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
-        }
-
-        @Override
         public void onPageFinished(WebView view, String url) {
-            if (view != renderer || pending != job || source == null || !LOCAL_URL.equals(url)) return;
+            if (view != renderer || pending != job || source == null || !IsolatedWebView.URL.equals(url)) return;
             String quoted = JSONObject.quote(source).replace("\u2028", "\\u2028").replace("\u2029", "\\u2029");
             source = null;
             view.evaluateJavascript("(() => { try { const result = Function(" + quoted + ")(); "
