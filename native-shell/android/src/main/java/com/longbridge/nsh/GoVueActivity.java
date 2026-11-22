@@ -10,11 +10,13 @@ import io.github.kaminarios.govue.shell.BrowserLaunches;
 import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
 import io.github.kaminarios.govue.shell.PlayerRuntime;
+import io.github.kaminarios.govue.shell.PlayerWindow;
 import io.github.kaminarios.govue.shell.TokenRuntime;
 import io.github.kaminarios.govue.shell.VideoPlayer;
 
 public final class GoVueActivity extends Activity {
     private final BrowserLaunches launches = new BrowserLaunches();
+    private final PlayerWindow playerWindow = new PlayerWindow();
     private NshView view;
 
     @Override
@@ -29,6 +31,7 @@ public final class GoVueActivity extends Activity {
         launches.register(view);
         CaptionOverlay.register(view);
         VideoPlayer.register(view);
+        playerWindow.register(view, this);
         PlayerRuntime.register(view);
         TokenRuntime.register(view);
         setContentView(view);
@@ -48,6 +51,7 @@ public final class GoVueActivity extends Activity {
         super.onConfigurationChanged(config);
         DevActivity.systemBars(this);
         view.mounter().applySystemBars();
+        playerWindow.applySystemBars();
     }
 
     @Override

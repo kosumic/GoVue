@@ -6,6 +6,7 @@ mod browser;
 mod chat;
 mod chat_view;
 mod player_view;
+mod player_window;
 mod provider_view;
 mod queue;
 mod queue_view;
@@ -24,6 +25,7 @@ use browser::Browser;
 use chat::Chat;
 use chat_view::ChatView;
 use player_view::PlayerControls;
+use player_window::PlayerWindow;
 use settings_view::{Preferences, SettingsView};
 
 ::nsh::ui_sets!(vec![nsh_base::registry()]);
@@ -62,6 +64,29 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     };
     let settings_view = SettingsView::new(preferences.clone(), palette, settings_screen);
     let chat_view = ChatView::new(chat.clone(), palette);
+    let has_watch_page = computed({
+        let browser = browser.clone();
+        move || browser.active_video().is_some()
+    });
+    let player_window = PlayerWindow::new(
+        core.clone(),
+        {
+            let watch = watch.clone();
+            move || watch.video().is_some()
+        },
+        {
+            let chat = chat.clone();
+            move || has_watch_page.get() && !chat.visible() && settings_screen.with(Option::is_none)
+        },
+    );
+    effect({
+        let window = player_window.clone();
+        move || {
+            if !has_watch_page.get() {
+                window.close();
+            }
+        }
+    });
     let chat_reader = TranscriptReader::new(core.clone());
     let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette);
     let watch_reader = TranscriptReader::new(core.clone());
@@ -99,6 +124,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let chat_reader = chat_reader.clone();
         let controls = controls.clone();
         let watch_reader = watch_reader.clone();
+        let window = player_window.clone();
         move || {
             if settings_screen.with_untracked(Option::is_some) {
                 settings_screen.set(None);
@@ -115,7 +141,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 watch_reader.close();
                 return true;
             }
-            browser.back()
+            window.close() || browser.back()
         }
     });
     let target = computed({
@@ -134,9 +160,12 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             )
         }
     });
-    effect(move || {
-        let (video, audio) = target.get();
-        watch_reader.select(video.as_deref(), &audio);
+    effect({
+        let reader = watch_reader.clone();
+        move || {
+            let (video, audio) = target.get();
+            reader.select(video.as_deref(), &audio);
+        }
     });
     effect({
         let watch = watch.clone();
@@ -148,6 +177,14 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     });
 
     let width = signal(0_f32);
+    let height = signal(0_f32);
+    let fullscreen = player_window.presented;
+    let beside = computed(move || fullscreen.get() && width.get() > height.get());
+    effect({
+        let watch = watch.clone();
+        let window = player_window.clone();
+        move || watch.present(window.frame(width.get(), height.get(), watch_reader.visible()))
+    });
     let chat_panel = chat_view.view(
         {
             let browser = browser.clone();
@@ -172,19 +209,55 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             navigate_back.back();
         },
         move |url| navigate_video.open(url),
+        player_window.clone(),
     );
     view()
         .flex_1()
-        .p_safe_area()
+        .pt(move || {
+            px(if fullscreen.get() {
+                0.0
+            } else {
+                safe_area().top.0
+            })
+        })
+        .pb(move || {
+            px(if fullscreen.get() {
+                0.0
+            } else {
+                safe_area().bottom.0
+            })
+        })
+        .pl(move || {
+            px(if fullscreen.get() {
+                0.0
+            } else {
+                safe_area().left.0
+            })
+        })
+        .pr(move || {
+            px(if fullscreen.get() {
+                0.0
+            } else {
+                safe_area().right.0
+            })
+        })
         .bg(move || palette.background())
         .child(
             view()
                 .relative()
                 .flex_1()
                 .on_layout(move |bounds: &nsh_core::Bounds<nsh_core::Points>| {
-                    width.set(bounds.size.width.0)
+                    width.set(bounds.size.width.0);
+                    height.set(bounds.size.height.0);
                 })
-                .child(browser.view())
+                .bg(move || {
+                    if fullscreen.get() {
+                        rgb(0x000000).into()
+                    } else {
+                        palette.background()
+                    }
+                })
+                .child(browser.view(fullscreen))
                 .child(watch.view(
                     move || width.get(),
                     move |event| {
@@ -194,17 +267,31 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 ))
                 .child(subtitles.view(move || width.get(), move || caption_controls.visible()))
                 .child(player_controls)
-                .child(watch_transcript.view(move || {
-                    let frame = watch_bounds.frame(width.get());
-                    (frame.top + frame.height).max(0.0)
-                }))
+                .child(watch_transcript.view(
+                    move || {
+                        if beside.get() {
+                            0.0
+                        } else {
+                            let frame = watch_bounds.frame(width.get());
+                            (frame.top + frame.height).max(0.0)
+                        }
+                    },
+                    move || {
+                        if beside.get() {
+                            width.get() - (width.get() * 0.4).min(400.0)
+                        } else {
+                            0.0
+                        }
+                    },
+                ))
                 .child(controls.error_view())
                 .child(chat_panel)
-                .child(chat_transcript.view(|| 0.0))
+                .child(chat_transcript.view(|| 0.0, || 0.0))
                 .child(settings_view.view())
                 .child(browser.toast()),
         )
         .child(browser.launches())
+        .child(player_window.view())
         .child(signatures.view())
         .child(tokens.view())
 }

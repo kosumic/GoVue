@@ -84,6 +84,7 @@ pub struct WatchPlayback {
     player: VideoPlayer,
     page: Rc<RefCell<Page>>,
     layout: Signal<Option<PageVideoLayout>>,
+    presentation: Signal<Option<EmbeddedVideoFrame>>,
     settings: Signal<Option<Map<String, Value>>>,
     foreground: Signal<bool>,
     fit: Signal<PlaybackFit>,
@@ -102,6 +103,7 @@ impl WatchPlayback {
             player: VideoPlayer::new(),
             page: Rc::new(RefCell::new(Page::default())),
             layout: signal(None),
+            presentation: signal(None),
             settings: signal(None),
             foreground: signal(false),
             fit: signal(PlaybackFit::Contain),
@@ -180,7 +182,10 @@ impl WatchPlayback {
     }
 
     pub fn frame(&self, width: f32) -> EmbeddedVideoFrame {
-        let frame = self.layout.get().map(|layout| layout.frame(width));
+        let frame = self
+            .presentation
+            .get()
+            .or_else(|| self.layout.get().map(|layout| layout.frame(width)));
         let mounted = self.video.with(Option::is_some) || self.preparing.get();
         frame.map_or(
             EmbeddedVideoFrame {
@@ -195,6 +200,10 @@ impl WatchPlayback {
                 ..frame
             },
         )
+    }
+
+    pub fn present(&self, frame: Option<EmbeddedVideoFrame>) {
+        self.presentation.set(frame);
     }
 
     /// Mount beside the retained browser, inside the same clipping container.

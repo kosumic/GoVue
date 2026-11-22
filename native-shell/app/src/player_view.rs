@@ -6,6 +6,7 @@ use nsh_core::{PointerEvents, PressEvent, prelude::*};
 use serde_json::{Value, json};
 
 use crate::chat::Chat;
+use crate::player_window::PlayerWindow;
 use crate::queue::Queue;
 use crate::queue_view::queue_sheet;
 use crate::reader_view::timestamp;
@@ -18,6 +19,9 @@ const SPARKLES: &str =
     "m9.9 2 1.9 5.8L18 10l-6.2 2.1-1.9 5.9-2-5.9L2 10l5.9-2.2zM19 12v8m-4-4h8m-4-15v6m-3-3h6";
 const PAUSE: &str = "M8 4h2v16H8zM15 4h2v16h-2z";
 const BACK: &str = "m12 19-7-7 7-7M5 12h14";
+const COLLAPSE: &str = "m6 9 6 6 6-6";
+const EXPAND: &str = "M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3m-5 13h3a2 2 0 0 0 2-2v-3M8 21H5a2 2 0 0 1-2-2v-3";
+const SHRINK: &str = "M8 3v3a2 2 0 0 1-2 2H3m13-5v3a2 2 0 0 0 2 2h3m-5 13v-3a2 2 0 0 1 2-2h3M8 21v-3a2 2 0 0 0-2-2H3";
 const CHECK: &str = "m4 12 5 5L20 6";
 const PREVIOUS: &str = "M19 20 9 12l10-8zM5 4v16";
 const NEXT: &str = "m5 4 10 8-10 8zM19 4v16";
@@ -200,6 +204,7 @@ impl PlayerControls {
         width: impl Fn() -> f32 + 'static,
         back: impl Fn() + 'static,
         open: impl Fn(String) + 'static,
+        window: PlayerWindow,
     ) -> View {
         let watch = self.watch.clone();
         let bounds = computed(move || watch.frame(width()));
@@ -225,6 +230,7 @@ impl PlayerControls {
                     let panel = panel.clone();
                     let back = back.clone();
                     let open = navigate.clone();
+                    let window = window.clone();
                     view()
                         .absolute()
                         .left(move || px(bounds.get().left))
@@ -248,7 +254,9 @@ impl PlayerControls {
                         )
                         .child(when(
                             move || visible.get(),
-                            move || panel.chrome(bounds, back.clone(), open.clone()),
+                            move || {
+                                panel.chrome(bounds, back.clone(), open.clone(), window.clone())
+                            },
                         ))
                 },
             ))
@@ -271,6 +279,7 @@ impl PlayerControls {
         bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>,
         back: Rc<impl Fn() + 'static>,
         open: OpenVideo,
+        window: PlayerWindow,
     ) -> View {
         let menu = self.menu;
         let play = self.clone();
@@ -281,6 +290,8 @@ impl PlayerControls {
         let transcript = self.reader.clone();
         let chat = self.chat.clone();
         let video = self.watch.clone();
+        let fullscreen = window.presented;
+        let close_window = window.clone();
         view()
             .absolute()
             .inset(px(0.0))
@@ -295,13 +306,25 @@ impl PlayerControls {
                     .flex_row()
                     .items_center()
                     .pointer_events(PointerEvents::BoxNone)
-                    .child(player_button(
-                        BACK,
-                        "Navigate back",
-                        48.0,
-                        || rgb(0xffffff).into(),
-                        move || back(),
-                    ))
+                    .child(
+                        press()
+                            .size(px(48.0))
+                            .items_center()
+                            .justify_center()
+                            .label("Navigate back")
+                            .on_press(move || {
+                                if !close_window.close() {
+                                    back();
+                                }
+                            })
+                            .child(when(fullscreen, || {
+                                ui::icon(COLLAPSE, 24.0, || rgb(0xffffff).into())
+                            }))
+                            .child(when(
+                                move || !fullscreen.get(),
+                                || ui::icon(BACK, 24.0, || rgb(0xffffff).into()),
+                            )),
+                    )
                     .child(view().flex_1())
                     .child(player_button(
                         CC,
@@ -416,7 +439,28 @@ impl PlayerControls {
                                         chat.show(Some(video.video_id));
                                     }
                                 },
-                            )),
+                            ))
+                            .child(
+                                press()
+                                    .size(px(44.0))
+                                    .items_center()
+                                    .justify_center()
+                                    .label(move || {
+                                        if fullscreen.get() {
+                                            "Exit fullscreen"
+                                        } else {
+                                            "Fullscreen"
+                                        }
+                                    })
+                                    .on_press(move || window.toggle())
+                                    .child(when(fullscreen, || {
+                                        ui::icon(SHRINK, 24.0, || rgb(0xffffff).into())
+                                    }))
+                                    .child(when(
+                                        move || !fullscreen.get(),
+                                        || ui::icon(EXPAND, 24.0, || rgb(0xffffff).into()),
+                                    )),
+                            ),
                     )
                     .child(self.seek_bar(bounds)),
             )

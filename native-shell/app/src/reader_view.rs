@@ -72,20 +72,22 @@ impl ReaderView {
         self
     }
 
-    pub fn view(&self, top: impl Fn() -> f32 + 'static) -> If {
+    pub fn view(&self, top: impl Fn() -> f32 + 'static, left: impl Fn() -> f32 + 'static) -> If {
         let reader = self.reader.clone();
         let panel = self.clone();
         let top = Rc::new(top);
+        let left = Rc::new(left);
         when(
             move || reader.visible(),
             move || {
                 let top = top.clone();
+                let left = left.clone();
                 let p = panel.palette;
                 view()
                     .absolute()
                     .top(move || px(top()))
                     .bottom(px(0.0))
-                    .left(px(0.0))
+                    .left(move || px(left()))
                     .right(px(0.0))
                     .bg(move || p.background())
                     .flex_col()

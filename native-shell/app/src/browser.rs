@@ -106,13 +106,13 @@ impl Browser {
             .and_then(|identity| identity["videoId"].as_str().map(str::to_owned))
     }
 
-    pub fn view(&self) -> View {
+    pub fn view(&self, fullscreen: Memo<bool>) -> View {
         let state = self.state;
         let browser = self.clone();
         view().absolute().inset(px(0.0)).child(each(
             move || state.with(|state| state.tabs.clone()),
             |tab| tab.id,
-            move |tab, _| browser.tab(tab.get_untracked()),
+            move |tab, _| browser.tab(tab.get_untracked(), fullscreen),
         ))
     }
 
@@ -161,7 +161,7 @@ impl Browser {
         )
     }
 
-    fn tab(&self, tab: Tab) -> NativeView {
+    fn tab(&self, tab: Tab, fullscreen: Memo<bool>) -> NativeView {
         let id = tab.id;
         let native = BrowserTab::new(tab.url, tab.generation);
         self.retained.borrow_mut().insert(id, native.clone());
@@ -191,6 +191,7 @@ impl Browser {
                 &self.captions,
                 move || BrowserOptions {
                     active: active.get()
+                        && !fullscreen.get()
                         && !chat.visible()
                         && settings_screen.with(Option::is_none),
                     bottom_inset: f64::from(safe_area().bottom.0),
