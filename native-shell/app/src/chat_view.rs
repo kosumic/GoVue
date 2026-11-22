@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::attachments_view::{AttachmentsView, PAPERCLIP};
 use crate::chat::{Chat, ChatTranscript};
-use crate::chat_markdown::chat_markdown;
+use crate::chat_activity::{self, ToolSelection};
 use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
 
@@ -38,12 +38,14 @@ pub struct ChatView {
     palette: Palette,
     providers: ProviderView,
     attachments: AttachmentsView,
+    tool_selection: ToolSelection,
 }
 
 impl ChatView {
     pub fn new(chat: Chat, palette: Palette) -> Self {
         let attachments = AttachmentsView::new(chat.core(), palette);
         let draft = signal(String::new());
+        let tool_selection = signal(None);
         effect({
             let attachments = attachments.clone();
             let reset = chat.clone();
@@ -51,11 +53,13 @@ impl ChatView {
                 reset.draft_revision();
                 attachments.reset();
                 draft.set(String::new());
+                tool_selection.set(None);
             }
         });
         Self {
             providers: ProviderView::new(chat.clone(), palette),
             attachments,
+            tool_selection,
             chat,
             palette,
             layer: signal(Layer::Thread),
@@ -72,6 +76,10 @@ impl ChatView {
     pub fn back(&self) -> bool {
         if !self.chat.visible() {
             return false;
+        }
+        if self.tool_selection.with_untracked(Option::is_some) {
+            self.tool_selection.set(None);
+            return true;
         }
         if self.attachments.back() {
             return true;
@@ -166,6 +174,11 @@ impl ChatView {
                         move || overlay.find_bar(),
                     ))
                     .child(panel.attachments.overlays())
+                    .child(chat_activity::tool_sheet(
+                        theme,
+                        panel.chat.clone(),
+                        panel.tool_selection,
+                    ))
             },
         )
     }
@@ -194,6 +207,8 @@ impl ChatView {
         });
         let video_chat = self.chat.clone();
         let find = self.chat.clone();
+        let assistant = self.chat.clone();
+        let tool_selection = self.tool_selection;
         let files = self.attachments.clone();
         let composer = self.composer(open_transcript);
 
@@ -248,6 +263,7 @@ impl ChatView {
                         move || {
                             let search = find.clone();
                             let files = files.clone();
+                            let assistant = assistant.clone();
                             scroll().h_full().w_full().child(
                                 view()
                                     .w_full()
@@ -284,15 +300,7 @@ impl ChatView {
                                             let user = message
                                                 .with_untracked(|message| message.role == "user");
                                             let value = move || {
-                                                message.with(|message| {
-                                                    if message.content.is_empty()
-                                                        && message.status == "streaming"
-                                                    {
-                                                        "Thinking…".to_owned()
-                                                    } else {
-                                                        message.content.clone()
-                                                    }
-                                                })
+                                                message.with(|message| message.content.clone())
                                             };
                                             let bubble = if user {
                                                 view()
@@ -310,19 +318,37 @@ impl ChatView {
                                                         },
                                                         None,
                                                     ))
-                                                    .child(
-                                                        text(value)
-                                                            .selectable(true)
-                                                            .text_size(px(16.0))
-                                                            .line_height(px(24.0))
-                                                            .text_color(move || p.ink()),
-                                                    )
+                                                    .child(when(
+                                                        move || {
+                                                            message.with(|message| {
+                                                                !message.content.is_empty()
+                                                            })
+                                                        },
+                                                        move || {
+                                                            text(value)
+                                                                .selectable(true)
+                                                                .text_size(px(16.0))
+                                                                .line_height(px(24.0))
+                                                                .text_color(move || p.ink())
+                                                        },
+                                                    ))
                                             } else {
-                                                view().child(chat_markdown(p, value, move || {
-                                                    message.with(|message| {
-                                                        message.status == "streaming"
-                                                    })
-                                                }))
+                                                chat_activity::reply(
+                                                    p,
+                                                    message,
+                                                    assistant.clone(),
+                                                    tool_selection,
+                                                )
+                                            };
+                                            let actions = if user {
+                                                view().self_end().child(ui::icon_button(
+                                                    p,
+                                                    ui::COPY,
+                                                    "Copy prompt",
+                                                    move || set_clipboard(value()),
+                                                ))
+                                            } else {
+                                                chat_activity::footer(p, assistant.clone(), message)
                                             };
                                             view()
                                                 .element_ref(&row)
@@ -354,16 +380,7 @@ impl ChatView {
                                                         .text_color(rgb(0xff0000))
                                                     },
                                                 ))
-                                                .child(view().self_end().child(ui::icon_button(
-                                                    p,
-                                                    ui::COPY,
-                                                    "Copy message",
-                                                    move || {
-                                                        set_clipboard(message.with(|message| {
-                                                            message.content.clone()
-                                                        }));
-                                                    },
-                                                )))
+                                                .child(actions)
                                         },
                                     )),
                             )

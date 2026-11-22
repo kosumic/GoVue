@@ -37,6 +37,7 @@ pub struct ChatTranscript {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: String,
     pub role: String,
@@ -45,6 +46,42 @@ pub struct Message {
     pub error: Option<String>,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    #[serde(default)]
+    pub blocks: Vec<ChatBlock>,
+    #[serde(default)]
+    pub reasoning: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub model_name: String,
+    #[serde(default)]
+    pub provider_label: String,
+    #[serde(default)]
+    pub usage: Value,
+    #[serde(default)]
+    pub usage_details: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatBlock {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub content: Option<String>,
+    pub explanation: Option<String>,
+    #[serde(default)]
+    pub steps: Vec<PlanStep>,
+    pub name: Option<String>,
+    pub title: Option<String>,
+    pub error: Option<String>,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PlanStep {
+    pub step: String,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -108,6 +145,12 @@ struct Progress {
     text: String,
     reply_id: Option<String>,
     status: String,
+    reasoning: Option<String>,
+    blocks: Option<Vec<ChatBlock>>,
+    model: Option<String>,
+    provider_label: Option<String>,
+    usage: Value,
+    usage_details: Value,
 }
 
 /// Keeps the displayed conversation and its streaming task in sync with GoVue's
@@ -444,10 +487,30 @@ impl Chat {
         accepted: impl FnOnce() + 'static,
     ) {
         let prompt = prompt.trim();
-        if (prompt.is_empty() && attachments.is_empty())
-            || self.sending.get_untracked()
-            || self.loading.get_untracked()
+        if prompt.is_empty() && attachments.is_empty() {
+            return;
+        }
+        self.send_turn(json!({"prompt":prompt,"attachments":attachments}), accepted);
+    }
+
+    pub fn retry(&self, id: String) {
+        if !self.busy()
+            && self.current.with_untracked(|chat| {
+                chat.as_ref().is_some_and(|chat| {
+                    chat.messages.iter().any(|message| {
+                        message.id == id
+                            && message.role == "assistant"
+                            && message.status != "streaming"
+                    })
+                })
+            })
         {
+            self.send_turn(json!({"prompt":"","retry":true,"retryMessageId":id}), || {});
+        }
+    }
+
+    fn send_turn(&self, mut command: Value, accepted: impl FnOnce() + 'static) {
+        if self.sending.get_untracked() || self.loading.get_untracked() {
             return;
         }
         let current = self.current.get_untracked();
@@ -472,9 +535,11 @@ impl Chat {
         };
         let epoch = self.epoch.get();
         let queue = self.task.get_untracked().is_some();
+        command["id"] = json!(id);
+        command["chatId"] = json!(current.as_ref().map(|chat| &chat.id));
+        let retry = command.get("retryMessageId").is_some();
         let request = json!({"op":"ai_chat_session_send","sessionId":SESSION,"version":epoch,"queue":queue,
-            "command":{"id":id,"chatId":current.as_ref().map(|chat| &chat.id),"prompt":prompt,
-            "attachments":attachments}});
+            "clearFeedback":retry,"command":command});
         self.sending.set(true);
         self.error.set(None);
         let chat = self.clone();
@@ -501,6 +566,40 @@ impl Chat {
                     Err(error) => chat.error.set(Some(error.to_string())),
                 }
             })
+        });
+    }
+
+    pub fn branch(&self, id: String) {
+        if self.busy() || self.sending() || self.loading() {
+            return;
+        }
+        let Some(current) = self.current.get_untracked() else {
+            return;
+        };
+        let epoch = self.epoch.get();
+        self.loading.set(true);
+        self.error.set(None);
+        let chat = self.clone();
+        self.owner.run(|| {
+            spawn(async move {
+                let result = chat
+                    .core
+                    .ai::<Conversation>(
+                        json!({"op":"ai_chat_branch","chatId":current.id,"messageId":id}),
+                    )
+                    .await;
+                if chat.is_current(epoch) {
+                    chat.loading.set(false);
+                    match result {
+                        Ok(conversation) => {
+                            chat.new_chat();
+                            chat.current.set(Some(Rc::new(conversation)));
+                            chat.find_chats(String::new());
+                        }
+                        Err(error) => chat.error.set(Some(error.to_string())),
+                    }
+                }
+            });
         });
     }
 
@@ -605,6 +704,18 @@ impl Chat {
                 .filter(|m| m.role == "assistant" && reply.is_none_or(|reply| m.id == reply))
             {
                 message.content = status.state.text;
+                message.reasoning = status.state.reasoning.unwrap_or_default();
+                if let Some(blocks) = status.state.blocks {
+                    message.blocks = blocks;
+                }
+                if let Some(model) = status.state.model {
+                    message.model = model;
+                }
+                if let Some(provider) = status.state.provider_label {
+                    message.provider_label = provider;
+                }
+                message.usage = status.state.usage;
+                message.usage_details = status.state.usage_details;
             }
             self.current.set(Some(Rc::new(updated)));
             tokio::select! {

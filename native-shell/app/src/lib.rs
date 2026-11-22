@@ -11,6 +11,7 @@ mod browser;
 #[cfg(target_os = "ios")]
 mod camera_ios;
 mod chat;
+mod chat_activity;
 mod chat_markdown;
 mod chat_view;
 mod download_confirm;
