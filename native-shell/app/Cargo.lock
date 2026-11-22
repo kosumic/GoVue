@@ -1170,8 +1170,8 @@ dependencies = [
  "govue-shell-runtime",
  "nsh-base",
  "nsh-core",
- "nsh-ios-app",
  "nsh-platform-android",
+ "nsh-platform-apple",
  "nsh-platform-ios",
  "objc2",
  "objc2-core-foundation",
@@ -2064,19 +2064,6 @@ dependencies = [
  "wgpu",
  "windows",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "nsh-ios-app"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f74e8a47a537e3c383d902950f973402462102ca63e554356fce85583a7e8ba0"
-dependencies = [
- "log",
- "nsh-base",
- "nsh-engine",
- "nsh-platform-apple",
- "nsh-platform-ios",
 ]
 
 [[package]]

@@ -21,6 +21,8 @@ mod downloads_ios;
 #[cfg(target_os = "ios")]
 mod ios_browser;
 #[cfg(target_os = "ios")]
+mod ios_host;
+#[cfg(target_os = "ios")]
 mod ios_runtimes;
 mod now_playing;
 #[cfg(target_os = "ios")]
@@ -28,6 +30,8 @@ mod now_playing_ios;
 mod pip;
 mod player_view;
 mod player_window;
+#[cfg(target_os = "ios")]
+mod player_window_ios;
 mod provider_view;
 mod queue;
 mod queue_view;
@@ -73,10 +77,9 @@ pub fn run_ios() {
         downloads_ios::register(components);
         now_playing_ios::register(components);
         ios_runtimes::register(components);
+        player_window_ios::register(components);
     });
-    nsh_ios_app::run_rust(
-        nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"),
-    );
+    ios_host::run(nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"));
 }
 
 #[component]
@@ -487,7 +490,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         .child(player_window.view())
         .child(pip.view(move || watch.frame(width.get()), move || can_present.get()));
     #[cfg(target_os = "ios")]
-    let root = root.child(now_playing);
+    let root = root.child(now_playing).child(player_window.view());
     root.child(chat_view.camera())
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())

@@ -20,6 +20,7 @@ fn main() {
     let inputs = [
         "../ios/DownloadTransport.swift",
         "../ios/ChatCamera.swift",
+        "../ios/PlayerWindow.swift",
         "../ios/NowPlaying.swift",
         "../ios/IsolatedRuntime.swift",
         "../../modules/govue-core/ios/DownloadMux.swift",

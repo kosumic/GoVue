@@ -90,6 +90,18 @@ impl Browser {
             notice: signal(None),
         };
         spawn(browser.clone().run(pending));
+        #[cfg(target_os = "ios")]
+        {
+            let browser = browser.clone();
+            spawn(async move {
+                loop {
+                    let text = nsh_core::element::next_url_scheme_open().await;
+                    if text.len() <= 100_000 {
+                        browser.post("shared_url", json!({"text":text}));
+                    }
+                }
+            });
+        }
         browser.post("state", json!({}));
         browser
     }
