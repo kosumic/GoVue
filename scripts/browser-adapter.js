@@ -59,6 +59,15 @@
     lastTransient = '';
   });
   window.__govueBrowser = {
+    observeFirstContent(callback) {
+      if (!globalThis.PerformanceObserver?.supportedEntryTypes?.includes('paint')) return;
+      const observer = new PerformanceObserver((entries) => {
+        if (!entries.getEntriesByName('first-contentful-paint').length) return;
+        observer.disconnect();
+        callback();
+      });
+      observer.observe({ type: 'paint', buffered: true });
+    },
     setBottomInset(bottom) {
       if (!Number.isFinite(bottom) || bottom < 0 || bottom > 200) return;
       document.documentElement.style.setProperty('--govue-bottom-inset', `${bottom}px`);

@@ -39,6 +39,7 @@ public final class BrowserTab implements NshComponent {
             "https://youtube.com", "https://www.youtube.com",
             "https://m.youtube.com", "https://music.youtube.com")));
     private static final String BRIDGE = "GoVueAndroidPage";
+    private static final String FIRST_CONTENT = "first-contentful-paint";
     private static final int INTERNAL = 1;
     private static final int EXTERNAL = 2;
     private static final int MAX_MESSAGE = 8_100_000;
@@ -58,6 +59,7 @@ public final class BrowserTab implements NshComponent {
     private boolean active;
     private boolean loading;
     private boolean failed;
+    private boolean contentPainted;
     private boolean painted;
 
     public static void register(NshView view) {
@@ -159,10 +161,16 @@ public final class BrowserTab implements NshComponent {
             if (data == null || data.length() > MAX_MESSAGE + token.length() + 1) return;
             String prefix = token + ':';
             if (!data.startsWith(prefix)) return;
+            String raw = data.substring(prefix.length());
+            if (FIRST_CONTENT.equals(raw)) {
+                contentPainted = true;
+                reportFirstPaint();
+                return;
+            }
             Map<String, Object> fields = new LinkedHashMap<>();
             fields.put("document", document());
             fields.put("origin", pageOrigin);
-            fields.put("raw", data.substring(prefix.length()));
+            fields.put("raw", raw);
             emit("pageMessage", fields);
         });
         web.setWebViewClient(new Client());
@@ -200,6 +208,8 @@ public final class BrowserTab implements NshComponent {
         token = UUID.randomUUID().toString();
         String binding = token;
         String quotedToken = JSONObject.quote(token);
+        String firstPaintObserver = painted ? "" : "window.__govueBrowser?.observeFirstContent?.(() => "
+                + "endpoint.postMessage(token + ':" + FIRST_CONTENT + "'));";
         // A message queued by a replaced document carries that document's token.
         web.evaluateJavascript("(() => { if(location.href !== " + JSONObject.quote(address) + ") return false;"
                 + " const token = " + quotedToken + ";"
@@ -209,6 +219,7 @@ public final class BrowserTab implements NshComponent {
                 + " postMessage: raw => endpoint.postMessage(token + ':' + raw),"
                 + " matches: stamp => stamp === token };\n" + pageBridge + '\n' + configuration + '\n'
                 + "window.__govueBrowser?.setDocumentGeneration(" + generation + ");" + visibilityScript()
+                + firstPaintObserver
                 + " return true; })();", result -> {
                     if (!binding.equals(token)) return;
                     bridgeReady = "true".equals(result);
@@ -250,9 +261,9 @@ public final class BrowserTab implements NshComponent {
     }
 
     private void reportFirstPaint() {
-        if (!active || loading || failed || painted) return;
+        if (!active || (loading && !contentPainted) || failed || painted) return;
         WebView current = web;
-        // onPageFinished can run before the WebView draws the loaded document.
+        // Confirm the queued frame before removing the launch cover, even with resources still loading.
         current.postVisualStateCallback(generation, new WebView.VisualStateCallback() {
             @Override
             public void onComplete(long revision) {
@@ -291,6 +302,7 @@ public final class BrowserTab implements NshComponent {
             bridgeReady = false;
             failed = false;
             loading = true;
+            contentPainted = false;
             documentStartAddress = url;
             updateAddress(url);
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
