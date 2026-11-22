@@ -420,6 +420,7 @@ impl Browser {
                 self.chat.show(self.video_id(&document));
             }
             Some("settings") => self.settings_screen.set(Some(SettingsScreen::Extensions)),
+            Some("about") => self.settings_screen.set(Some(SettingsScreen::About)),
             Some("library") => self.downloads.open(),
             Some("download") if payload["type"] == "openManager" => self.downloads.open(),
             Some("download") if payload["type"] == "openConfirm" => {
@@ -472,6 +473,13 @@ impl Browser {
                 });
             }
             _ => {}
+        }
+    }
+
+    pub fn clear_cache(&self) {
+        let id = self.state.with_untracked(|state| state.active_id);
+        if let Some(browser) = self.retained.borrow().get(&id) {
+            browser.clear_cache();
         }
     }
 

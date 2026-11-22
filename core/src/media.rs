@@ -424,9 +424,10 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
         "media_settings" => crate::player::preferences::settings(command, root),
         "media_settings_catalog" => Ok(crate::player::preferences::catalog()),
         "media_settings_export" => crate::player::preferences::export(root),
-        "media_settings_export_file" => {
-            crate::downloads::runner::export_settings(&crate::player::preferences::export(root)?)
-        }
+        "media_settings_export_file" => crate::downloads::runner::export_json(
+            "govue-settings.json",
+            &crate::player::preferences::export(root)?,
+        ),
         "media_settings_import" => crate::player::preferences::import(&command["data"], root),
         "sponsor_control" => crate::player::sponsor::control(command, root),
         "sponsor_fetch" => {

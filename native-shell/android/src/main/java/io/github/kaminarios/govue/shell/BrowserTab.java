@@ -340,6 +340,8 @@ public final class BrowserTab implements NshComponent {
         } else if (name.equals("reload") && address != null) {
             if (web == null) open(address);
             else web.reload();
+        } else if (name.equals("clearCache") && web != null) {
+            web.clearCache(true);
         } else if (name.equals("back") && web != null && web.canGoBack()) {
             web.goBack();
         } else if (name.equals("inject") && args instanceof Map<?, ?> input

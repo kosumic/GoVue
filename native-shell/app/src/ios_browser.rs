@@ -13,7 +13,9 @@ use objc2_ui_kit::UIView;
 use serde_json::{Value, json};
 
 #[link(name = "WebKit", kind = "framework")]
-unsafe extern "C" {}
+unsafe extern "C" {
+    fn govue_ios_clear_youtube_cache();
+}
 
 const HANDLER: &str = "GoVueIosPage";
 const MAX_MESSAGE: usize = 8_100_000;
@@ -411,6 +413,8 @@ impl NativeComponent for Browser {
             "back" => unsafe {
                 let _: Option<Retained<AnyObject>> = msg_send![&*self.view, goBack];
             },
+            // SAFETY: The main-thread adapter only removes cached web resources.
+            "clearCache" => unsafe { govue_ios_clear_youtube_cache() },
             _ => {}
         }
     }

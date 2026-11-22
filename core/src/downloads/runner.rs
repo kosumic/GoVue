@@ -90,15 +90,14 @@ fn export_destination(name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub(crate) fn export_settings(data: &Value) -> Result<Value> {
-    const NAME: &str = "govue-settings.json";
-    let path = export_destination(NAME)?;
-    let temporary = export_destination("govue-settings.tmp")?;
-    let bytes = serde_json::to_vec_pretty(data).map_err(|_| "Could not format settings.")?;
+pub(crate) fn export_json(name: &str, data: &Value) -> Result<Value> {
+    let path = export_destination(name)?;
+    let temporary = export_destination(&format!("{name}.tmp"))?;
+    let bytes = serde_json::to_vec_pretty(data).map_err(|_| "Could not format this export.")?;
     fs::write(&temporary, bytes)
         .and_then(|()| fs::rename(&temporary, &path))
-        .map_err(|_| "Could not export settings.")?;
-    Ok(json!({"uri":uri(&path)?,"name":NAME}))
+        .map_err(|_| "Could not prepare this export.")?;
+    Ok(json!({"uri":uri(&path)?,"name":name}))
 }
 fn local(raw: &Value) -> Result<PathBuf> {
     raw.as_str()

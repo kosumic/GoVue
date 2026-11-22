@@ -12,6 +12,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
+use crate::browser::Browser;
 use crate::downloads::{Downloads, alert};
 use crate::ui::{self, Palette, press};
 
@@ -110,13 +111,16 @@ impl Preferences {
 pub enum SettingsScreen {
     Extensions,
     Backup,
+    About,
+    Licenses,
 }
 
 impl SettingsScreen {
     pub fn back(self) -> Option<Self> {
         match self {
-            Self::Extensions => None,
+            Self::Extensions | Self::About => None,
             Self::Backup => Some(Self::Extensions),
+            Self::Licenses => Some(Self::About),
         }
     }
 }
@@ -149,6 +153,7 @@ pub struct SettingsView {
     nodes: Signal<Vec<Node>>,
     open: Signal<Option<SettingsScreen>>,
     downloads: Downloads,
+    browser: Browser,
 }
 
 impl SettingsView {
@@ -157,6 +162,7 @@ impl SettingsView {
         palette: Palette,
         open: Signal<Option<SettingsScreen>>,
         downloads: Downloads,
+        browser: Browser,
     ) -> Self {
         let nodes = signal(Vec::new());
         let core = preferences.core.clone();
@@ -174,6 +180,7 @@ impl SettingsView {
             nodes,
             open,
             downloads,
+            browser,
         }
     }
 
@@ -185,6 +192,8 @@ impl SettingsView {
             move || {
                 let extensions = panel.clone();
                 let backup = panel.clone();
+                let about = panel.clone();
+                let licenses = panel.clone();
                 view()
                     .absolute()
                     .inset(px(0.0))
@@ -195,6 +204,33 @@ impl SettingsView {
                     .child(when(
                         move || open.get() == Some(SettingsScreen::Backup),
                         move || backup.backup(),
+                    ))
+                    .child(when(
+                        move || {
+                            matches!(
+                                open.get(),
+                                Some(SettingsScreen::About | SettingsScreen::Licenses)
+                            )
+                        },
+                        move || {
+                            crate::about_view::about(
+                                about.preferences.core(),
+                                about.palette,
+                                open,
+                                about.browser.clone(),
+                                about.downloads.clone(),
+                            )
+                        },
+                    ))
+                    .child(when(
+                        move || open.get() == Some(SettingsScreen::Licenses),
+                        move || {
+                            crate::about_view::licenses(
+                                licenses.preferences.core(),
+                                licenses.palette,
+                                open,
+                            )
+                        },
                     ))
             },
         )

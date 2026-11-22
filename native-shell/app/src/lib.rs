@@ -3,6 +3,7 @@
 #[cfg(target_os = "android")]
 extern crate nsh as _;
 
+mod about_view;
 #[cfg(target_os = "ios")]
 mod ai_ios;
 mod attachment_camera;
@@ -138,6 +139,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         palette,
         settings_screen,
         downloads.clone(),
+        browser.clone(),
     );
     let chat_view = ChatView::new(chat.clone(), palette);
     let has_watch_page = computed({

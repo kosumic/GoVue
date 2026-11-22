@@ -164,6 +164,10 @@ impl BrowserTab {
         self.element.command("reload", Value::Null);
     }
 
+    pub fn clear_cache(&self) {
+        self.element.command("clearCache", Value::Null);
+    }
+
     /// Evaluate only while the target YouTube document is current.
     pub fn inject(&self, document: &BrowserDocument, script: &str) {
         self.element.command(

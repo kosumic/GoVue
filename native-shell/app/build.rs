@@ -21,6 +21,7 @@ fn main() {
         "../ios/DownloadTransport.swift",
         "../ios/ChatCamera.swift",
         "../ios/PlayerWindow.swift",
+        "../ios/BrowserCache.swift",
         "../ios/PlayerPip.swift",
         "../ios/NowPlaying.swift",
         "../ios/IsolatedRuntime.swift",

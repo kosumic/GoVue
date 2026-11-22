@@ -366,12 +366,19 @@ fn timestamp(seconds: f64) -> String {
     }
 }
 
+fn info() -> Value {
+    json!({"engine": "rust", "version": env!("CARGO_PKG_VERSION"), "commit": option_env!("GOVUE_GIT_COMMIT")})
+}
+
 fn dispatch(request: &str, root: &str) -> Result<Value> {
     if request.len() > MAX_BYTES * 2 {
         return Err("Core request is too large.".into());
     }
     let command: Value = serde_json::from_str(request).map_err(|_| "Unreadable core request.")?;
     let op = string(&command, "op")?;
+    if op == "app_check_update" {
+        return app::check_update(&command);
+    }
     // These reads take immutable snapshots under their own short lock scopes.
     if op == "restore" {
         return transcript::restore(&command, root);
@@ -449,10 +456,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     if op == "info" {
         let _span = trace::Section::begin(c"GoVue core op: info");
-        return Ok(
-            json!({"engine": "rust", "version": env!("CARGO_PKG_VERSION"),
-            "commit": option_env!("GOVUE_GIT_COMMIT")}),
-        );
+        return Ok(info());
     }
     let _span = trace::Section::begin(match op {
         "accept" => c"GoVue core op: transcript_accept",

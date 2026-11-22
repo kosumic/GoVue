@@ -4,7 +4,9 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::borrow::Cow;
+use std::io::Read;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -135,7 +137,26 @@ const FEATURED: &[Notice] = &[
     ),
 ];
 
-fn notices() -> Result<impl Iterator<Item = &'static Notice>> {
+const NATIVE: &[Notice] = &[
+    Notice::featured(
+        "nativeshell",
+        "Native Shell",
+        "Apache-2.0",
+        "https://github.com/longbridge/nsh",
+        "GoVue uses Native Shell for its native UI, system integration, and rich text rendering.",
+        include_str!("../../notices/NativeShell-Apache-2.0.txt"),
+    ),
+    Notice::featured(
+        "litube",
+        "LiTube",
+        "GPL-3.0",
+        "https://github.com/HydeYYHH/Litube",
+        "GoVue is based on LiTube. Its browser scripts and player icons are copied or adapted from LiTube.",
+        include_str!("../../notices/LiTube-GPL-3.0.txt"),
+    ),
+];
+
+fn notices(native: bool) -> Result<impl Iterator<Item = &'static Notice>> {
     #[derive(Deserialize)]
     struct Bundle {
         notices: Vec<Notice>,
@@ -147,16 +168,27 @@ fn notices() -> Result<impl Iterator<Item = &'static Notice>> {
     });
     bundle
         .as_ref()
-        .map(|bundle| FEATURED.iter().chain(bundle.notices.iter()))
+        .map(move |bundle| {
+            let featured = FEATURED.iter().filter(move |notice| {
+                !native || !matches!(&*notice.id, "litube" | "markdown" | "speech" | "video")
+            });
+            let format = if native { NATIVE } else { &[] };
+            let dependencies = bundle
+                .notices
+                .iter()
+                .filter(move |notice| !native || notice.category == "cargo");
+            featured.chain(format).chain(dependencies)
+        })
         .map_err(Clone::clone)
 }
 
 pub fn dispatch(command: &Value) -> Result<Value> {
+    let native = command["runtime"] == "nativeShell";
     match crate::string(command, "op")? {
-        "app_licenses" => Ok(json!(notices()?.collect::<Vec<_>>())),
+        "app_licenses" => Ok(json!(notices(native)?.collect::<Vec<_>>())),
         "app_license" => {
             let id = crate::string(command, "id")?;
-            notices()?
+            notices(native)?
                 .find(|notice| notice.id == id)
                 .map(|notice| json!({"text": notice.text}))
                 .ok_or_else(|| "Unknown license notice.".into())
@@ -177,6 +209,58 @@ pub fn dispatch(command: &Value) -> Result<Value> {
             Ok(json!({"latestVersion": latest.to_string(),
                 "updateAvailable": latest.cmp_precedence(&installed).is_gt()}))
         }
+        "app_diagnostics_file" => crate::downloads::runner::export_json(
+            "govue-diagnostics.json",
+            &json!({
+                "app":"GoVue",
+                "version":crate::string(command, "installedVersion")?,
+                "core":crate::info(),
+                "transport":crate::transport::status()?,
+            }),
+        ),
         _ => Err("Unknown app request.".into()),
     }
+}
+
+pub(crate) fn check_update(command: &Value) -> Result<Value> {
+    const MAX_RELEASE: u64 = 256_000;
+    let installed = crate::string(command, "installedVersion")?;
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(15)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+    let response = agent
+        .get("https://api.github.com/repos/kosumic/GoVue/releases/latest")
+        .header("Accept", "application/vnd.github+json")
+        .header("Cache-Control", "no-cache")
+        .header("User-Agent", "GoVue")
+        .call();
+    let response = match response {
+        Ok(response) => response,
+        Err(ureq::Error::Timeout(_)) => {
+            return Err("Update check timed out. Please try again.".into());
+        }
+        Err(_) => return Err("Could not check for updates. Please try again.".into()),
+    };
+    match response.status().as_u16() {
+        200 => {}
+        404 => return Err("No stable release has been published yet.".into()),
+        403 | 429 => return Err("GitHub is limiting update checks. Please try again later.".into()),
+        _ => return Err("Could not check for updates. Please try again.".into()),
+    }
+    let mut raw = Vec::new();
+    response
+        .into_body()
+        .into_reader()
+        .take(MAX_RELEASE + 1)
+        .read_to_end(&mut raw)
+        .map_err(|_| "GitHub returned an unreadable release.")?;
+    if raw.len() as u64 > MAX_RELEASE {
+        return Err("GitHub returned an unreadable release.".into());
+    }
+    let release: Value =
+        serde_json::from_slice(&raw).map_err(|_| "GitHub returned an unreadable release.")?;
+    dispatch(&json!({"op":"app_update","installedVersion":installed,"release":release}))
 }
