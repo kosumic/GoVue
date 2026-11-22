@@ -25,6 +25,7 @@ pub struct Conversation {
     pub model: String,
     pub messages: Vec<Message>,
     pub active_task: Option<String>,
+    pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub pending_messages: Vec<QueuedMessage>,
 }
@@ -184,6 +185,9 @@ pub struct Chat {
     sending: Signal<bool>,
     error: Signal<Option<String>>,
     draft_revision: Signal<u64>,
+    draft_reasoning: Signal<Option<String>>,
+    reasoning_revision: Rc<Cell<u64>>,
+    settings_busy: Signal<bool>,
 }
 
 impl Chat {
@@ -205,6 +209,9 @@ impl Chat {
             sending: signal(false),
             error: signal(None),
             draft_revision: signal(0),
+            draft_reasoning: signal(None),
+            reasoning_revision: Rc::new(Cell::new(0)),
+            settings_busy: signal(false),
         }
     }
 
@@ -235,6 +242,50 @@ impl Chat {
 
     pub fn draft_revision(&self) -> u64 {
         self.draft_revision.get()
+    }
+
+    pub fn reasoning(&self) -> Option<String> {
+        self.current
+            .with(|current| current.as_ref().map(|chat| chat.reasoning_effort.clone()))
+            .unwrap_or_else(|| self.draft_reasoning.get())
+    }
+
+    pub fn settings_busy(&self) -> bool {
+        self.settings_busy.get()
+    }
+
+    pub fn set_reasoning(&self, value: Option<String>, saved: impl FnOnce() + 'static) {
+        if self.settings_busy() || self.sending() || self.loading() {
+            return;
+        }
+        let Some(current) = self.current.get_untracked() else {
+            self.draft_reasoning.set(value);
+            saved();
+            return;
+        };
+        let epoch = self.epoch.get();
+        self.settings_busy.set(true);
+        self.error.set(None);
+        let chat = self.clone();
+        self.owner.run(|| {
+            spawn(async move {
+                let result: Result<Conversation, _> = chat.core.ai(json!({"op":"ai_chat_reasoning","chatId":current.id,"reasoningEffort":value})).await;
+                chat.settings_busy.set(false);
+                if !chat.is_current(epoch) { return; }
+                match result {
+                    Ok(updated) => {
+                        chat.reasoning_revision.set(chat.reasoning_revision.get() + 1);
+                        chat.current.update(|thread| {
+                            if let Some(thread) = thread {
+                                Rc::make_mut(thread).reasoning_effort = updated.reasoning_effort;
+                            }
+                        });
+                        saved();
+                    }
+                    Err(error) => chat.error.set(Some(error.to_string())),
+                }
+            });
+        });
     }
 
     pub fn core(&self) -> Core {
@@ -346,6 +397,7 @@ impl Chat {
     pub fn new_chat(&self) {
         self.stop();
         self.draft_revision.update(|revision| *revision += 1);
+        self.draft_reasoning.set(None);
         self.current.set(None);
         self.matches.set(None);
         self.error.set(None);
@@ -541,7 +593,10 @@ impl Chat {
     }
 
     fn send_turn(&self, mut command: Value, accepted: impl FnOnce() + 'static) {
-        if self.sending.get_untracked() || self.loading.get_untracked() {
+        if self.sending.get_untracked()
+            || self.loading.get_untracked()
+            || self.settings_busy.get_untracked()
+        {
             return;
         }
         let current = self.current.get_untracked();
@@ -568,6 +623,7 @@ impl Chat {
         let queue = self.task.get_untracked().is_some();
         command["id"] = json!(id);
         command["chatId"] = json!(current.as_ref().map(|chat| &chat.id));
+        command["reasoningEffort"] = json!(self.reasoning());
         let clear_feedback =
             command.get("retryMessageId").is_some() || command.get("editMessageId").is_some();
         let request = json!({"op":"ai_chat_session_send","sessionId":SESSION,"version":epoch,"queue":queue,
@@ -697,7 +753,8 @@ impl Chat {
                 return Ok(());
             }
             if status.state.status != "running" {
-                let saved: Conversation = self
+                let revision = self.reasoning_revision.get();
+                let mut saved: Conversation = self
                     .core
                     .ai(json!({"op":"ai_chat_get","chatId":id}))
                     .await?;
@@ -707,6 +764,9 @@ impl Chat {
                     "version":epoch,"taskId":task}))
                     .await;
                 if self.owns(task, epoch) {
+                    if revision != self.reasoning_revision.get() {
+                        saved.reasoning_effort = self.reasoning();
+                    }
                     self.current.set(Some(Rc::new(saved)));
                 }
                 return Ok(());

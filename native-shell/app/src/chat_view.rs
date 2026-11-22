@@ -5,13 +5,16 @@ use nsh_core::{
     element::{ElementRef, input},
     prelude::*,
 };
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 use crate::attachments_view::{AttachmentsView, PAPERCLIP};
 use crate::chat::{Chat, ChatTranscript, Message};
 use crate::chat_activity::{self, ToolSelection};
 use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
+
+const BRAIN: &str = "M12 18V5a3 3 0 0 0-5.9-.8 4 4 0 0 0-2.9 5.6A4 4 0 0 0 5 17a3.5 3.5 0 0 0 7 1zm0 0a3.5 3.5 0 0 0 7-1 4 4 0 0 0 1.8-7.2 4 4 0 0 0-2.9-5.6A3 3 0 0 0 12 5M7 8c0 2 1 3 3 3m7-3c0 2-1 3-3 3m-9 6c0-2 1-3 3-3m11 3c0-2-1-3-3-3";
 
 #[derive(Clone, Copy, PartialEq)]
 enum Layer {
@@ -38,6 +41,7 @@ pub struct ChatView {
     layer: Signal<Layer>,
     draft: Signal<String>,
     editing: Signal<Option<(String, String)>>,
+    reasoning_open: Signal<bool>,
     input: ElementRef,
     query: Signal<String>,
     find_query: Signal<String>,
@@ -73,6 +77,7 @@ impl ChatView {
             layer: signal(Layer::Thread),
             draft,
             editing,
+            reasoning_open: signal(false),
             input: element_ref(),
             query: signal(String::new()),
             find_query: signal(String::new()),
@@ -84,6 +89,7 @@ impl ChatView {
     }
 
     fn edit(&self, message: Message) {
+        self.reasoning_open.set(false);
         let original = self
             .editing
             .get_untracked()
@@ -619,6 +625,19 @@ impl ChatView {
         let input_ref = self.input;
         let editing = self.editing;
         let cancel = self.clone();
+        let reasoning_open = self.reasoning_open;
+        let selection = computed({
+            let chat = self.chat.clone();
+            move || reasoning_context(&chat)
+        });
+        effect({
+            let chat = self.chat.clone();
+            move || {
+                selection.get();
+                chat.draft_revision();
+                reasoning_open.set(false);
+            }
+        });
         let enabled = computed({
             let files = self.attachments.clone();
             let chat = self.chat.clone();
@@ -626,6 +645,7 @@ impl ChatView {
                 !files.busy()
                     && !chat.sending()
                     && !chat.loading()
+                    && !chat.settings_busy()
                     && (editing.with(Option::is_none) || !chat.busy())
                     && (!files.empty() || draft.with(|value| !value.trim().is_empty()))
             }
@@ -754,6 +774,13 @@ impl ChatView {
                                 move || loading.loading()
                             }),
                     )
+                    .child(when(
+                        move || reasoning_open.get() && selection.with(Option::is_some),
+                        {
+                            let chat = self.chat.clone();
+                            move || reasoning_panel(p, chat.clone(), selection, reasoning_open)
+                        },
+                    ))
                     .child(
                         view()
                             .flex_row()
@@ -781,6 +808,12 @@ impl ChatView {
                                     })
                                     .child(ui::icon(PAPERCLIP, 22.0, move || p.ink())),
                             )
+                            .child(reasoning_toggle(
+                                p,
+                                self.chat.clone(),
+                                selection,
+                                reasoning_open,
+                            ))
                             .child(view().flex_1())
                             .child(when(
                                 {
@@ -813,6 +846,7 @@ impl ChatView {
                                             files.ids(),
                                             replacing,
                                             move || {
+                                                reasoning_open.set(false);
                                                 if draft.get_untracked() == submitted {
                                                     draft.set(String::new());
                                                 }
@@ -1175,6 +1209,230 @@ fn active_model(config: &Value) -> Option<String> {
 fn model_name(name: &str) -> String {
     name.strip_prefix("gpt-")
         .map_or_else(|| name.to_owned(), |rest| format!("GPT-{rest}"))
+}
+
+type ReasoningContext = Memo<Option<(String, String)>>;
+
+fn reasoning_context(chat: &Chat) -> Option<(String, String)> {
+    let current = chat.current();
+    let config = chat.config();
+    let provider = current
+        .as_ref()
+        .map(|thread| thread.provider_id.as_str())
+        .filter(|id| !id.is_empty())
+        .or_else(|| config["activeId"].as_str())?;
+    if let Some(group) = config["groups"]
+        .as_array()?
+        .iter()
+        .find(|group| group["id"] == provider && group["connected"] == true)
+    {
+        return Some((provider.into(), group["name"].as_str()?.into()));
+    }
+    let connection = config["providers"].as_array()?.iter().find(|item| {
+        item["id"] == provider && item["connected"] == true && item["needsReauth"] != true
+    })?;
+    let model = current
+        .as_ref()
+        .map(|thread| thread.model.as_str())
+        .filter(|model| !model.is_empty())
+        .or_else(|| connection["model"].as_str())
+        .filter(|model| !model.is_empty())?;
+    Some((provider.into(), model.into()))
+}
+
+fn effort_name(effort: Option<&str>) -> String {
+    match effort {
+        None | Some("") => "Default".into(),
+        Some("none") => "Off".into(),
+        Some("xhigh") => "Extra high".into(),
+        Some(level) => {
+            let mut chars = level.chars();
+            let first = chars.next().expect("nonempty reasoning effort");
+            format!("{}{}", first.to_uppercase(), chars.as_str())
+        }
+    }
+}
+
+fn reasoning_toggle(p: Palette, chat: Chat, context: ReasoningContext, open: Signal<bool>) -> View {
+    let value = computed({
+        let chat = chat.clone();
+        move || effort_name(chat.reasoning().as_deref())
+    });
+    let disabled = computed({
+        let chat = chat.clone();
+        move || context.with(Option::is_none) || chat.loading() || chat.settings_busy()
+    });
+    press()
+        .h(px(42.0))
+        .px(px(8.0))
+        .rounded(px(21.0))
+        .flex_row()
+        .items_center()
+        .gap(px(5.0))
+        .disabled(disabled)
+        .opacity(move || if disabled.get() { 0.45_f32 } else { 1.0 })
+        .label(move || format!("Reasoning effort: {}", value.get()))
+        .on_press(move || open.update(|open| *open = !*open))
+        .child(ui::icon(BRAIN, 16.0, move || p.ink()))
+        .child(
+            text(move || value.get())
+                .text_size(px(12.0))
+                .text_color(move || p.ink()),
+        )
+        .child(ui::icon(ui::DOWN, 12.0, move || p.muted()))
+}
+
+#[derive(Deserialize)]
+struct ReasoningOptions {
+    levels: Vec<String>,
+    discovered: bool,
+}
+
+fn reasoning_panel(p: Palette, chat: Chat, context: ReasoningContext, open: Signal<bool>) -> View {
+    let levels = signal(None);
+    let discovered = signal(true);
+    let error = signal(None::<String>);
+    let core = chat.core();
+    if let Some((id, model)) = context.get_untracked() {
+        spawn(async move {
+            let result = core
+                .ai::<ReasoningOptions>(json!({"op":"ai_reasoning_options","id":id,"model":model}))
+                .await;
+            if context.get_untracked() != Some((id, model)) {
+                return;
+            }
+            match result {
+                Ok(options) => {
+                    discovered.set(options.discovered);
+                    levels.set(Some(
+                        std::iter::once(String::new())
+                            .chain(options.levels)
+                            .collect::<Vec<_>>(),
+                    ));
+                }
+                Err(problem) => error.set(Some(problem.to_string())),
+            }
+        });
+    }
+    let busy = chat.clone();
+    let effort = computed({
+        let chat = chat.clone();
+        move || chat.reasoning()
+    });
+    view()
+        .py(px(5.0))
+        .gap(px(4.0))
+        .child(when(
+            move || busy.busy(),
+            move || {
+                reasoning_help(
+                    p,
+                    "Applies to your next message. This response keeps its current setting.",
+                )
+            },
+        ))
+        .child(when(
+            move || levels.with(Option::is_none) && error.with(Option::is_none),
+            move || {
+                view()
+                    .h(px(44.0))
+                    .items_center()
+                    .justify_center()
+                    .child(ui::icon("M12 3a9 9 0 1 1-9 9", 18.0, move || p.ink()))
+            },
+        ))
+        .child(when(
+            move || levels.with(Option::is_some),
+            move || {
+                let chat = chat.clone();
+                scroll()
+                    .horizontal()
+                    .h(px(44.0))
+                    .keyboard_taps(KeyboardTaps::Handled)
+                    .child(view().flex_row().gap(px(4.0)).px(px(10.0)).child(each(
+                        move || levels.get().unwrap_or_default(),
+                        Clone::clone,
+                        move |level, _| {
+                            let level = level.get_untracked();
+                            let value = (!level.is_empty()).then(|| level.clone());
+                            let selected = computed({
+                                let value = value.clone();
+                                move || value == effort.get()
+                            });
+                            let reason = effort_name(value.as_deref());
+                            let accessible = if level.is_empty() {
+                                "Reasoning model default".into()
+                            } else {
+                                format!("Reasoning {reason}")
+                            };
+                            let name = if level == "xhigh" {
+                                "XHigh".into()
+                            } else {
+                                reason
+                            };
+                            let save = chat.clone();
+                            let enabled = chat.clone();
+                            press()
+                                .px(px(8.0))
+                                .min_w(px(44.0))
+                                .h(px(44.0))
+                                .rounded(px(12.0))
+                                .items_center()
+                                .justify_center()
+                                .label(accessible)
+                                .disabled(move || enabled.settings_busy() || enabled.sending())
+                                .bg(move || {
+                                    if selected.get() {
+                                        p.background()
+                                    } else {
+                                        rgba(0x00000000).into()
+                                    }
+                                })
+                                .accessibility_state(move || AccessibilityState {
+                                    selected: selected.get(),
+                                    ..Default::default()
+                                })
+                                .on_press(move || {
+                                    save.set_reasoning(value.clone(), move || open.set(false))
+                                })
+                                .child(
+                                    text(name)
+                                        .text_size(px(12.0))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(move || {
+                                            if selected.get() { p.ink() } else { p.muted() }
+                                        }),
+                                )
+                        },
+                    )))
+            },
+        ))
+        .child(when(
+            move || !discovered.get(),
+            move || {
+                reasoning_help(
+                    p,
+                    "Supported levels vary by model. Default uses its saved settings.",
+                )
+            },
+        ))
+        .child(when(
+            move || error.with(Option::is_some),
+            move || {
+                text(move || error.get().unwrap_or_default())
+                    .px(px(16.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(0xff0000))
+            },
+        ))
+}
+
+fn reasoning_help(p: Palette, value: &'static str) -> Text {
+    text(value)
+        .px(px(16.0))
+        .text_size(px(11.0))
+        .line_height(px(16.0))
+        .text_color(move || p.muted())
 }
 
 fn composer_note(
