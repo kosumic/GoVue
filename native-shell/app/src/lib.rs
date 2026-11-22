@@ -15,6 +15,8 @@ mod downloads;
 mod downloads_ios;
 #[cfg(target_os = "ios")]
 mod ios_browser;
+#[cfg(target_os = "android")]
+mod now_playing;
 mod pip;
 mod player_view;
 mod player_window;
@@ -129,6 +131,11 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         move |url| browser.open(url)
     });
     let pip_mode = pip.mode;
+    #[cfg(target_os = "android")]
+    let now_playing = now_playing::now_playing(watch.clone(), queue.clone(), settings, pip_mode, {
+        let browser = browser.clone();
+        move |url| browser.open(url)
+    });
     let player_window = PlayerWindow::new(
         core.clone(),
         {
@@ -463,6 +470,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     #[cfg(target_os = "android")]
     let root = root
         .child(browser.launches())
+        .child(now_playing)
         .child(player_window.view())
         .child(pip.view(move || watch.frame(width.get()), move || can_present.get()))
         .child(PlayerRuntime::new().view())

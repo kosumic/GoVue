@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <permission android:name="${applicationId}.internal.PIP" android:protectionLevel="signature" />
     <uses-permission android:name="${applicationId}.internal.PIP" />
@@ -21,6 +22,10 @@
             android:name="io.github.kaminarios.govue.coremodule.DownloadActivityService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service
+            android:name="io.github.kaminarios.govue.shell.NowPlayingService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
         <activity
             android:name="com.longbridge.nsh.GoVueActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"

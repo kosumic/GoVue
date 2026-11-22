@@ -11,6 +11,7 @@ import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
 import io.github.kaminarios.govue.shell.DownloadExport;
 import io.github.kaminarios.govue.shell.DownloadTransport;
+import io.github.kaminarios.govue.shell.NowPlaying;
 import io.github.kaminarios.govue.shell.PlayerRuntime;
 import io.github.kaminarios.govue.shell.PlayerPip;
 import io.github.kaminarios.govue.shell.PlayerWindow;
@@ -37,6 +38,7 @@ public final class GoVueActivity extends Activity {
         launches.register(view);
         CaptionOverlay.register(view);
         VideoPlayer.register(view);
+        NowPlaying.register(view);
         playerWindow.register(view, this);
         pip.register(view, this);
         PlayerRuntime.register(view);
