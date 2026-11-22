@@ -23,13 +23,22 @@ struct Clip {
     end: f64,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct Playing {
+    generation: u64,
+    start: f64,
+    end: f64,
+}
+
 #[derive(Clone)]
 pub struct CaptionAudio {
     core: Core,
     watch: WatchPlayback,
     player: VideoPlayer,
     request: Signal<Option<String>>,
-    playing: Signal<Option<(u64, f64)>>,
+    playing: Signal<Option<Playing>>,
+    transcript: Signal<bool>,
+    elapsed: Signal<Option<f64>>,
     pub phase: Signal<Phase>,
     pub error: Signal<Option<String>>,
 }
@@ -42,6 +51,8 @@ impl CaptionAudio {
             player: VideoPlayer::new(),
             request: signal(None),
             playing: signal(None),
+            transcript: signal(false),
+            elapsed: signal(None),
             phase: signal(Phase::Idle),
             error: signal(None),
         }
@@ -70,20 +81,37 @@ impl CaptionAudio {
     }
 
     fn receive(&self, event: PlaybackEvent) {
-        if let Some((owner, end)) = self.playing.get_untracked()
+        if let Some(clip) = self.playing.get_untracked()
             && let PlaybackEvent::Status { generation, status } = event
-            && owner == generation
+            && clip.generation == generation
         {
             if status.state == "error" {
-                self.stop();
-                self.error
-                    .set(Some("Caption audio could not be played.".into()));
-            } else if status.state == "ended" || status.position >= end {
+                self.fail("Caption audio could not be played.".into());
+            } else if status.state == "ended" || status.position >= clip.end {
                 self.stop();
             } else if status.playing {
                 self.phase.set(Phase::Playing);
+                if self.transcript.get_untracked() && status.position.is_finite() {
+                    self.elapsed
+                        .set(Some((status.position - clip.start).max(0.0)));
+                }
             }
         }
+    }
+
+    pub fn is_transcript(&self) -> bool {
+        self.transcript.get()
+    }
+
+    pub fn transcript_elapsed(&self) -> Option<f64> {
+        self.transcript.get().then(|| self.elapsed.get()).flatten()
+    }
+
+    fn fail(&self, message: String) {
+        let transcript = self.transcript.get_untracked();
+        self.stop();
+        self.transcript.set(transcript);
+        self.error.set(Some(message));
     }
 
     pub fn stop(&self) {
@@ -101,12 +129,15 @@ impl CaptionAudio {
             self.player.clear();
         }
         self.phase.set(Phase::Idle);
+        self.transcript.set(false);
+        self.elapsed.set(None);
         self.error.set(None);
     }
 
     pub async fn play(&self, command: Value, before_play: impl FnOnce()) -> Result<(), CoreError> {
         self.stop();
         let request: String = self.core.state(json!({"op":"ai_game_session"}))?;
+        self.transcript.set(command["op"] == "ai_chat_audio");
         self.request.set(Some(request.clone()));
         self.phase.set(Phase::Loading);
         let result = self
@@ -138,7 +169,7 @@ impl CaptionAudio {
         let (source, start, end) = match source {
             Ok(source) => source,
             Err(error) => {
-                self.phase.set(Phase::Idle);
+                self.fail(error.to_string());
                 return Err(error);
             }
         };
@@ -147,18 +178,19 @@ impl CaptionAudio {
             self.watch.player().pause(video.generation);
         }
         let generation = self.player.replace(source, Some(start), true, 1.0);
-        self.playing.set(Some((generation, end)));
+        self.playing.set(Some(Playing {
+            generation,
+            start,
+            end,
+        }));
         let audio = self.clone();
         spawn(async move {
             timer(Duration::from_secs(60)).await;
             if audio
                 .playing
-                .with_untracked(|playing| playing.is_some_and(|(owner, _)| owner == generation))
+                .with_untracked(|playing| playing.is_some_and(|clip| clip.generation == generation))
             {
-                audio.stop();
-                audio.error.set(Some(
-                    "Audio playback timed out. Try replaying the clip.".into(),
-                ));
+                audio.fail("Audio playback timed out. Try replaying the clip.".into());
             }
         });
         Ok(())

@@ -1,12 +1,19 @@
 use std::rc::Rc;
 
-use govue_shell_runtime::{ReaderResults, ReaderSnapshot, TranscriptReader, TranscriptTrack};
-use nsh_core::Checked;
-use nsh_core::{element::input, prelude::*, share::ShareRequest};
+use govue_shell_runtime::{ReaderResults, ReaderSnapshot, TranscriptReader, WatchPlayback};
+use nsh_core::{Checked, Dialog, DialogButton, DialogButtonStyle};
+use nsh_core::{
+    element::{dialog, input},
+    prelude::*,
+    share::ShareRequest,
+};
 
+use crate::chat_transcript_audio::TranscriptAudio;
 use crate::reader_clock::ReaderClock;
+use crate::reader_languages::ReaderLanguages;
 use crate::ui::{self, Palette, press};
 use crate::word_tools::{CaptionLine, WordTools};
+use crate::{download_library::DOWNLOAD, downloads::Downloads, player_info::INFORMATION};
 
 const REFRESH: &str = "M20 11a8 8 0 1 0-2.3 6m2.3-13v7h-7";
 const SHARE: &str = "M8.7 10.4l6.7-3.8M8.7 13.6l6.7 3.8M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm12-7a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm0 14a3 3 0 1 1-6 0 3 3 0 0 1 6 0z";
@@ -22,6 +29,10 @@ pub struct ReaderView {
     documents: Memo<Option<Rc<ReaderSnapshot>>>,
     results: Signal<Option<Rc<ReaderResults>>>,
     clock: Option<ReaderClock>,
+    download: Option<(WatchPlayback, Downloads)>,
+    audio: Option<TranscriptAudio>,
+    languages: ReaderLanguages,
+    copied: Signal<bool>,
     following: Signal<bool>,
     jump: Signal<u64>,
     words: WordTools,
@@ -33,15 +44,21 @@ impl ReaderView {
             let reader = reader.clone();
             move || reader.snapshot().filter(|_| reader.visible())
         });
+        let results = signal(None);
+        let languages = ReaderLanguages::new(palette, reader.clone(), documents, results);
         let panel = Self {
             reader,
             palette,
             documents,
             query: signal(String::new()),
             search: signal(false),
-            results: signal(None),
+            results,
             error: signal(None),
             clock: None,
+            download: None,
+            audio: None,
+            languages,
+            copied: signal(false),
             following: signal(true),
             jump: signal(0),
             words,
@@ -57,7 +74,17 @@ impl ReaderView {
                 };
                 let panel = panel.clone();
                 spawn(async move {
-                    match panel.reader.rows(&document, &query).await {
+                    let result = panel.reader.rows(&document, &query).await;
+                    if panel.query.get_untracked() != query
+                        || !panel.documents.with_untracked(|current| {
+                            current
+                                .as_ref()
+                                .is_some_and(|current| Rc::ptr_eq(current, &document))
+                        })
+                    {
+                        return;
+                    }
+                    match result {
                         Ok(results) => {
                             panel.results.set(Some(Rc::new(results)));
                             panel.error.set(None);
@@ -72,6 +99,16 @@ impl ReaderView {
 
     pub fn with_playback(mut self, clock: ReaderClock) -> Self {
         self.clock = Some(clock);
+        self
+    }
+
+    pub fn with_download(mut self, watch: WatchPlayback, downloads: Downloads) -> Self {
+        self.download = Some((watch, downloads));
+        self
+    }
+
+    pub fn with_audio(mut self, audio: TranscriptAudio) -> Self {
+        self.audio = Some(audio);
         self
     }
 
@@ -95,6 +132,7 @@ impl ReaderView {
                     .bg(move || p.background())
                     .flex_col()
                     .child(panel.header())
+                    .children(panel.audio.as_ref().map(|audio| audio.bar(p)))
                     .children(panel.playback_bar())
                     .child(panel.language_bar())
                     .child(panel.lines())
@@ -213,6 +251,16 @@ impl ReaderView {
         let close = self.reader.clone();
         let copy = self.clone();
         let share = self.clone();
+        let details = self.clone();
+        let copied = self.copied;
+        let watch_reader = self.clock.is_some();
+        let ready = computed(move || {
+            documents.with(|snapshot| {
+                snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| !snapshot.loading && snapshot.document(0).is_some())
+            })
+        });
         view()
             .child(
                 view()
@@ -236,7 +284,13 @@ impl ReaderView {
                                         state
                                             .as_ref()
                                             .and_then(|doc| doc.document(0))
-                                            .map(|doc| doc.data.title.clone())
+                                            .map(|doc| {
+                                                if watch_reader && doc.cached {
+                                                    format!("Saved · {}", doc.data.title)
+                                                } else {
+                                                    doc.data.title.clone()
+                                                }
+                                            })
                                             .unwrap_or_default()
                                     })
                                 })
@@ -245,41 +299,83 @@ impl ReaderView {
                                 .text_color(move || p.muted()),
                             ),
                     )
-                    .child(ui::icon_button(
-                        p,
-                        ui::SEARCH,
-                        "Search transcript",
-                        move || {
+                    .child(
+                        ui::icon_button(p, ui::SEARCH, "Search transcript", move || {
                             let open = !search.get();
                             search.set(open);
                             if !open {
                                 query.set(String::new());
                             }
-                        },
-                    ))
-                    .child(ui::icon_button(
-                        p,
-                        REFRESH,
-                        "Refresh transcript",
-                        move || refresh.retry(),
-                    ))
-                    .child(ui::icon_button(p, ui::COPY, "Copy transcript", move || {
-                        copy.export(false)
-                    }))
-                    .child(ui::icon_button(p, SHARE, "Share transcript", move || {
-                        share.export(true)
-                    }))
-                    .child(ui::icon_button(
-                        p,
-                        ui::CLOSE,
-                        "Close transcript",
-                        move || {
+                        })
+                        .size(px(40.0))
+                        .disabled(move || !ready.get()),
+                    )
+                    .when(watch_reader, |header| {
+                        header.child(
+                            ui::icon_button(p, REFRESH, "Refresh transcript", move || {
+                                copied.set(false);
+                                refresh.retry();
+                            })
+                            .size(px(40.0))
+                            .disabled(move || {
+                                documents.with(|snapshot| {
+                                    snapshot.as_ref().is_some_and(|snapshot| snapshot.loading)
+                                })
+                            }),
+                        )
+                    })
+                    .child(
+                        ui::icon_button(p, INFORMATION, "Caption details", move || {
+                            details.details()
+                        })
+                        .size(px(40.0))
+                        .disabled(move || !ready.get()),
+                    )
+                    .child(
+                        ui::icon_button(p, ui::COPY, "Copy transcript", move || copy.export(false))
+                            .size(px(40.0))
+                            .disabled(move || !ready.get())
+                            .label(move || {
+                                if copied.get() {
+                                    "Transcript copied"
+                                } else {
+                                    "Copy transcript"
+                                }
+                            }),
+                    )
+                    .child(
+                        ui::icon_button(p, SHARE, "Share transcript", move || share.export(true))
+                            .size(px(40.0))
+                            .disabled(move || !ready.get()),
+                    )
+                    .when_some(self.download.clone(), |header, (watch, downloads)| {
+                        let ready = watch.clone();
+                        header.child(
+                            ui::icon_button(p, DOWNLOAD, "Download this video", move || {
+                                if let Some(video) = watch.video() {
+                                    downloads.confirm_video(video);
+                                }
+                            })
+                            .size(px(40.0))
+                            .disabled(move || ready.video().is_none()),
+                        )
+                    })
+                    .child(
+                        ui::icon_button(p, ui::CLOSE, "Close transcript", move || {
                             search.set(false);
+                            copied.set(false);
                             query.set(String::new());
                             close.close();
-                        },
-                    )),
+                        })
+                        .size(px(40.0)),
+                    ),
             )
+            .child(when(copied, move || {
+                text("Transcript copied")
+                    .px(px(20.0))
+                    .text_size(px(13.0))
+                    .text_color(move || p.muted())
+            }))
             .child(when(search, move || {
                 input()
                     .h(px(40.0))
@@ -298,88 +394,47 @@ impl ReaderView {
             }))
     }
 
+    pub fn language_sheet(&self) -> If {
+        self.languages.sheet()
+    }
+
+    pub fn close_language_sheet(&self) -> bool {
+        self.languages.close()
+    }
+
     fn language_bar(&self) -> View {
         let p = self.palette;
-        let results = self.results;
         let documents = self.documents;
-        let reader = self.reader.clone();
         let mut_error = self.error;
-        let options = move || {
-            let Some(choices) = results.get() else {
-                return Vec::new();
-            };
-            let selected = documents.with(|state| {
-                state
-                    .as_ref()
-                    .map(|state| state.track_ids.clone())
-                    .unwrap_or_default()
-            });
-            let tracks = &choices.track_choices;
-            let mut all = tracks.source_tracks.clone();
-            all.extend(tracks.caption_tracks.iter().cloned());
-            all.extend(tracks.translations.iter().cloned());
-            all.retain(|track| !track.id.is_empty());
-            let mut seen = std::collections::HashSet::new();
-            all.retain(|track| seen.insert(track.id.clone()));
-            all.sort_by_key(|track| selected.iter().position(|id| id == &track.id).unwrap_or(2));
-            all
-        };
-        view()
-            .child(scroll().horizontal().h(px(48.0)).px(px(12.0)).child(
-                view().flex_row().items_center().gap(px(8.0)).child(each(
-                    options,
-                    |track| track.id.clone(),
-                    move |track, _| {
-                        let reader = reader.clone();
-                        press()
-                            .h(px(38.0))
-                            .rounded(px(10.0))
-                            .px(px(12.0))
-                            .bg(move || p.raised())
-                            .justify_center()
-                            .on_press(move || {
-                                reader.toggle_track(track.with(|track| track.id.clone()))
-                            })
-                            .child(
-                                text(move || track.with(|track| label(track, &documents.get())))
-                                    .text_color(move || p.ink())
-                                    .text_size(px(12.0))
-                                    .font_weight(FontWeight::SEMIBOLD),
-                            )
-                    },
-                )),
-            ))
-            .child(when(
-                move || {
-                    mut_error.get().is_some()
-                        || documents.with(|doc| {
-                            doc.as_ref()
-                                .is_some_and(|doc| doc.error.is_some() || doc.loading)
-                        })
-                },
-                move || {
-                    text(move || {
-                        if let Some(error) = mut_error.get() {
-                            return error;
-                        }
-                        documents.get().map_or_else(String::new, |doc| {
-                            if let Some(seconds) = doc.retry_after_seconds {
-                                format!(
-                                    "YouTube is limiting this translation. Retrying in {seconds}s…"
-                                )
-                            } else if let Some(error) = &doc.error {
-                                error.clone()
-                            } else {
-                                "Loading transcript…".into()
-                            }
-                        })
+        view().child(self.languages.bar()).child(when(
+            move || {
+                mut_error.get().is_some()
+                    || documents.with(|doc| {
+                        doc.as_ref()
+                            .is_some_and(|doc| doc.error.is_some() || doc.loading)
                     })
-                    .px(px(16.0))
-                    .py(px(8.0))
-                    .text_size(px(13.0))
-                    .text_color(move || p.muted())
-                },
-            ))
+            },
+            move || {
+                text(move || {
+                    if let Some(error) = mut_error.get() {
+                        return error;
+                    }
+                    documents.get().map_or_else(String::new, |doc| {
+                        if let Some(seconds) = doc.retry_after_seconds {
+                            format!("YouTube is limiting this translation. Retrying in {seconds}s…")
+                        } else if let Some(error) = &doc.error {
+                            error.clone()
+                        } else {
+                            "Loading transcript…".into()
+                        }
+                    })
+                })
+                .px(px(16.0))
+                .py(px(8.0))
+                .text_size(px(13.0))
+                .text_color(move || p.muted())
+            },
+        ))
     }
 
     fn lines(&self) -> View {
@@ -408,6 +463,9 @@ impl ReaderView {
         let results = self.results;
         let playback = self.clock.clone();
         let clock = self.clock.clone();
+        let line_audio = self.audio.clone();
+        let playing_audio = self.audio.clone();
+        let can_play = playback.is_some() || line_audio.is_some();
         let query = self.query;
         let follow = self.following;
         let jump = self.jump;
@@ -428,11 +486,21 @@ impl ReaderView {
                     .unwrap_or_default()
             })
         });
-        let active = computed(move || {
-            let clock = clock.as_ref()?;
+        let position = computed(move || {
             let state = documents.get()?;
             let data = &state.document(track)?.data;
-            let position = clock.position(&state.video_id)?;
+            if let Some(clock) = &clock {
+                clock.position(&state.video_id)
+            } else {
+                playing_audio
+                    .as_ref()?
+                    .position(&state.video_id, &data.track_id)
+            }
+        });
+        let active = computed(move || {
+            let state = documents.get()?;
+            let data = &state.document(track)?.data;
+            let position = position.get()?;
             let index = data
                 .segments
                 .partition_point(|cue| cue.start <= position)
@@ -485,14 +553,7 @@ impl ReaderView {
                     move || indices.with(Vec::len),
                     move |row| {
                         let playback = playback.clone();
-                        let word_clock = playback.clone();
-                        let word_seek = playback.clone().map(|clock| {
-                            move |seconds| {
-                                follow.set(true);
-                                jump.update(|revision| *revision += 1);
-                                clock.seek(seconds);
-                            }
-                        });
+                        let line_audio = line_audio.clone();
                         let words = words.clone();
                         let word_line = move || {
                             let index = indices.with(|rows| rows.get(row.index()).copied())?;
@@ -512,6 +573,17 @@ impl ReaderView {
                             word_line()
                                 .is_some_and(|line| word_panel.source().as_ref() == Some(&line))
                         };
+                        let play_at = move |seconds| {
+                            follow.set(true);
+                            jump.update(|revision| *revision += 1);
+                            if let Some(playback) = &playback {
+                                playback.seek(seconds);
+                            } else if let Some((audio, line)) = line_audio.as_ref().zip(word_line())
+                            {
+                                audio.play(line);
+                            }
+                        };
+                        let word_seek = can_play.then(|| play_at.clone());
                         let selected = move || {
                             active.get().is_some_and(|active| {
                                 indices.with(|rows| rows.get(row.index()).copied()) == Some(active)
@@ -521,9 +593,7 @@ impl ReaderView {
                             if !selected() {
                                 return None;
                             }
-                            let clock = word_clock.as_ref()?;
-                            let snapshot = documents.get()?;
-                            clock.position(&snapshot.video_id)
+                            position.get()
                         };
                         view()
                             .mx(px(20.0))
@@ -546,14 +616,12 @@ impl ReaderView {
                                     p.background()
                                 }
                             })
-                            .when_some(playback, |row_view, playback| {
+                            .when(can_play, |row_view| {
                                 row_view.role(AccessibilityRole::Button).on_press(move || {
                                     if !selecting()
                                         && let Some(line) = segment(row.index())
                                     {
-                                        follow.set(true);
-                                        jump.update(|revision| *revision += 1);
-                                        playback.seek(line.start);
+                                        play_at(line.start);
                                     }
                                 })
                             })
@@ -582,6 +650,7 @@ impl ReaderView {
         };
         let reader = self.reader.clone();
         let error = self.error;
+        let copied = self.copied;
         spawn(async move {
             match reader.export(&state).await {
                 Ok(content) if system_share => {
@@ -589,29 +658,46 @@ impl ReaderView {
                         error.set(Some(reason.to_string()));
                     }
                 }
-                Ok(content) => set_clipboard(content),
+                Ok(content) => {
+                    set_clipboard(content);
+                    copied.set(true);
+                }
                 Err(reason) => error.set(Some(reason.to_string())),
             }
         });
     }
-}
 
-fn label(track: &TranscriptTrack, snapshot: &Option<Rc<ReaderSnapshot>>) -> String {
-    let label = &track.label;
-    let number = snapshot
-        .as_ref()
-        .and_then(|doc| doc.track_ids.iter().position(|id| id == &track.id));
-    let mode = if track.translated_from.is_some() {
-        " · Translated"
-    } else if track.automatic {
-        " · Auto"
-    } else {
-        ""
-    };
-    number.map_or_else(
-        || format!("{label}{mode}"),
-        |index| format!("{} · {label}{mode}", index + 1),
-    )
+    fn details(&self) {
+        let Some(state) = self.documents.get_untracked() else {
+            return;
+        };
+        let Some(document) = state.document(0) else {
+            return;
+        };
+        let language = document.data.language.clone();
+        let reader = self.reader.clone();
+        spawn(async move {
+            let (title, message) = match reader.details(&state).await {
+                Ok(message) => (format!("{language} captions"), message),
+                Err(_) => (
+                    "Caption details unavailable".into(),
+                    "Refresh the transcript and try again.".into(),
+                ),
+            };
+            let _ = dialog(Dialog {
+                id: 0,
+                title: Some(title),
+                message: Some(message),
+                buttons: vec![DialogButton {
+                    text: "OK".into(),
+                    style: DialogButtonStyle::Default,
+                }],
+                cancelable: true,
+                sheet: false,
+            })
+            .await;
+        });
+    }
 }
 
 pub fn timestamp(value: f64) -> String {

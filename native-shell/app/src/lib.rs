@@ -23,6 +23,7 @@ mod chat_markdown;
 #[cfg(target_os = "ios")]
 mod chat_notifications_ios;
 mod chat_read_aloud;
+mod chat_transcript_audio;
 mod chat_view;
 mod chat_viewport;
 mod chat_voice;
@@ -66,6 +67,7 @@ mod provider_view;
 mod queue;
 mod queue_view;
 mod reader_clock;
+mod reader_languages;
 mod reader_view;
 mod segments_view;
 mod settings_view;
@@ -272,9 +274,15 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         caption_audio.clone(),
         palette,
     );
-    let words = word_tools::WordTools::new(core.clone(), palette, caption_audio, word_help);
+    let words = word_tools::WordTools::new(core.clone(), palette, caption_audio.clone(), word_help);
     let chat_reader = TranscriptReader::new(core.clone());
-    let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette, words.clone());
+    let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette, words.clone())
+        .with_audio(chat_transcript_audio::TranscriptAudio::new(
+            chat.clone(),
+            caption_audio,
+            chat_view.example_speech(),
+            chat_reader.clone(),
+        ));
     chat.track_notification_attention({
         let chat_view = chat_view.clone();
         let reader = chat_reader.clone();
@@ -304,7 +312,8 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     );
     let watch_transcript =
         reader_view::ReaderView::new(watch_reader.clone(), palette, words.clone())
-            .with_playback(clock);
+            .with_playback(clock)
+            .with_download(watch.clone(), downloads.clone());
     effect({
         let words = words.clone();
         let chat = chat_reader.clone();
@@ -353,11 +362,17 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let settings_view = settings_view.clone();
         let offline = back_from_offline.clone();
         let words = words.clone();
+        let watch_languages = watch_transcript.clone();
+        let chat_languages = chat_transcript.clone();
         move || {
             if downloads.back() || browser.close_gallery() || browser.close_card() {
                 return true;
             }
-            if settings_view.back() || words.back() {
+            if settings_view.back()
+                || watch_languages.close_language_sheet()
+                || chat_languages.close_language_sheet()
+                || words.back()
+            {
                 return true;
             }
             if chat_reader.visible() {
@@ -628,6 +643,8 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(controls.error_view())
                 .child(chat_panel)
                 .child(chat_transcript.view(|| 0.0, || 0.0))
+                .child(watch_transcript.language_sheet())
+                .child(chat_transcript.language_sheet())
                 .child(words.popup())
                 .child(words.provider_picker())
                 .child(chat_view.provider_qr())

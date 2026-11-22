@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use govue_shell_runtime::{Core, WatchPlayback};
+use govue_shell_runtime::{Core, WatchPlayback, WatchVideo};
 use nsh_core::{
     Dialog, DialogButton, DialogButtonStyle, PointerEvents,
     element::{NativeEvent, dialog},
@@ -256,6 +256,13 @@ impl Downloads {
                 }
             })
         });
+    }
+
+    pub fn confirm_video(&self, video: WatchVideo) {
+        self.confirm(
+            "",
+            json!([{"videoId":video.video_id,"title":video.title,"author":video.author}]),
+        );
     }
 
     pub async fn enqueue(

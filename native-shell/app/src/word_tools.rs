@@ -16,6 +16,7 @@ use crate::word_assistance::WordHelp;
 const BOOKMARK: &str = "M6 4h12v16l-6-4-6 4zm6 3v5m-2.5-2.5h5";
 const SPEAKER: &str = "M3 9h4l5-4v14l-5-4H3zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14";
 const RETRY: &str = "M20 4v7h-7m7-1a8 8 0 1 0 .5 5";
+const CHECK: &str = "m4 12 5 5L20 6";
 
 #[derive(Clone, PartialEq)]
 pub struct CaptionLine {
@@ -106,6 +107,7 @@ pub struct WordTools {
     error: Signal<Option<String>>,
     translation_error: Signal<Option<String>>,
     feedback: Signal<Option<String>>,
+    copied: Signal<bool>,
     translations: Signal<Vec<Translation>>,
     loading: Signal<bool>,
     audio_kind: Signal<Option<String>>,
@@ -131,6 +133,7 @@ impl WordTools {
             error: signal(None),
             translation_error: signal(None),
             feedback: signal(None),
+            copied: signal(false),
             translations: signal(Vec::new()),
             loading: signal(false),
             audio_kind: signal(None),
@@ -202,6 +205,7 @@ impl WordTools {
         self.saving.set(false);
         self.error.set(None);
         self.feedback.set(None);
+        self.copied.set(false);
         self.audio_kind.set(None);
         self.audio.stop();
         self.help.clear();
@@ -720,6 +724,8 @@ impl WordTools {
         let error = self.error;
         let translation_error = self.translation_error;
         let feedback = self.feedback;
+        let copied = self.copied;
+        let revision = self.revision;
         let phase = self.audio.phase;
         let audio_error = self.audio.error;
         let audio_kind = self.audio_kind;
@@ -763,7 +769,9 @@ impl WordTools {
             .child(view().absolute()
                 .left(move || px(layout.get().0)).top(move || px(layout.get().1)).w(move || px(layout.get().2))
                 .max_h(move || px(layout.get().3))
-                .rounded(px(20.0)).border(px(0.5)).border_color(move || p.muted()).bg(move || p.background())
+                .rounded(px(20.0)).border(px(0.5))
+                .border_color(move || rgb(if p.dark.get() { 0x3a3a3a } else { 0xe5e5e5 }))
+                .bg(move || rgb(if p.dark.get() { 0x212121 } else { 0xffffff }))
                 .overflow_hidden()
                 .on_layout(move |bounds: &Bounds<Points>| measured.set(bounds.size.height.0))
                 .child(view().flex_row().items_center().justify_between().pt(px(8.0)).pl(px(20.0)).pr(px(8.0))
@@ -776,11 +784,32 @@ impl WordTools {
                             .child(text(move || range.get().map(|range| range.word).or_else(|| seed.get().map(|seed| seed.word)).unwrap_or_default())
                                 .flex_shrink(1.0).selectable(true).text_size(px(28.0)).font_weight(FontWeight::SEMIBOLD).text_color(move || p.ink()))
                             .child(view().flex_row().items_center()
-                                .child(icon_action(p, ui::COPY, move || if phrase.get() { "Copy phrase" } else { "Copy word" }, pending, move || {
-                                    if let Some(range) = range.get_untracked() {
-                                        set_clipboard(range.word);
-                                    }
-                                }))
+                                .child(press().size(px(48.0)).items_center().justify_center()
+                                    .label(move || match (phrase.get(), copied.get()) {
+                                        (true, true) => "Phrase copied",
+                                        (true, false) => "Copy phrase",
+                                        (false, true) => "Word copied",
+                                        (false, false) => "Copy word",
+                                    })
+                                    .disabled(pending)
+                                    .on_press(move || {
+                                        if let Some(range) = range.get_untracked() {
+                                            set_clipboard(range.word);
+                                            copied.set(true);
+                                            let version = revision.get_untracked();
+                                            spawn(async move {
+                                                timer(Duration::from_secs(2)).await;
+                                                if revision.get_untracked() == version {
+                                                    copied.set(false);
+                                                }
+                                            });
+                                        }
+                                    })
+                                    .child(dynamic(move || if copied.get() {
+                                        ui::icon(CHECK, 24.0, move || p.ink())
+                                    } else {
+                                        ui::icon(ui::COPY, 24.0, move || p.ink())
+                                    })))
                                 .child(when(move || audio_kind.with(Option::is_some) && !pending.get(), move || {
                                     let play = play.clone();
                                     dynamic(move || {

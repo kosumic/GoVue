@@ -101,6 +101,7 @@ pub struct ReaderResults {
 #[derive(Clone)]
 pub struct TranscriptReader {
     core: Core,
+    owner: Owner,
     session: Rc<str>,
     version: Rc<Cell<u64>>,
     snapshot_version: Rc<Cell<u64>>,
@@ -114,6 +115,7 @@ impl TranscriptReader {
         let updates = core.subscribe();
         let reader = Self {
             core,
+            owner: Owner::current(),
             session: format!(
                 "native-reader:{}",
                 NEXT_READER.fetch_add(1, Ordering::Relaxed)
@@ -215,7 +217,8 @@ impl TranscriptReader {
         let request = json!({"op":"transcript_select","videoId":state.video_id,
             "trackId":doc.data.track_id,"trackIds":state.track_ids,"toggleId":track});
         let reader = self.clone();
-        spawn(async move {
+        // Selecting a language immediately dismisses its chooser.
+        self.run(async move {
             let result = reader.core.execute::<Vec<String>>(request).await;
             if reader.version.get() != state.version || reader.selection.get() != selected {
                 return;
@@ -250,6 +253,12 @@ impl TranscriptReader {
         self.core.execute(reader_request(state, op)?).await
     }
 
+    pub async fn details(&self, state: &ReaderSnapshot) -> Result<String, CoreError> {
+        self.core
+            .execute(reader_request(state, "vocabulary_details")?)
+            .await
+    }
+
     fn load(&self, video: &str, audio_key: &str, tracks: Vec<String>, fresh: bool) {
         let version = self.next_version();
         let documents = self
@@ -278,7 +287,7 @@ impl TranscriptReader {
             retry_after_seconds: None,
         })));
         let reader = self.clone();
-        spawn(async move {
+        self.run(async move {
             let result = reader.core.execute::<Value>(request).await;
             if reader.version.get() != version {
                 return;
@@ -288,6 +297,10 @@ impl TranscriptReader {
                 Err(error) => reader.set_error(error),
             }
         });
+    }
+
+    fn run(&self, future: impl Future<Output = ()> + 'static) {
+        self.owner.run(|| spawn(future));
     }
 
     fn set_error(&self, error: CoreError) {

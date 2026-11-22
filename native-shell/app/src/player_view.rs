@@ -1019,7 +1019,7 @@ impl PlayerControls {
                     .child(player_menu_row("Download", DOWNLOAD, move || {
                         if let Some(video) = watch.video() {
                             menu.set(None);
-                            downloads.confirm("", json!([{"videoId":video.video_id,"title":video.title,"author":video.author}]));
+                            downloads.confirm_video(video);
                         }
                     }))
                     .child(player_menu_row("Add to queue", ADD, move || {
