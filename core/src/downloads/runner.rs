@@ -77,6 +77,29 @@ fn uri(path: &Path) -> Result<String> {
         .map(String::from)
         .map_err(|()| "Invalid saved file.".into())
 }
+fn export_destination(name: &str) -> Result<PathBuf> {
+    let folder = PathBuf::from(platform()?.export_directory());
+    if !folder.is_absolute() {
+        return Err("Export storage is unavailable.".into());
+    }
+    fs::create_dir_all(&folder).map_err(|_| "Could not prepare file sharing.")?;
+    let path = folder.join(name);
+    if path.is_symlink() {
+        return Err("Invalid export file.".into());
+    }
+    Ok(path)
+}
+
+pub(crate) fn export_settings(data: &Value) -> Result<Value> {
+    const NAME: &str = "govue-settings.json";
+    let path = export_destination(NAME)?;
+    let temporary = export_destination("govue-settings.tmp")?;
+    let bytes = serde_json::to_vec_pretty(data).map_err(|_| "Could not format settings.")?;
+    fs::write(&temporary, bytes)
+        .and_then(|()| fs::rename(&temporary, &path))
+        .map_err(|_| "Could not export settings.")?;
+    Ok(json!({"uri":uri(&path)?,"name":NAME}))
+}
 fn local(raw: &Value) -> Result<PathBuf> {
     raw.as_str()
         .and_then(|s| url::Url::parse(s).ok())
@@ -593,15 +616,7 @@ pub(super) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 return Ok(json!(uri(&file(name)?)?));
             }
             let export_name = super::publication::name(&value, name)?;
-            let folder = PathBuf::from(platform()?.export_directory());
-            if !folder.is_absolute() {
-                return Err("Export storage is unavailable.".into());
-            }
-            fs::create_dir_all(&folder).map_err(|_| "Could not prepare file sharing.")?;
-            let destination = folder.join(&export_name);
-            if destination.is_symlink() {
-                return Err("Invalid export file.".into());
-            }
+            let destination = export_destination(&export_name)?;
             fs::copy(file(name)?, &destination).map_err(|_| "The saved file is missing.")?;
             return Ok(json!({"uri":uri(&destination)?,"name":export_name}));
         }

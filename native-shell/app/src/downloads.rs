@@ -373,15 +373,17 @@ impl Downloads {
 
     pub fn export(&self, id: String, artifact: Artifact, title: String, save: bool) {
         let core = self.core.clone();
-        let picker = self.export_picker;
+        let downloads = self.clone();
         self.owner.run(|| {
             spawn(async move {
                 let exported = core
-                    .execute::<Value>(json!({"op":"downloads_runner_export","id":id,"file":artifact.file}))
+                    .execute::<Value>(
+                        json!({"op":"downloads_runner_export","id":id,"file":artifact.file}),
+                    )
                     .await;
                 match exported {
                     Ok(value) if save => {
-                        picker.command("save", json!({"uri":value["uri"],"name":value["name"],"mime":artifact.mime_type}));
+                        downloads.save_export(value, &artifact.mime_type);
                     }
                     Ok(value) => {
                         let path = value["uri"]
@@ -400,6 +402,13 @@ impl Downloads {
                 }
             })
         });
+    }
+
+    pub fn save_export(&self, file: Value, mime: &str) {
+        self.export_picker.command(
+            "save",
+            json!({"uri":file["uri"],"name":file["name"],"mime":mime}),
+        );
     }
 
     pub fn export_view(&self) -> NativeView {

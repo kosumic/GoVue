@@ -132,7 +132,12 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let palette = ui::Palette {
         dark: computed(move || theme.dark()),
     };
-    let settings_view = SettingsView::new(preferences.clone(), palette, settings_screen);
+    let settings_view = SettingsView::new(
+        preferences.clone(),
+        palette,
+        settings_screen,
+        downloads.clone(),
+    );
     let chat_view = ChatView::new(chat.clone(), palette);
     let has_watch_page = computed({
         let browser = browser.clone();
@@ -247,8 +252,8 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             if downloads.back() {
                 return true;
             }
-            if settings_screen.with_untracked(Option::is_some) {
-                settings_screen.set(None);
+            if let Some(screen) = settings_screen.get_untracked() {
+                settings_screen.set(screen.back());
                 return true;
             }
             if chat_reader.visible() {
