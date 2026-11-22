@@ -6,6 +6,7 @@ mod browser;
 mod chat;
 mod chat_view;
 mod player_view;
+mod reader_clock;
 mod reader_view;
 mod ui;
 
@@ -53,16 +54,26 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let chat_reader = TranscriptReader::new(core.clone());
     let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette);
     let watch_reader = TranscriptReader::new(core.clone());
-    let watch_transcript = reader_view::ReaderView::new(watch_reader.clone(), palette).on_seek({
-        let watch = watch.clone();
-        move |position| {
-            if let Some(video) = watch.video() {
-                watch.player().seek(video.generation, position);
-                watch.player().play(video.generation);
-            }
-        }
-    });
     let (changes, mut writes) = tokio::sync::mpsc::unbounded_channel();
+    let pause_setting = changes.clone();
+    let clock = reader_clock::ReaderClock::new(
+        core.clone(),
+        watch_reader.clone(),
+        watch.clone(),
+        move || {
+            settings.with(|settings| {
+                settings
+                    .as_ref()
+                    .and_then(|settings| settings.get("pauseAfterLine"))
+                    == Some(&Value::Bool(true))
+            })
+        },
+        move |enabled| {
+            let _ = pause_setting.send(json!({"pauseAfterLine":enabled}));
+        },
+    );
+    let watch_transcript =
+        reader_view::ReaderView::new(watch_reader.clone(), palette).with_playback(clock);
     let controls = PlayerControls::new(
         watch.clone(),
         subtitles.clone(),
