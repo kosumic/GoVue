@@ -16,6 +16,7 @@ mod camera_ios;
 mod cast_view;
 mod chat;
 mod chat_activity;
+mod chat_history;
 mod chat_markdown;
 mod chat_read_aloud;
 mod chat_view;

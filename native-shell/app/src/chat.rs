@@ -111,6 +111,20 @@ pub struct SavedChat {
     pub title: String,
     pub video_id: Option<String>,
     pub model: String,
+    pub pinned: bool,
+    pub archived: bool,
+    pub search_match: Option<HistoryMatch>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryMatch {
+    pub message_id: Option<String>,
+    pub before: String,
+    pub matched: String,
+    pub after: String,
+    pub leading: bool,
+    pub trailing: bool,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +192,9 @@ pub struct Chat {
     config: Signal<Value>,
     history: Signal<Vec<SavedChat>>,
     history_epoch: Rc<Cell<u64>>,
+    history_filter: Signal<(String, bool)>,
+    pub history_pending: Signal<bool>,
+    pub history_error: Signal<Option<String>>,
     matches: Signal<Option<Rc<Matches>>>,
     find_epoch: Rc<Cell<u64>>,
     visible: Signal<bool>,
@@ -203,6 +220,9 @@ impl Chat {
             config: signal(Value::Null),
             history: signal(Vec::new()),
             history_epoch: Rc::new(Cell::new(0)),
+            history_filter: signal((String::new(), false)),
+            history_pending: signal(false),
+            history_error: signal(None),
             matches: signal(None),
             find_epoch: Rc::new(Cell::new(0)),
             visible: signal(false),
@@ -377,7 +397,7 @@ impl Chat {
     pub fn show(&self, video: Option<String>) {
         self.visible.set(true);
         self.read_config();
-        self.find_chats(String::new());
+        self.refresh_history();
         if let Some(video) = video {
             let current = self.current.get_untracked();
             if current.as_ref().is_none_or(|chat| {
@@ -406,19 +426,21 @@ impl Chat {
     }
 
     pub fn open_video(&self, video: String) {
-        self.open(json!({"op":"ai_chat_video_open","videoId":video}));
+        self.open(json!({"op":"ai_chat_video_open","videoId":video}), None);
     }
 
-    pub fn open_saved(&self, id: String) {
+    pub fn open_saved(&self, id: String, query: Option<String>) {
         if !self
             .current
             .with_untracked(|chat| chat.as_ref().is_some_and(|chat| chat.id == id))
         {
-            self.open(json!({"op":"ai_chat_get","chatId":id}));
+            self.open(json!({"op":"ai_chat_get","chatId":id}), query);
+        } else if let Some(query) = query {
+            self.find_messages(query, None);
         }
     }
 
-    fn open(&self, request: Value) {
+    fn open(&self, request: Value, query: Option<String>) {
         self.new_chat();
         self.loading.set(true);
         let epoch = self.epoch.get();
@@ -437,7 +459,10 @@ impl Chat {
                             chat.track_task(task, conversation.id.clone(), epoch);
                         }
                         chat.current.set(Some(Rc::new(conversation)));
-                        chat.find_chats(String::new());
+                        if let Some(query) = query {
+                            chat.find_messages(query, None);
+                        }
+                        chat.refresh_history();
                     }
                     Err(error) => chat.error.set(Some(error.to_string())),
                 }
@@ -467,22 +492,68 @@ impl Chat {
             .await
     }
 
-    pub fn find_chats(&self, query: String) {
+    pub fn find_chats(&self, query: String, archived: bool) {
+        self.history_filter.set((query.trim().into(), archived));
+        self.history.set(Vec::new());
+        self.refresh_history();
+    }
+
+    fn refresh_history(&self) {
+        let (query, archived) = self.history_filter.get_untracked();
         let epoch = self.history_epoch.get() + 1;
         self.history_epoch.set(epoch);
+        self.history_pending.set(true);
+        self.history_error.set(None);
         let chat = self.clone();
         self.owner.run(|| {
             spawn(async move {
-                if let Ok(result) = chat
+                if !query.is_empty() {
+                    timer(Duration::from_millis(150)).await;
+                }
+                if chat.history_epoch.get() != epoch {
+                    return;
+                }
+                let result = chat
                     .core
-                    .ai::<History>(json!({"op":"ai_chats","query":query}))
-                    .await
-                    && chat.history_epoch.get() == epoch
-                {
-                    chat.history.set(result.chats);
+                    .ai::<History>(json!({"op":"ai_chats","query":query,"archived":archived}))
+                    .await;
+                if chat.history_epoch.get() == epoch {
+                    chat.history_pending.set(false);
+                    match result {
+                        Ok(result) => chat.history.set(result.chats),
+                        Err(error) => chat.history_error.set(Some(error.to_string())),
+                    }
                 }
             })
         });
+    }
+
+    pub async fn update_saved(&self, id: String, mut request: Value) -> Result<(), CoreError> {
+        request["op"] = json!("ai_chat_update");
+        request["chatId"] = json!(id);
+        let saved: Conversation = self.core.ai(request).await?;
+        self.current.update(|current| {
+            if let Some(current) = current.as_mut().filter(|current| current.id == id) {
+                Rc::make_mut(current).title = saved.title;
+            }
+        });
+        self.refresh_history();
+        Ok(())
+    }
+
+    pub async fn delete_saved(&self, id: String) -> Result<(), CoreError> {
+        let _: Value = self
+            .core
+            .ai(json!({"op":"ai_chat_delete","chatId":id}))
+            .await?;
+        if self
+            .current
+            .with_untracked(|current| current.as_ref().is_some_and(|chat| chat.id == id))
+        {
+            self.new_chat();
+        }
+        self.refresh_history();
+        Ok(())
     }
 
     pub fn read_config(&self) {
@@ -685,7 +756,7 @@ impl Chat {
                         Ok(conversation) => {
                             chat.new_chat();
                             chat.current.set(Some(Rc::new(conversation)));
-                            chat.find_chats(String::new());
+                            chat.refresh_history();
                         }
                         Err(error) => chat.error.set(Some(error.to_string())),
                     }
@@ -738,7 +809,7 @@ impl Chat {
                     if let Err(error) = result {
                         chat.error.set(Some(error.to_string()));
                     }
-                    chat.find_chats(String::new());
+                    chat.refresh_history();
                 }
             })
         });

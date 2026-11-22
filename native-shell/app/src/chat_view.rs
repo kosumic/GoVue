@@ -10,9 +10,11 @@ use nsh_core::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::ai_usage::UsageView;
 use crate::attachments_view::{AttachmentsView, PAPERCLIP};
 use crate::chat::{Chat, ChatTranscript, Message};
 use crate::chat_activity::{self, ToolSelection};
+use crate::chat_history::ChatHistory;
 use crate::chat_read_aloud::ReadAloud;
 use crate::chat_viewport::ChatViewports;
 use crate::chat_voice::ChatVoice;
@@ -48,10 +50,13 @@ pub struct ChatView {
     editing: Signal<Option<(String, String)>>,
     reasoning_open: Signal<bool>,
     input: ElementRef,
-    query: Signal<String>,
+    history: ChatHistory,
     find_query: Signal<String>,
     palette: Palette,
     providers: ProviderView,
+    providers_back: Signal<Layer>,
+    usage: UsageView,
+    usage_open: Signal<bool>,
     attachments: AttachmentsView,
     tool_selection: ToolSelection,
     voice: ChatVoice,
@@ -132,6 +137,10 @@ impl ChatView {
         });
         Self {
             providers: ProviderView::new(chat.clone(), palette),
+            providers_back: signal(Layer::Models),
+            usage: UsageView::new(chat.core()),
+            usage_open: signal(false),
+            history: ChatHistory::new(chat.clone()),
             attachments,
             tool_selection,
             chat,
@@ -144,7 +153,6 @@ impl ChatView {
             editing,
             reasoning_open: signal(false),
             input: element_ref(),
-            query: signal(String::new()),
             find_query: signal(String::new()),
         }
     }
@@ -192,11 +200,20 @@ impl ChatView {
         if self.attachments.back() {
             return true;
         }
+        if self.usage_open.get_untracked() {
+            if !self.usage.back() {
+                self.usage_open.set(false);
+            }
+            return true;
+        }
+        if self.layer.get_untracked() == Layer::History && self.history.back() {
+            return true;
+        }
         match self.layer.get_untracked() {
             Layer::Thread => self.chat.close(),
             Layer::Providers => {
                 if !self.providers.back() {
-                    self.layer.set(Layer::Models);
+                    self.layer.set(self.providers_back.get_untracked());
                 }
             }
             Layer::Find => {
@@ -228,6 +245,8 @@ impl ChatView {
                 let providers = panel.clone();
                 let history = panel.clone();
                 let overlay = panel.clone();
+                let usage_open = panel.usage_open;
+                let usage = panel.usage.clone();
                 let open_video = open_video.clone();
                 let open_transcript = open_transcript.clone();
                 view()
@@ -248,6 +267,7 @@ impl ChatView {
                         move || layer.get() == Layer::Providers,
                         move || {
                             let close = providers.clone();
+                            let usage = providers.clone();
                             view()
                                 .flex_1()
                                 .child(
@@ -272,6 +292,19 @@ impl ChatView {
                                         ),
                                 )
                                 .child(providers.providers.view())
+                                .child(
+                                    press()
+                                        .min_h(px(48.0))
+                                        .px(px(16.0))
+                                        .justify_center()
+                                        .label("Token usage")
+                                        .on_press(move || usage.show_usage())
+                                        .child(
+                                            text("Token usage")
+                                                .text_size(px(14.0))
+                                                .text_color(move || theme.ink()),
+                                        ),
+                                )
                         },
                     ))
                     .child(when(
@@ -281,6 +314,10 @@ impl ChatView {
                     .child(when(
                         move || layer.get() == Layer::Find,
                         move || overlay.find_bar(),
+                    ))
+                    .child(when(
+                        move || usage_open.get(),
+                        move || usage.view(theme, move || usage_open.set(false)),
                     ))
                     .child(panel.attachments.overlays())
                     .child(chat_activity::tool_sheet(
@@ -632,12 +669,14 @@ impl ChatView {
         let model = self.chat.clone();
         let close = self.clone();
         let draft = self.draft;
+        let history = self.history.clone();
         view()
             .flex_row()
             .items_center()
             .px(px(6.0))
             .py(px(5.0))
             .child(ui::icon_button(p, ui::MENU, "Conversations", move || {
+                history.open();
                 layer.set(Layer::History)
             }))
             .child(
@@ -1101,6 +1140,7 @@ impl ChatView {
     fn models(&self) -> View {
         let p = self.palette;
         let layer = self.layer;
+        let providers_back = self.providers_back;
         let chat = self.chat.clone();
         let read = self.chat.clone();
         let query = signal(String::new());
@@ -1163,6 +1203,7 @@ impl ChatView {
                                 chat.choose_provider(model.provider.clone(), (!model.group).then(||model.id.clone()));
                                 layer.set(Layer::Thread);
                             } else {
+                                providers_back.set(Layer::Models);
                                 layer.set(Layer::Providers);
                             }
                         })
@@ -1179,112 +1220,54 @@ impl ChatView {
                 },
             ))))
             .child(press().h(px(54.0)).px(px(20.0)).justify_center()
-                .label("Manage providers and models").on_press(move ||layer.set(Layer::Providers))
+                .label("Manage providers and models").on_press(move ||{
+                    providers_back.set(Layer::Models);
+                    layer.set(Layer::Providers);
+                })
                 .child(text("Manage providers and models").text_size(px(14.0)).text_color(move ||p.ink())))
     }
 
     fn history(&self) -> View {
-        let p = self.palette;
         let layer = self.layer;
         let draft = self.draft;
-        let query = self.query;
-        let list = self.chat.clone();
+        let find_query = self.find_query;
         let select = self.chat.clone();
-        let search = self.chat.clone();
         let new = self.chat.clone();
-        view()
-            .absolute()
-            .inset(px(0.0))
-            .flex_row()
-            .child(
-                press()
-                    .absolute()
-                    .inset(px(0.0))
-                    .bg(rgba(0x00000066))
-                    .label("Close conversations")
-                    .on_press(move || layer.set(Layer::Thread)),
-            )
-            .child(
-                view()
-                    .h_full()
-                    .w(percentage(0.86))
-                    .max_w(px(360.0))
-                    .px(px(12.0))
-                    .bg(move || p.background())
-                    .child(
-                        view()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                text("GoVue")
-                                    .text_size(px(20.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(move || p.ink()),
-                            )
-                            .child(ui::icon_button(
-                                p,
-                                ui::CLOSE,
-                                "Close conversations",
-                                move || layer.set(Layer::Thread),
-                            )),
-                    )
-                    .child(pill(p, "New chat", move || {
-                        draft.set(String::new());
-                        new.new_chat();
-                        layer.set(Layer::Thread);
-                    }))
-                    .child(
-                        input()
-                            .label("Search conversations")
-                            .placeholder("Search conversations")
-                            .h(px(42.0))
-                            .value(move || query.get())
-                            .text_size(px(14.0))
-                            .text_color(move || p.ink())
-                            .placeholder_color(move || p.muted())
-                            .on_change(move |value: &str| {
-                                query.set(value.into());
-                                search.find_chats(value.into());
-                            }),
-                    )
-                    .child(
-                        text("Conversations")
-                            .text_size(px(12.0))
-                            .text_color(move || p.muted())
-                            .px(px(10.0))
-                            .py(px(8.0)),
-                    )
-                    .child(scroll().flex_1().child(view().child(each(
-                        move || list.history(),
-                        |chat| chat.id.clone(),
-                        move |entry, _| {
-                            let chat = select.clone();
-                            press()
-                                .min_h(px(54.0))
-                                .px(px(10.0))
-                                .gap(px(3.0))
-                                .justify_center()
-                                .on_press(move || {
-                                    draft.set(String::new());
-                                    chat.open_saved(entry.with(|entry| entry.id.clone()));
-                                    layer.set(Layer::Thread);
-                                })
-                                .child(
-                                    text(move || entry.with(|entry| entry.title.clone()))
-                                        .truncate()
-                                        .text_size(px(14.0))
-                                        .text_color(move || p.ink()),
-                                )
-                                .child(
-                                    text(move || entry.with(|entry| entry.model.clone()))
-                                        .truncate()
-                                        .text_size(px(11.0))
-                                        .text_color(move || p.muted()),
-                                )
-                        },
-                    )))),
-            )
+        let providers_back = self.providers_back;
+        let usage = self.clone();
+        self.history.view(
+            self.palette,
+            move || layer.set(Layer::Thread),
+            move |id, query| {
+                draft.set(String::new());
+                find_query.set(query.clone().unwrap_or_default());
+                layer.set(if query.is_some() {
+                    Layer::Find
+                } else {
+                    Layer::Thread
+                });
+                select.open_saved(id, query);
+            },
+            move || {
+                draft.set(String::new());
+                new.new_chat();
+                layer.set(Layer::Thread);
+            },
+            move || {
+                providers_back.set(Layer::Thread);
+                layer.set(Layer::Providers);
+            },
+            move || {
+                layer.set(Layer::Thread);
+                usage.show_usage();
+            },
+        )
+    }
+
+    fn show_usage(&self) {
+        let current = self.chat.current().map(|chat| chat.id.clone());
+        self.usage.open(current);
+        self.usage_open.set(true);
     }
 
     fn find_bar(&self) -> View {
