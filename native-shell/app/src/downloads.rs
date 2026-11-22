@@ -1,7 +1,11 @@
 use std::rc::Rc;
 
 use govue_shell_runtime::{Core, WatchPlayback};
-use nsh_core::{Dialog, DialogButton, DialogButtonStyle, element::dialog, prelude::*};
+use nsh_core::{
+    Dialog, DialogButton, DialogButtonStyle, PointerEvents,
+    element::{NativeEvent, dialog},
+    prelude::*,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Notify, broadcast};
@@ -16,6 +20,7 @@ pub struct Entry {
     pub state: String,
     pub label: String,
     pub file: String,
+    pub mime_type: String,
     pub artifacts: Vec<Artifact>,
     pub total: u64,
     pub received: u64,
@@ -25,9 +30,11 @@ pub struct Entry {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Artifact {
     pub file: String,
     pub label: String,
+    pub mime_type: String,
 }
 
 impl Entry {
@@ -108,6 +115,7 @@ pub struct Downloads {
     pub target: Signal<Option<Target>>,
     pub picker: Signal<Option<Picker>>,
     pub notice: Signal<Option<String>>,
+    export_picker: ElementRef,
     refresh: Rc<Notify>,
 }
 
@@ -126,6 +134,7 @@ impl Downloads {
             target: signal(None),
             picker: signal(None),
             notice: signal(None),
+            export_picker: element_ref(),
             refresh: Rc::new(Notify::new()),
         };
         effect({
@@ -362,14 +371,18 @@ impl Downloads {
         });
     }
 
-    pub fn share(&self, id: String, file: String, title: String) {
+    pub fn export(&self, id: String, artifact: Artifact, title: String, save: bool) {
         let core = self.core.clone();
+        let picker = self.export_picker;
         self.owner.run(|| {
             spawn(async move {
                 let exported = core
-                    .execute::<Value>(json!({"op":"downloads_runner_export","id":id,"file":file}))
+                    .execute::<Value>(json!({"op":"downloads_runner_export","id":id,"file":artifact.file}))
                     .await;
                 match exported {
+                    Ok(value) if save => {
+                        picker.command("save", json!({"uri":value["uri"],"name":value["name"],"mime":artifact.mime_type}));
+                    }
                     Ok(value) => {
                         let path = value["uri"]
                             .as_str()
@@ -387,6 +400,22 @@ impl Downloads {
                 }
             })
         });
+    }
+
+    pub fn export_view(&self) -> NativeView {
+        nsh_core::element::native("govue/download-export")
+            .element_ref(&self.export_picker)
+            .absolute()
+            .size(px(1.0))
+            .opacity(0.0)
+            .pointer_events(PointerEvents::None)
+            .on_native_event(move |event: &NativeEvent| {
+                if event.name.as_ref() == "error"
+                    && let Some(error) = event.data.as_str()
+                {
+                    spawn(alert(error.to_owned()));
+                }
+            })
     }
 }
 

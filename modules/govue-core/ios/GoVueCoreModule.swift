@@ -73,7 +73,10 @@ public final class GoVueCoreModule: Module {
               promise.reject("EXPORT_UNAVAILABLE", "Save As is unavailable.")
               return
             }
-            let export = FileExport(prepared: prepared, promise: promise) { [weak self] in self?.pendingExport = nil }
+            let export = FileExport(prepared: prepared) { [weak self] saved in
+              promise.resolve(saved)
+              self?.pendingExport = nil
+            }
             pendingExport = export
             presenter.present(export.controller, animated: true)
           }

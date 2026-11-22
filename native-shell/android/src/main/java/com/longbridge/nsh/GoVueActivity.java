@@ -9,6 +9,7 @@ import io.github.kaminarios.govue.shell.AiTransport;
 import io.github.kaminarios.govue.shell.BrowserLaunches;
 import io.github.kaminarios.govue.shell.BrowserTab;
 import io.github.kaminarios.govue.shell.CaptionOverlay;
+import io.github.kaminarios.govue.shell.DownloadExport;
 import io.github.kaminarios.govue.shell.DownloadTransport;
 import io.github.kaminarios.govue.shell.PlayerRuntime;
 import io.github.kaminarios.govue.shell.PlayerPip;
@@ -29,6 +30,7 @@ public final class GoVueActivity extends Activity {
         view = new NshView(this);
         AiTransport.install(this);
         DownloadTransport.install(this);
+        DownloadExport.register(view, this);
         view.useStandaloneLimits();
         view.ownSystemBars();
         BrowserTab.register(view);

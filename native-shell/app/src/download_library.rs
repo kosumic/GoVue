@@ -377,6 +377,7 @@ impl DownloadLibrary {
             vec![Artifact {
                 file: entry.file.clone(),
                 label: entry.label.clone(),
+                mime_type: entry.mime_type.clone(),
             }]
         } else {
             entry.artifacts.clone()
@@ -464,26 +465,33 @@ impl DownloadLibrary {
                                         artifacts
                                             .into_iter()
                                             .map(|artifact| {
-                                                let downloads = self.downloads.clone();
-                                                let id = entry.id.clone();
-                                                let title = entry.title.clone();
-                                                row_action(
-                                                    p,
-                                                    format!(
-                                                        "Share {}",
-                                                        if artifact.label.is_empty() {
-                                                            "file"
-                                                        } else {
-                                                            &artifact.label
-                                                        }
+                                                view().children(
+                                                    [("Save", true), ("Share", false)].map(
+                                                        |(action, save)| {
+                                                            let downloads = self.downloads.clone();
+                                                            let id = entry.id.clone();
+                                                            let title = entry.title.clone();
+                                                            let artifact = artifact.clone();
+                                                            let label = if artifact.label.is_empty()
+                                                            {
+                                                                "file"
+                                                            } else {
+                                                                &artifact.label
+                                                            };
+                                                            row_action(
+                                                                p,
+                                                                format!("{action} {label}"),
+                                                                move || {
+                                                                    downloads.export(
+                                                                        id.clone(),
+                                                                        artifact.clone(),
+                                                                        title.clone(),
+                                                                        save,
+                                                                    );
+                                                                },
+                                                            )
+                                                        },
                                                     ),
-                                                    move || {
-                                                        downloads.share(
-                                                            id.clone(),
-                                                            artifact.file.clone(),
-                                                            title.clone(),
-                                                        );
-                                                    },
                                                 )
                                             })
                                             .collect::<Vec<_>>(),

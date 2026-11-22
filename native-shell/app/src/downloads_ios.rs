@@ -1,12 +1,18 @@
 use std::{
     ffi::{CStr, CString, c_char, c_void},
     path::PathBuf,
+    rc::Rc,
     slice,
 };
 
 use govue_core::{DownloadHttp, DownloadPlatform, DownloadRequest, MediaRangeReply};
-use objc2::rc::autoreleasepool;
+use nsh_platform_ios::{ComponentContext, Components, NativeComponent};
+use objc2::{
+    MainThreadMarker,
+    rc::{Retained, autoreleasepool},
+};
 use objc2_foundation::NSString;
+use objc2_ui_kit::UIView;
 use serde_json::Value;
 
 const MAX_REPLY: usize = 1_048_576;
@@ -19,6 +25,11 @@ unsafe extern "C" {
 
 unsafe extern "C" {
     fn govue_download_wifi_connected() -> bool;
+    fn govue_download_save_file(
+        anchor: *const c_void,
+        uri: *const c_char,
+        filename: *const c_char,
+    ) -> i32;
     fn govue_download_mux(
         video: *const c_char,
         audio: *const c_char,
@@ -36,6 +47,61 @@ unsafe extern "C" {
         wifi_only: bool,
         respond: Reply,
     );
+}
+
+pub fn register(components: &Components) {
+    components.register(
+        "govue/download-export",
+        Rc::new(|context| {
+            Box::new(ExportPicker {
+                context,
+                view: UIView::new(MainThreadMarker::new().expect("UIKit main thread")),
+            })
+        }),
+    );
+}
+
+struct ExportPicker {
+    context: ComponentContext,
+    view: Retained<UIView>,
+}
+
+impl NativeComponent for ExportPicker {
+    fn view(&self) -> &UIView {
+        &self.view
+    }
+
+    fn set_prop(&mut self, _: &str, _: Option<&Value>) {}
+
+    fn command(&mut self, action: &str, args: &Value) {
+        if action != "save" {
+            return;
+        }
+        let strings = args["uri"].as_str().zip(args["name"].as_str());
+        let status = strings
+            .and_then(|(uri, name)| {
+                let uri = CString::new(uri).ok()?;
+                let name = CString::new(name).ok()?;
+                // SAFETY: The registered component runs on the main thread. The
+                // picker copies both strings and retains the view weakly.
+                Some(unsafe {
+                    govue_download_save_file(
+                        Retained::as_ptr(&self.view).cast(),
+                        uri.as_ptr(),
+                        name.as_ptr(),
+                    )
+                })
+            })
+            .unwrap_or(0);
+        if status != 1 {
+            let message = if status == 2 {
+                "A file picker is already open."
+            } else {
+                "Save As is unavailable."
+            };
+            self.context.emit("error", Value::String(message.into()));
+        }
+    }
 }
 
 pub fn install() {

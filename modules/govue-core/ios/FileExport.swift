@@ -1,12 +1,10 @@
-import ExpoModulesCore
 import UIKit
 
 /// The system Save As adapter. Owned-artifact selection and names come from Rust.
 @MainActor
 final class FileExport: NSObject, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
-  private let promise: Promise
   private let folder: URL
-  private let finished: () -> Void
+  private let finished: (Bool) -> Void
   private var completed = false
   let controller: UIDocumentPickerViewController
 
@@ -35,8 +33,7 @@ final class FileExport: NSObject, UIDocumentPickerDelegate, UIAdaptivePresentati
     return Prepared(folder: exportFolder, file: copy)
   }
 
-  init(prepared: Prepared, promise: Promise, finished: @escaping () -> Void) {
-    self.promise = promise
+  init(prepared: Prepared, finished: @escaping (Bool) -> Void) {
     self.finished = finished
     folder = prepared.folder
     controller = UIDocumentPickerViewController(forExporting: [prepared.file], asCopy: true)
@@ -49,8 +46,7 @@ final class FileExport: NSObject, UIDocumentPickerDelegate, UIAdaptivePresentati
     guard !completed else { return }
     completed = true
     try? FileManager.default.removeItem(at: folder)
-    promise.resolve(saved)
-    finished()
+    finished(saved)
   }
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { complete(!urls.isEmpty) }
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { complete(false) }

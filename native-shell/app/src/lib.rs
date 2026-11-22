@@ -54,7 +54,10 @@ pub fn run_ios() {
     ai_ios::install();
     downloads_ios::install();
     nsh_platform_ios::set_ui_sets(vec![nsh_base::registry()]);
-    nsh_platform_ios::set_components(ios_browser::register);
+    nsh_platform_ios::set_components(|components| {
+        ios_browser::register(components);
+        downloads_ios::register(components);
+    });
     nsh_ios_app::run_rust(
         nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"),
     );
@@ -341,6 +344,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         downloads.clone(),
     );
     let download_notice = downloads.notice;
+    let download_export = downloads.export_view();
     let root = view()
         .flex_1()
         .pt(move || {
@@ -372,6 +376,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             })
         })
         .bg(move || palette.background())
+        .child(download_export)
         .child(
             view()
                 .relative()
