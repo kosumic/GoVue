@@ -12,6 +12,8 @@ mod download_confirm;
 mod download_library;
 mod downloads;
 #[cfg(target_os = "ios")]
+mod downloads_ios;
+#[cfg(target_os = "ios")]
 mod ios_browser;
 mod pip;
 mod player_view;
@@ -50,6 +52,7 @@ use settings_view::{Preferences, SettingsView};
 #[cfg(target_os = "ios")]
 pub fn run_ios() {
     ai_ios::install();
+    downloads_ios::install();
     nsh_platform_ios::set_ui_sets(vec![nsh_base::registry()]);
     nsh_platform_ios::set_components(ios_browser::register);
     nsh_ios_app::run_rust(
