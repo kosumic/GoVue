@@ -12,8 +12,11 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
+use crate::ai_usage::UsageView;
 use crate::browser::Browser;
+use crate::chat::Chat;
 use crate::downloads::{Downloads, alert};
+use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
 
 const RESET: &str = "M3 12a9 9 0 1 0 2.6-6.4L3 8m0-5v5h5";
@@ -22,6 +25,8 @@ const BACKUP: &str = "M3 9h18v11H3zM2 4h20v5H2zm8 9h4";
 const IMPORT: &str = "M12 3v12m-5-5 5 5 5-5M4 16v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4";
 const EXPORT: &str = "M12 15V3m-5 5 5-5 5 5M4 16v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4";
 const BACKUP_LIMIT: usize = 1_000_000;
+const AI: &str = "m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5Z";
+const USAGE: &str = "M3 18a9 9 0 1 1 18 0H3zm9-2 4-5m-9 3h1m4-5v1";
 
 #[derive(Clone)]
 pub struct Preferences {
@@ -113,14 +118,17 @@ pub enum SettingsScreen {
     Backup,
     About,
     Licenses,
+    Ai,
+    AiUsage,
 }
 
 impl SettingsScreen {
     pub fn back(self) -> Option<Self> {
         match self {
             Self::Extensions | Self::About => None,
-            Self::Backup => Some(Self::Extensions),
+            Self::Backup | Self::Ai => Some(Self::Extensions),
             Self::Licenses => Some(Self::About),
+            Self::AiUsage => Some(Self::Ai),
         }
     }
 }
@@ -154,6 +162,9 @@ pub struct SettingsView {
     open: Signal<Option<SettingsScreen>>,
     downloads: Downloads,
     browser: Browser,
+    chat: Chat,
+    providers: ProviderView,
+    usage: UsageView,
 }
 
 impl SettingsView {
@@ -163,9 +174,12 @@ impl SettingsView {
         open: Signal<Option<SettingsScreen>>,
         downloads: Downloads,
         browser: Browser,
+        chat: Chat,
     ) -> Self {
         let nodes = signal(Vec::new());
         let core = preferences.core.clone();
+        let usage = UsageView::new(core.clone());
+        let providers = ProviderView::new(chat.clone(), palette);
         spawn(async move {
             if let Ok(catalog) = core
                 .execute::<Vec<Node>>(json!({"op":"media_settings_catalog"}))
@@ -181,7 +195,23 @@ impl SettingsView {
             open,
             downloads,
             browser,
+            chat,
+            providers,
+            usage,
         }
+    }
+
+    pub fn back(&self) -> bool {
+        let Some(screen) = self.open.get_untracked() else {
+            return false;
+        };
+        if (screen == SettingsScreen::Ai && self.providers.back())
+            || (screen == SettingsScreen::AiUsage && self.usage.back())
+        {
+            return true;
+        }
+        self.open.set(screen.back());
+        true
     }
 
     pub fn view(&self) -> If {
@@ -194,6 +224,9 @@ impl SettingsView {
                 let backup = panel.clone();
                 let about = panel.clone();
                 let licenses = panel.clone();
+                let ai = panel.clone();
+                let usage = panel.usage.clone();
+                let palette = panel.palette;
                 view()
                     .absolute()
                     .inset(px(0.0))
@@ -232,8 +265,67 @@ impl SettingsView {
                             )
                         },
                     ))
+                    .child(when(
+                        move || {
+                            matches!(
+                                open.get(),
+                                Some(SettingsScreen::Ai | SettingsScreen::AiUsage)
+                            )
+                        },
+                        move || ai.ai(),
+                    ))
+                    .child(when(
+                        move || open.get() == Some(SettingsScreen::AiUsage),
+                        move || usage.view(palette, move || open.set(Some(SettingsScreen::Ai))),
+                    ))
             },
         )
+    }
+
+    fn ai(&self) -> View {
+        let palette = self.palette;
+        let panel = self.clone();
+        let open = self.open;
+        let usage = self.usage.clone();
+        view()
+            .absolute()
+            .inset(px(0.0))
+            .bg(move || palette.background())
+            .flex_col()
+            .bottom(|| px((keyboard_height().0 - safe_area().bottom.0).max(0.0)))
+            .child(
+                view()
+                    .flex_row()
+                    .items_center()
+                    .h(px(48.0))
+                    .px(px(4.0))
+                    .child(ui::icon_button(
+                        palette,
+                        ui::BACK,
+                        "Navigate back",
+                        move || {
+                            panel.back();
+                        },
+                    ))
+                    .child(
+                        text("AI")
+                            .pl(px(4.0))
+                            .text_size(px(20.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(move || palette.ink()),
+                    ),
+            )
+            .child(action_row(
+                palette,
+                "Token usage",
+                Some("Totals, cache and model breakdowns"),
+                USAGE,
+                move || {
+                    usage.open(None);
+                    open.set(Some(SettingsScreen::AiUsage));
+                },
+            ))
+            .child(self.providers.view())
     }
 
     fn backup(&self) -> View {
@@ -441,15 +533,7 @@ impl SettingsView {
                     .child(dynamic(move || ui::icon(if languages.get() { ui::DOWN } else { ui::NEXT }, 24.0, move || p.muted()))))
                 .child(when(languages, move || crate::language_view::Languages::new(language_core.clone(), p).view()))
                 .child(each(
-                move || {
-                    nodes.with(|nodes| {
-                        nodes
-                            .iter()
-                            .filter(|node| node.id.as_deref() != Some("ai"))
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    })
-                },
+                nodes,
                 Node::identity,
                 move |node, _| panel.row(node.get_untracked(), 0),
             ))))
@@ -472,14 +556,25 @@ impl SettingsView {
             let downloads = self.downloads.clone();
             let imported = self.preferences.imported;
             let library = node.id.as_deref() == Some("downloads");
+            let ai = node.id.as_deref() == Some("ai");
+            let chat = self.chat.clone();
             return action_row(
                 p,
                 &node.title,
                 node.summary.as_deref(),
-                if library { IMPORT } else { BACKUP },
+                if library {
+                    IMPORT
+                } else if ai {
+                    AI
+                } else {
+                    BACKUP
+                },
                 move || {
                     if library {
                         downloads.open();
+                    } else if ai {
+                        chat.read_config();
+                        open.set(Some(SettingsScreen::Ai));
                     } else {
                         imported.set(false);
                         open.set(Some(SettingsScreen::Backup));

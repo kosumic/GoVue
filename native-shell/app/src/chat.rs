@@ -485,7 +485,7 @@ impl Chat {
         });
     }
 
-    fn read_config(&self) {
+    pub fn read_config(&self) {
         let chat = self.clone();
         self.owner.run(|| {
             spawn(async move {

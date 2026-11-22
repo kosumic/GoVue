@@ -1400,7 +1400,7 @@ fn reasoning_context(chat: &Chat) -> Option<(String, String)> {
     Some((provider.into(), model.into()))
 }
 
-fn effort_name(effort: Option<&str>) -> String {
+pub(crate) fn effort_name(effort: Option<&str>) -> String {
     match effort {
         None | Some("") => "Default".into(),
         Some("none") => "Off".into(),

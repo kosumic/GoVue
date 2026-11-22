@@ -6,6 +6,7 @@ extern crate nsh as _;
 mod about_view;
 #[cfg(target_os = "ios")]
 mod ai_ios;
+mod ai_usage;
 mod attachment_camera;
 mod attachments_view;
 mod browser;
@@ -149,6 +150,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         settings_screen,
         downloads.clone(),
         browser.clone(),
+        chat.clone(),
     );
     let chat_view = ChatView::new(chat.clone(), palette, watch.clone());
     let has_watch_page = computed({
@@ -259,13 +261,13 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let watch_reader = watch_reader.clone();
         let window = player_window.clone();
         let downloads = downloads.clone();
+        let settings_view = settings_view.clone();
         let offline = back_from_offline.clone();
         move || {
             if downloads.back() || browser.close_gallery() || browser.close_card() {
                 return true;
             }
-            if let Some(screen) = settings_screen.get_untracked() {
-                settings_screen.set(screen.back());
+            if settings_view.back() {
                 return true;
             }
             if chat_reader.visible() {
