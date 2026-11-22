@@ -28,6 +28,7 @@ import io.github.kaminarios.govue.shell.NowPlaying;
 import io.github.kaminarios.govue.shell.PlayerRuntime;
 import io.github.kaminarios.govue.shell.PlayerPip;
 import io.github.kaminarios.govue.shell.PlayerWindow;
+import io.github.kaminarios.govue.shell.ProviderQrScanner;
 import io.github.kaminarios.govue.shell.ReplyNotifications;
 import io.github.kaminarios.govue.shell.TokenRuntime;
 import io.github.kaminarios.govue.shell.VideoPlayer;
@@ -40,6 +41,7 @@ public final class GoVueActivity extends Activity {
     private NshView view;
     private ChatSpeech speech;
     private ReplyNotifications.Binding notifications;
+    private ProviderQrScanner.Binding qrScanner;
     private OnBackInvokedCallback backCallback;
 
     @Override
@@ -50,6 +52,7 @@ public final class GoVueActivity extends Activity {
         view = new NshView(this);
         AiTransport.install(this);
         notifications = ReplyNotifications.register(view, this);
+        qrScanner = ProviderQrScanner.register(view, this);
         CastTransport.register(view, this);
         DownloadTransport.install(this);
         DownloadExport.register(view, this);
@@ -107,6 +110,7 @@ public final class GoVueActivity extends Activity {
         super.onResume();
         notifications.drain();
         pip.onResume();
+        qrScanner.resume();
     }
 
     @Override
@@ -133,6 +137,7 @@ public final class GoVueActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
         super.onRequestPermissionsResult(requestCode, permissions, grants);
         if (requestCode == ChatSpeech.MICROPHONE && speech != null) speech.permission(grants);
+        if (requestCode == ProviderQrScanner.REQUEST) qrScanner.permissionChanged();
     }
 
     @Override

@@ -31,6 +31,7 @@ fn main() {
         "../ios/IsolatedRuntime.swift",
         "../ios/GameRenderer.swift",
         "../ios/WordTools.swift",
+        "../ios/ProviderQrScanner.swift",
         "../../modules/govue-core/ios/CaptionSelectionSurface.swift",
         "../../modules/govue-core/ios/DownloadMux.swift",
         "../../modules/govue-core/ios/FileExport.swift",

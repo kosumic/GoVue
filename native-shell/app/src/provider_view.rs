@@ -42,12 +42,14 @@ pub struct ProviderView {
     revision: Signal<u64>,
     error: Signal<Option<String>>,
     jobs: ProviderJobs,
+    qr: crate::provider_qr::ProviderQr,
 }
 
 impl ProviderView {
     pub fn new(chat: Chat, palette: Palette) -> Self {
         Self {
             jobs: ProviderJobs::new(chat.core()),
+            qr: crate::provider_qr::ProviderQr::new(chat.clone(), palette),
             chat,
             palette,
             owner: Owner::current(),
@@ -70,6 +72,9 @@ impl ProviderView {
     }
 
     pub fn back(&self) -> bool {
+        if self.qr.back() {
+            return true;
+        }
         if self.jobs.cancel_login() || self.busy.get_untracked() {
             return true;
         }
@@ -220,6 +225,14 @@ impl ProviderView {
             }))
     }
 
+    pub fn qr_view(&self) -> If {
+        let imported = self.clone();
+        self.qr.view(move |provider| {
+            imported.transfer.set(None);
+            imported.edit(provider);
+        })
+    }
+
     fn list(&self) -> View {
         let p = self.palette;
         let instructions = self.instruction;
@@ -237,6 +250,8 @@ impl ProviderView {
         let transfer = self.transfer;
         let export = self.clone();
         let import_error = self.error;
+        let scan = self.qr.clone();
+        let scan_button = self.qr.clone();
         view().gap(px(14.0))
             .child(section(p, "AGENT.md"))
             .child(help(p, || "Add instructions for every AI chat and video summary, such as your preferred language, learning level, or response style. Saved changes apply to your next message. Clear and save to remove them.".into()))
@@ -275,6 +290,7 @@ impl ProviderView {
                     }))
                 }))
             .child(section(p, "Add a connection"))
+            .child(action(p, "Scan provider QR code", move || scan.show_scanner()).disabled(busy))
             .child(each(move || array(&choices.config(), "choices").into_iter()
                 .filter(|choice| advanced.get() || choice["advanced"] != true).collect::<Vec<_>>(),
                 |choice| string(choice, "kind"),
@@ -297,7 +313,8 @@ impl ProviderView {
                     import_error.set(None);
                     transfer.set(Some(String::new()));
                 }).disabled(busy))
-                .child(action(p, "Export", move || export.export_configuration()).disabled(busy)))
+                .child(action(p, "Export", move || export.export_configuration()).disabled(busy))
+                .child(action(p, "Scan QR", move || scan_button.show_scanner()).disabled(busy)))
     }
 
     fn edit(&self, provider: Value) {
@@ -401,6 +418,7 @@ impl ProviderView {
         let draft = self.draft;
         let submit = self.clone();
         let models = self.clone();
+        let share_qr = self.clone();
         let back = self.clone();
         let oauth_fields = self.clone();
         let key_fields = self.clone();
@@ -495,6 +513,16 @@ impl ProviderView {
             }))
             .child(when(move || preview.with(|preview| preview["error"].is_string()), move || {
                 help(p, move || preview.with(|preview| string(preview,"error"))).text_color(rgb(0xd32f2f))
+            }))
+            .child(when(saved, move || {
+                let share_qr = share_qr.clone();
+                action(p, "Share provider QR code", move || {
+                    share_qr.save_then(|pane, id| {
+                        if let Some(provider) = pane.draft.get_untracked() {
+                            pane.qr.show_share(id, string(&provider, "label"), array(&provider, "models").len() > 1);
+                        }
+                    });
+                }).disabled(busy)
             }))
             .child(when(move || notice.with(Option::is_some), move || {
                 help(p, move || notice.get().unwrap_or_default()).selectable(true)

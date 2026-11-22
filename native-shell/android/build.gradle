@@ -82,9 +82,22 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer-hls:1.9.1"
     implementation "com.squareup.okhttp3:okhttp:5.5.1"
     implementation "com.google.mlkit:translate:17.0.3"
+    implementation "com.google.mlkit:barcode-scanning:17.3.0"
+    implementation "androidx.camera:camera-camera2:1.6.0"
+    implementation "androidx.camera:camera-lifecycle:1.6.0"
+    implementation "androidx.camera:camera-view:1.6.0"
     constraints {
         implementation("androidx.arch.core:core-runtime:2.2.0") {
             because "Align ML Kit's transitive Lifecycle runtime with AndroidX core-common"
+        }
+        implementation("androidx.appcompat:appcompat:1.7.1") {
+            because "Keep the CameraX preview and AppCompat resources on the same release"
+        }
+        implementation("androidx.core:core-ktx:1.13.1") {
+            because "Keep AndroidX Core and Core KTX at the same patch level"
+        }
+        implementation("androidx.lifecycle:lifecycle-livedata:2.6.2") {
+            because "Align the barcode scanner and camera Lifecycle dependencies"
         }
     }
 }

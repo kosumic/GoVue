@@ -1,9 +1,11 @@
 package io.github.kaminarios.govue.shell;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.Fragment;
 import android.content.ClipData;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.provider.MediaStore;
 import android.view.View;
@@ -71,6 +73,7 @@ public final class ChatCamera implements NshComponent {
 
     public static final class Capture extends Fragment {
         private static final int REQUEST = 7148;
+        private static final int CAMERA_PERMISSION = 7149;
         private File output;
         private Uri uri;
         private Consumer<Result> completion;
@@ -87,6 +90,15 @@ public final class ChatCamera implements NshComponent {
                 return;
             }
             completion = reply;
+            Activity owner = getActivity();
+            if (owner != null && owner.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION);
+                return;
+            }
+            launch();
+        }
+
+        private void launch() {
             try {
                 Activity owner = getActivity();
                 if (owner == null) throw new IOException();
@@ -101,6 +113,18 @@ public final class ChatCamera implements NshComponent {
                 startActivityForResult(intent, REQUEST);
             } catch (IOException | RuntimeException ignored) {
                 finish(false, "The camera is unavailable.");
+            }
+        }
+
+        @Override
+        public void onRequestPermissionsResult(int request, String[] permissions, int[] grants) {
+            super.onRequestPermissionsResult(request, permissions, grants);
+            if (request == CAMERA_PERMISSION && completion != null) {
+                if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) {
+                    launch();
+                } else {
+                    finish(false, "Allow camera access to take a photo.");
+                }
             }
         }
 

@@ -58,6 +58,10 @@ mod practice_view;
 mod provider_group;
 mod provider_jobs;
 mod provider_model;
+mod provider_qr;
+mod provider_qr_artwork;
+#[cfg(target_os = "ios")]
+mod provider_qr_ios;
 mod provider_view;
 mod queue;
 mod queue_view;
@@ -117,6 +121,7 @@ pub fn run_ios() {
         downloads_ios::register(components);
         game_ios::register(components);
         word_ios::register(components);
+        provider_qr_ios::register(components);
         now_playing_ios::register(components);
         ios_runtimes::register(components);
         player_window_ios::register(components);
@@ -625,6 +630,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 .child(chat_transcript.view(|| 0.0, || 0.0))
                 .child(words.popup())
                 .child(words.provider_picker())
+                .child(chat_view.provider_qr())
                 .child(mini_controls)
                 .child(settings_view.view())
                 .child(library.view())

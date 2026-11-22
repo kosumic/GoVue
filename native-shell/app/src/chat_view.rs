@@ -207,6 +207,10 @@ impl ChatView {
         self.providers.clone()
     }
 
+    pub fn provider_qr(&self) -> If {
+        self.providers.qr_view()
+    }
+
     pub fn attends_conversation(&self) -> bool {
         self.chat.visible()
             && matches!(self.layer.get(), Layer::Thread | Layer::Find)
