@@ -12,6 +12,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
 use crate::chat::Chat;
+use crate::settings_view::SettingsScreen;
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +51,7 @@ pub struct Browser {
     captions: CaptionPage,
     watch: WatchPlayback,
     chat: Chat,
+    settings_screen: Signal<Option<SettingsScreen>>,
 }
 
 impl Browser {
@@ -59,6 +61,7 @@ impl Browser {
         watch: WatchPlayback,
         settings: Signal<Option<Map<String, Value>>>,
         chat: Chat,
+        settings_screen: Signal<Option<SettingsScreen>>,
     ) -> Self {
         let (actions, pending) = mpsc::unbounded_channel();
         let browser = Self {
@@ -71,6 +74,7 @@ impl Browser {
             captions,
             watch,
             chat,
+            settings_screen,
         };
         spawn(browser.clone().run(pending));
         browser.post("state", json!({}));
@@ -129,11 +133,14 @@ impl Browser {
         });
         let settings = self.settings;
         let chat = self.chat.clone();
+        let settings_screen = self.settings_screen;
         native
             .view(
                 &self.captions,
                 move || BrowserOptions {
-                    active: active.get() && !chat.visible(),
+                    active: active.get()
+                        && !chat.visible()
+                        && settings_screen.with(Option::is_none),
                     bottom_inset: f64::from(safe_area().bottom.0),
                     settings: settings.get().unwrap_or_default(),
                 },
@@ -191,6 +198,7 @@ impl Browser {
                     .ok().and_then(|identity| identity["videoId"].as_str().map(str::to_owned));
                 self.chat.show(video);
             }
+            Some("settings") => self.settings_screen.set(Some(SettingsScreen::Extensions)),
             Some("appearance") if payload["url"] == document.url => {
                 if let Some(dark) = payload["dark"].as_bool() {
                     self.dark.set(dark);

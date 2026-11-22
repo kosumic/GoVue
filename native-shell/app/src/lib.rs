@@ -9,18 +9,20 @@ mod player_view;
 mod provider_view;
 mod reader_clock;
 mod reader_view;
+mod settings_view;
 mod ui;
 
 use govue_shell_runtime::{
     CaptionPage, Core, PlayerRuntime, TokenRuntime, TranscriptReader, WatchPlayback, WatchSubtitles,
 };
 use nsh_core::{platform::Lifecycle, prelude::*};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use browser::Browser;
 use chat::Chat;
 use chat_view::ChatView;
 use player_view::PlayerControls;
+use settings_view::{Preferences, SettingsView};
 
 ::nsh::ui_sets!(vec![nsh_base::registry()]);
 ::nsh::main!(nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"));
@@ -38,7 +40,9 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let subtitles = WatchSubtitles::new(core.clone(), watch.clone());
     let signatures = PlayerRuntime::new();
     let tokens = TokenRuntime::new(core.clone());
-    let settings = signal(None::<Map<String, Value>>);
+    let preferences = Preferences::new(core.clone());
+    let settings = preferences.state;
+    let settings_screen = signal(None);
     let chat = Chat::new(core.clone());
     let browser = Browser::new(
         core.clone(),
@@ -46,17 +50,18 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         watch.clone(),
         settings,
         chat.clone(),
+        settings_screen,
     );
     let theme = browser.clone();
     let palette = ui::Palette {
         dark: computed(move || theme.dark()),
     };
+    let settings_view = SettingsView::new(preferences.clone(), palette, settings_screen);
     let chat_view = ChatView::new(chat.clone(), palette);
     let chat_reader = TranscriptReader::new(core.clone());
     let chat_transcript = reader_view::ReaderView::new(chat_reader.clone(), palette);
     let watch_reader = TranscriptReader::new(core.clone());
-    let (changes, mut writes) = tokio::sync::mpsc::unbounded_channel();
-    let pause_setting = changes.clone();
+    let pause_setting = preferences.clone();
     let clock = reader_clock::ReaderClock::new(
         core.clone(),
         watch_reader.clone(),
@@ -70,7 +75,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
             })
         },
         move |enabled| {
-            let _ = pause_setting.send(json!({"pauseAfterLine":enabled}));
+            pause_setting.update(json!({"pauseAfterLine":enabled}));
         },
     );
     let watch_transcript =
@@ -81,9 +86,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         watch_reader.clone(),
         chat,
         palette,
-        move |change| {
-            let _ = changes.send(change);
-        },
+        move |change| preferences.update(change),
     );
     on_back_press({
         let browser = browser.clone();
@@ -92,6 +95,10 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         let controls = controls.clone();
         let watch_reader = watch_reader.clone();
         move || {
+            if settings_screen.with_untracked(Option::is_some) {
+                settings_screen.set(None);
+                return true;
+            }
             if chat_reader.visible() {
                 chat_reader.close();
                 return true;
@@ -104,21 +111,6 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                 return true;
             }
             browser.back()
-        }
-    });
-    spawn(async move {
-        match core.execute(json!({"op":"media_settings"})).await {
-            Ok(preferences) => settings.set(Some(preferences)),
-            Err(error) => browser::report(error),
-        }
-        while let Some(change) = writes.recv().await {
-            match core
-                .execute(json!({"op":"media_settings","settings":change}))
-                .await
-            {
-                Ok(preferences) => settings.set(Some(preferences)),
-                Err(error) => browser::report(error),
-            }
         }
     });
     let target = computed({
@@ -192,7 +184,8 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                     (frame.top + frame.height).max(0.0)
                 }))
                 .child(chat_panel)
-                .child(chat_transcript.view(|| 0.0)),
+                .child(chat_transcript.view(|| 0.0))
+                .child(settings_view.view()),
         )
         .child(signatures.view())
         .child(tokens.view())
