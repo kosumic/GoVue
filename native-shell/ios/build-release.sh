@@ -72,6 +72,7 @@ cat > "$bundle/Info.plist" <<EOF
     <key>MinimumOSVersion</key><string>16.0</string>
     <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
     <key>UILaunchScreen</key><dict/>
+    <key>UIBackgroundModes</key><array><string>audio</string></array>
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>

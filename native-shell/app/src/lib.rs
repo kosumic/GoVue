@@ -15,8 +15,9 @@ mod downloads;
 mod downloads_ios;
 #[cfg(target_os = "ios")]
 mod ios_browser;
-#[cfg(target_os = "android")]
 mod now_playing;
+#[cfg(target_os = "ios")]
+mod now_playing_ios;
 mod pip;
 mod player_view;
 mod player_window;
@@ -60,6 +61,7 @@ pub fn run_ios() {
     nsh_platform_ios::set_components(|components| {
         ios_browser::register(components);
         downloads_ios::register(components);
+        now_playing_ios::register(components);
     });
     nsh_ios_app::run_rust(
         nsh_core::element::Root::of::<GoVue>().app_id("io.github.kaminarios.govue.nsh"),
@@ -132,7 +134,6 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         move |url| browser.open(url)
     });
     let pip_mode = pip.mode;
-    #[cfg(target_os = "android")]
     let now_playing = now_playing::now_playing(watch.clone(), queue.clone(), settings, pip_mode, {
         let browser = browser.clone();
         move |url| browser.open(url)
@@ -476,5 +477,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         .child(pip.view(move || watch.frame(width.get()), move || can_present.get()))
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view());
+    #[cfg(target_os = "ios")]
+    let root = root.child(now_playing);
     root
 }
