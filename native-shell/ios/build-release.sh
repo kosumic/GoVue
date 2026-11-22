@@ -13,9 +13,39 @@ if [[ $# -gt 0 ]]; then shift; fi
 npm --prefix native-shell run page:build
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo/native-shell/ios/build/rust}"
 sdk_path=$(/usr/bin/xcrun --sdk "$sdk" --show-sdk-path)
+app_id=io.github.kaminarios.govue.nsh
+cargo_command=build
+link_args=()
+if [[ "$sdk" == iphonesimulator ]]; then
+    # The simulator reads Xcode-style simulated entitlements from the executable.
+    entitlement_dir="$repo/native-shell/ios/build/$sdk"
+    mkdir -p "$entitlement_dir"
+    entitlements="$entitlement_dir/GoVue.xcent"
+    cat > "$entitlements" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>application-identifier</key><string>GOVUESIM01.$app_id</string>
+</dict>
+</plist>
+EOF
+    /usr/bin/derq query --format xml --input "$entitlements" --output "$entitlements.der" --raw
+    cargo_command=rustc
+    link_args=(--
+        -C link-arg=-Xlinker -C link-arg=-sectcreate
+        -C link-arg=-Xlinker -C link-arg=__TEXT
+        -C link-arg=-Xlinker -C link-arg=__entitlements
+        -C link-arg=-Xlinker -C "link-arg=$entitlements"
+        -C link-arg=-Xlinker -C link-arg=-sectcreate
+        -C link-arg=-Xlinker -C link-arg=__TEXT
+        -C link-arg=-Xlinker -C link-arg=__ents_der
+        -C link-arg=-Xlinker -C "link-arg=$entitlements.der")
+fi
 env -u CC -u CXX -u CFLAGS -u CPPFLAGS -u LDFLAGS -u MACOSX_DEPLOYMENT_TARGET \
     SDKROOT="$sdk_path" IPHONEOS_DEPLOYMENT_TARGET=16.0 \
-    cargo build --locked --release --manifest-path native-shell/app/Cargo.toml --target "$target" --bin GoVue "$@"
+    cargo "$cargo_command" --locked --release --manifest-path native-shell/app/Cargo.toml \
+        --target "$target" --bin GoVue "$@" "${link_args[@]}"
 
 version=$(node -p 'require("./package.json").version')
 bundle="$repo/native-shell/ios/build/$sdk/GoVue.app"
@@ -31,7 +61,7 @@ cat > "$bundle/Info.plist" <<EOF
     <key>CFBundleDisplayName</key><string>GoVue</string>
     <key>CFBundleExecutable</key><string>GoVue</string>
     <key>CFBundleIconFiles</key><array><string>AppIcon</string></array>
-    <key>CFBundleIdentifier</key><string>io.github.kaminarios.govue.nsh</string>
+    <key>CFBundleIdentifier</key><string>$app_id</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>GoVue</string>
     <key>CFBundlePackageType</key><string>APPL</string>

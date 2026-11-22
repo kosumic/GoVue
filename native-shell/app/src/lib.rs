@@ -3,6 +3,8 @@
 #[cfg(target_os = "android")]
 extern crate nsh as _;
 
+#[cfg(target_os = "ios")]
+mod ai_ios;
 mod browser;
 mod chat;
 mod chat_view;
@@ -42,6 +44,7 @@ use settings_view::{Preferences, SettingsView};
 
 #[cfg(target_os = "ios")]
 pub fn run_ios() {
+    ai_ios::install();
     nsh_platform_ios::set_ui_sets(vec![nsh_base::registry()]);
     nsh_platform_ios::set_components(ios_browser::register);
     nsh_ios_app::run_rust(
