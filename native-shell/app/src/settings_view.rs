@@ -68,6 +68,10 @@ impl Preferences {
         self.request(json!({"settings":changes}));
     }
 
+    pub fn core(&self) -> Core {
+        self.core.clone()
+    }
+
     pub fn caption_style(&self) -> Option<CaptionStyle> {
         self.state
             .with_untracked(|settings| settings.as_ref()?.get("subtitleStyle").cloned())
@@ -91,7 +95,7 @@ impl Preferences {
         let _ = self.commands.send(values);
     }
 
-    fn read(&self, name: &str) -> Value {
+    pub fn read(&self, name: &str) -> Value {
         self.state.with(|state| {
             state
                 .as_ref()

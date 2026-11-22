@@ -14,6 +14,7 @@ use crate::chat::Chat;
 use crate::download_library::DOWNLOAD;
 use crate::downloads::Downloads;
 use crate::pip::Pip;
+use crate::player_gestures::{GestureActions, PlayerGestures};
 use crate::player_window::PlayerWindow;
 use crate::queue::Queue;
 use crate::queue_view::queue_sheet;
@@ -40,6 +41,8 @@ const QUEUE: &str = "M3 6h18M3 12h18M3 18h10m4-2 4 2-4 2z";
 const SPEED: &str = "M3 18a9 9 0 1 1 18 0H3zm9-2 4-5m-9 3h1m4-5v1";
 const AUDIO: &str = "M3 9h4l5-4v14l-5-4H3zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14";
 const PIP: &str = "M3 4h18v16H3zM12 11h7v6h-7z";
+const LOCK: &str = "M5 11h14v10H5zM8 11V7a4 4 0 1 1 8 0v4m-4 4v2";
+const UNLOCK: &str = "M5 11h14v10H5zM8 11V7a4 4 0 0 1 7.5-2m-3.5 10v2";
 
 type OpenVideo = Rc<dyn Fn(String)>;
 
@@ -66,11 +69,13 @@ pub struct PlayerControls {
     queue: Queue,
     settings: Preferences,
     visible: Signal<bool>,
+    locked: Signal<bool>,
     menu: Signal<Option<Menu>>,
     chapter_preview: Signal<Option<Chapter>>,
     activity: Signal<u64>,
     ended: Signal<Option<u64>>,
     speeds: Signal<Vec<f64>>,
+    gestures: PlayerGestures,
 }
 
 impl PlayerControls {
@@ -84,6 +89,7 @@ impl PlayerControls {
         settings: Preferences,
     ) -> Self {
         let controller = Self {
+            gestures: PlayerGestures::new(settings.core(), watch.clone(), settings.clone()),
             watch,
             subs,
             reader,
@@ -92,6 +98,7 @@ impl PlayerControls {
             queue,
             settings,
             visible: signal(true),
+            locked: signal(false),
             menu: signal(None),
             chapter_preview: signal(None),
             activity: signal(0),
@@ -118,11 +125,13 @@ impl PlayerControls {
                 if controller.visible.get()
                     && controller.menu.with(Option::is_none)
                     && playing.get()
+                    && !controller.gestures.busy()
                 {
                     let controller = controller.clone();
                     spawn(async move {
                         timer(Duration::from_secs(3)).await;
                         if controller.activity.get_untracked() == revision
+                            && !controller.gestures.busy()
                             && controller.menu.with_untracked(Option::is_none)
                             && playing.get_untracked()
                         {
@@ -134,7 +143,7 @@ impl PlayerControls {
         });
         let video = computed({
             let watch = controller.watch.clone();
-            move || watch.video().map(|video| video.video_id)
+            move || watch.video().map(|video| (video.video_id, video.offline))
         });
         effect({
             let controller = controller.clone();
@@ -142,6 +151,8 @@ impl PlayerControls {
                 let _ = video.get();
                 controller.menu.set(None);
                 controller.chapter_preview.set(None);
+                controller.locked.set(false);
+                controller.gestures.zoom.set(1.0);
                 controller.show();
             }
         });
@@ -149,7 +160,11 @@ impl PlayerControls {
     }
 
     pub fn visible(&self) -> bool {
-        self.visible.get()
+        self.visible.get() && !self.locked.get()
+    }
+
+    pub fn zoom(&self) -> Signal<f32> {
+        self.gestures.zoom
     }
 
     pub fn menu_open(&self) -> bool {
@@ -209,8 +224,14 @@ impl PlayerControls {
         let was_open = self.menu.with_untracked(Option::is_some);
         if was_open {
             self.menu.set(None);
+            return true;
         }
-        was_open
+        if self.locked.get_untracked() {
+            self.locked.set(false);
+            self.show();
+            return true;
+        }
+        false
     }
 
     fn show(&self) {
@@ -253,7 +274,7 @@ impl PlayerControls {
         let bounds = computed(move || watch.frame(viewport.get().0));
         let panel = self.clone();
         let visible = self.visible;
-        let tap = self.clone();
+        let locked = self.locked;
         let back = Rc::new(back);
         let open: OpenVideo = Rc::new(open);
         let navigate = open.clone();
@@ -268,6 +289,35 @@ impl PlayerControls {
         let queue = self.queue.clone();
         let palette = self.palette;
         let in_pip = pip.mode;
+        let fullscreen = window.presented;
+        let scope = computed({
+            let watch = self.watch.clone();
+            move || {
+                (bounds.get().visible
+                    && !in_pip.get()
+                    && !viewport.get().1
+                    && !locked.get()
+                    && menu.with(Option::is_none))
+                .then(|| watch.video().map(|video| video.generation))
+                .flatten()
+            }
+        });
+        effect({
+            let gesture = self.gestures.clone();
+            move || {
+                scope.get();
+                gesture.cancel();
+            }
+        });
+        effect({
+            let panel = self.clone();
+            move || {
+                fullscreen.get();
+                viewport.get();
+                panel.locked.set(false);
+                panel.show();
+            }
+        });
         view()
             .absolute()
             .inset(px(0.0))
@@ -275,11 +325,35 @@ impl PlayerControls {
             .child(when(
                 move || bounds.get().visible && !in_pip.get() && !viewport.get().1,
                 move || {
-                    let tap = tap.clone();
                     let panel = panel.clone();
                     let back = back.clone();
                     let open = navigate.clone();
                     let window = window.clone();
+                    let gestures = panel.gestures.clone();
+                    let gesture_window = window.clone();
+                    let gesture_back = back.clone();
+                    let chrome = panel.clone();
+                    let gesture_actions = GestureActions {
+                        show: Rc::new({
+                            let panel = panel.clone();
+                            move || panel.show()
+                        }),
+                        toggle_controls: Rc::new({
+                            let panel = panel.clone();
+                            move || {
+                                if panel.visible.get_untracked() {
+                                    panel.visible.set(false);
+                                } else {
+                                    panel.show();
+                                }
+                            }
+                        }),
+                        toggle_playback: Rc::new({
+                            let panel = panel.clone();
+                            move || panel.toggle()
+                        }),
+                        back: gesture_back,
+                    };
                     view()
                         .absolute()
                         .left(move || px(bounds.get().left))
@@ -288,23 +362,57 @@ impl PlayerControls {
                         .h(move || px(bounds.get().height))
                         .overflow_hidden()
                         .pointer_events(PointerEvents::BoxNone)
-                        .child(
-                            press()
-                                .absolute()
-                                .inset(px(0.0))
-                                .label("Show player controls")
-                                .on_press(move || {
-                                    if tap.visible.get_untracked() {
-                                        tap.visible.set(false);
-                                    } else {
-                                        tap.show();
-                                    }
-                                }),
-                        )
                         .child(when(
-                            move || visible.get(),
+                            move || scope.with(Option::is_some),
                             move || {
-                                panel.chrome(bounds, back.clone(), open.clone(), window.clone())
+                                gestures.view(
+                                    bounds,
+                                    gesture_window.clone(),
+                                    gesture_actions.clone(),
+                                )
+                            },
+                        ))
+                        .child(when(
+                            move || visible.get() && !locked.get(),
+                            move || {
+                                chrome.chrome(bounds, back.clone(), open.clone(), window.clone())
+                            },
+                        ))
+                        .child(when(
+                            move || fullscreen.get() && (locked.get() || visible.get()),
+                            move || {
+                                let panel = panel.clone();
+                                view()
+                                    .absolute()
+                                    .left(px(8.0))
+                                    .top(percentage(0.5))
+                                    .mt(px(-24.0))
+                                    .child(
+                                        press()
+                                            .size(px(48.0))
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(px(24.0))
+                                            .bg(rgba(0x00000066))
+                                            .label(move || {
+                                                if locked.get() {
+                                                    "Unlock screen"
+                                                } else {
+                                                    "Lock screen"
+                                                }
+                                            })
+                                            .on_press(move || {
+                                                locked.update(|value| *value = !*value);
+                                                panel.show();
+                                            })
+                                            .child(dynamic(move || {
+                                                ui::icon(
+                                                    if locked.get() { LOCK } else { UNLOCK },
+                                                    22.0,
+                                                    || rgb(0xffffff).into(),
+                                                )
+                                            })),
+                                    )
                             },
                         ))
                 },

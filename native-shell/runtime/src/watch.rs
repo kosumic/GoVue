@@ -366,6 +366,7 @@ impl WatchPlayback {
         &self,
         width: impl Fn() -> f32 + 'static,
         corner_radius: impl Fn() -> f32 + 'static,
+        zoom: impl Fn() -> f32 + 'static,
         on_event: impl Fn(PlaybackEvent) + 'static,
     ) -> impl IntoElement {
         let watch = self.clone();
@@ -377,6 +378,7 @@ impl WatchPlayback {
             move || watch.frame(width()),
             move || fit.get(),
             corner_radius,
+            zoom,
             move |event| {
                 if let PlaybackEvent::Status {
                     generation,

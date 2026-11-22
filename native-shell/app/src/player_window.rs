@@ -22,6 +22,8 @@ pub struct PlayerWindow {
     fullscreen: Signal<bool>,
     pub presented: Memo<bool>,
     observe: Memo<bool>,
+    platform: ElementRef,
+    levels: Signal<(f64, f64)>,
 }
 
 impl PlayerWindow {
@@ -44,6 +46,8 @@ impl PlayerWindow {
         Self {
             actions,
             fullscreen,
+            platform: element_ref(),
+            levels: signal((1.0, 0.5)),
             presented: computed(move || visible.get() && fullscreen.get()),
             observe: computed(move || {
                 lifecycle() == Lifecycle::Active
@@ -93,6 +97,19 @@ impl PlayerWindow {
         self.update(json!({"op":"player_fullscreen","enabled":value}));
     }
 
+    pub fn refresh_levels(&self) {
+        self.platform.command("levels", Value::Null);
+    }
+
+    pub fn levels(&self) -> (f64, f64) {
+        self.levels.get_untracked()
+    }
+
+    pub fn set_level(&self, volume: bool, value: f64) {
+        self.platform
+            .command("level", json!({"volume":volume,"value":value}));
+    }
+
     fn update(&self, value: Value) {
         let _ = self.actions.send(value);
     }
@@ -102,6 +119,7 @@ impl PlayerWindow {
         let presented = self.presented;
         let observe = self.observe;
         nsh_core::element::native("govue/player-window")
+            .element_ref(&self.platform)
             .absolute()
             .size(px(1.0))
             .opacity(0.0)
@@ -109,6 +127,15 @@ impl PlayerWindow {
             .prop("fullscreen", move || json!(presented.get()))
             .prop("observe", move || json!(observe.get()))
             .on_native_event(move |event: &NativeEvent| {
+                if event.name.as_ref() == "levels"
+                    && let Some((volume, brightness)) = event.data["volume"]
+                        .as_f64()
+                        .zip(event.data["brightness"].as_f64())
+                    && (0.0..=1.0).contains(&volume)
+                    && (0.0..=1.0).contains(&brightness)
+                {
+                    window.levels.set((volume, brightness));
+                }
                 if event.name.as_ref() == "orientation"
                     && window.observe.get_untracked()
                     && let Ok(sample) = Orientation::deserialize(&event.data)

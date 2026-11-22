@@ -320,15 +320,23 @@ impl VideoPlayer {
         frame: impl Fn() -> EmbeddedVideoFrame + 'static,
         fit: impl Fn() -> PlaybackFit + 'static,
         corner_radius: impl Fn() -> f32 + 'static,
+        zoom: impl Fn() -> f32 + 'static,
         on_event: impl Fn(PlaybackEvent) + 'static,
     ) -> impl IntoElement {
         let frame = computed(frame);
         #[cfg(target_os = "ios")]
         {
-            ios::surface(self.clone(), frame, computed(fit), corner_radius, on_event)
+            ios::surface(
+                self.clone(),
+                frame,
+                computed(fit),
+                corner_radius,
+                computed(zoom),
+                on_event,
+            )
         }
         #[cfg(not(target_os = "ios"))]
-        self.view(fit, on_event)
+        view()
             .absolute()
             .left(move || px(frame.with(|frame| frame.left)))
             .top(move || px(frame.with(|frame| frame.top)))
@@ -336,6 +344,7 @@ impl VideoPlayer {
             .h(move || px(frame.with(|frame| frame.height)))
             .rounded(move || px(corner_radius()))
             .overflow_hidden()
+            .pointer_events(PointerEvents::None)
             .opacity(move || {
                 if frame.with(|frame| frame.visible) {
                     1.0_f32
@@ -343,6 +352,12 @@ impl VideoPlayer {
                     0.0_f32
                 }
             })
+            .child(
+                self.view(fit, on_event)
+                    .absolute()
+                    .inset(px(0.0))
+                    .scale(zoom),
+            )
     }
 
     /// Omit the position to use the manifest's default, including the live edge.

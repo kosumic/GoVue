@@ -33,6 +33,7 @@ mod now_playing_ios;
 mod pip;
 #[cfg(target_os = "ios")]
 mod pip_ios;
+mod player_gestures;
 mod player_view;
 mod player_window;
 #[cfg(target_os = "ios")]
@@ -372,6 +373,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
     let next_video = browser.clone();
     let caption_controls = controls.clone();
     let sponsor_controls = controls.clone();
+    let video_zoom = controls.zoom();
     let sponsor_ticks = sponsors.clone();
     let navigate_back = browser.clone();
     let navigate_video = browser.clone();
@@ -447,6 +449,13 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
                         .child(watch.view(
                             move || width.get(),
                             move || if mini_active.get() { 16.0 } else { 0.0 },
+                            move || {
+                                if mini_active.get() || pip_mode.get() {
+                                    1.0
+                                } else {
+                                    video_zoom.get()
+                                }
+                            },
                             move |event| {
                                 let next_video = next_video.clone();
                                 playback_controls.playback(&event, move |url| next_video.open(url));

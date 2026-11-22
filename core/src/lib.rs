@@ -72,6 +72,10 @@ pub fn state_execute(request: String) -> String {
                     player::caption_color::color(&command)
                 } else if command["op"] == "player_caption_style_default" {
                     Ok(player::preferences::defaults()["subtitleStyle"].clone())
+                } else if command["op"] == "player_gesture" {
+                    player::gestures::drag(&command)
+                } else if command["op"] == "player_double_tap" {
+                    player::gestures::double_tap(&command)
                 } else if command["op"]
                     .as_str()
                     .is_some_and(|op| op.starts_with("player_session_"))

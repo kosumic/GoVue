@@ -11,7 +11,7 @@ fn number(command: &Value, key: &str, maximum: f64) -> Result<f64> {
         .ok_or_else(|| format!("Invalid gesture {key}.").into())
 }
 
-pub(super) fn drag(command: &Value) -> Result<Value> {
+pub(crate) fn drag(command: &Value) -> Result<Value> {
     let width = number(command, "width", 10000.0)?;
     let height = number(command, "height", 10000.0)?;
     if width <= 0.0 || height <= 0.0 {
@@ -63,7 +63,7 @@ struct SeekTaps {
 }
 static TAPS: Mutex<Option<SeekTaps>> = Mutex::new(None);
 
-pub(super) fn double_tap(command: &Value) -> Result<Value> {
+pub(crate) fn double_tap(command: &Value) -> Result<Value> {
     let id = crate::string(command, "videoId")?;
     let owner = crate::string(command, "owner")?;
     if !crate::video_id(id)

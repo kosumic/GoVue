@@ -19,6 +19,7 @@ pub(super) fn surface(
     bounds: Memo<EmbeddedVideoFrame>,
     fit: Memo<PlaybackFit>,
     corner_radius: impl Fn() -> f32 + 'static,
+    zoom: Memo<f32>,
     on_event: impl Fn(PlaybackEvent) + 'static,
 ) -> View {
     let source = player.load;
@@ -57,6 +58,7 @@ pub(super) fn surface(
                     load.get_untracked(),
                     bounds,
                     fit,
+                    zoom,
                     on_event.clone(),
                 )
             },
@@ -68,6 +70,7 @@ fn clip(
     load: Load,
     bounds: Memo<EmbeddedVideoFrame>,
     fit: Memo<PlaybackFit>,
+    zoom: Memo<f32>,
     emit: Rc<dyn Fn(PlaybackEvent)>,
 ) -> Video {
     let source = load.source.expect("a mounted video has a source");
@@ -147,6 +150,7 @@ fn clip(
         .top(move || px(decoded.get().1))
         .w(move || px(decoded.get().2))
         .h(move || px(decoded.get().3))
+        .scale(zoom)
         .object_fit(move || match fit.get() {
             PlaybackFit::Contain => ResizeMode::Contain,
             PlaybackFit::Cover => ResizeMode::Cover,

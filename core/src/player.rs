@@ -12,7 +12,7 @@ mod caption;
 pub(crate) mod caption_color;
 mod cast;
 mod diagnostics;
-mod gestures;
+pub(crate) mod gestures;
 mod mini;
 mod orientation;
 mod pip;

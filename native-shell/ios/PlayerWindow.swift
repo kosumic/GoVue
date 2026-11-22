@@ -1,4 +1,6 @@
 import UIKit
+import AVFAudio
+import MediaPlayer
 
 typealias AttachNativeShell = @convention(c) (UnsafeRawPointer) -> Void
 typealias OpenNativeShellURL = @convention(c) (UnsafePointer<CChar>) -> Void
@@ -14,6 +16,7 @@ private struct HostCallbacks {
 }
 
 private var host: HostCallbacks?
+private let systemVolume = MPVolumeView(frame: .zero)
 
 @objc(GoVueAppDelegate)
 final class GoVueAppDelegate: UIResponder, UIApplicationDelegate {
@@ -99,4 +102,27 @@ func govueIOSRun(_ attach: @escaping AttachNativeShell, _ open: @escaping OpenNa
 func govueIOSPlayerFullscreen(_ view: UnsafeRawPointer, _ enabled: Bool) {
     let view = Unmanaged<UIView>.fromOpaque(view).takeUnretainedValue()
     (view.window?.rootViewController as? GoVuePlayerController)?.setFullscreen(enabled)
+}
+
+@_cdecl("govue_ios_player_levels")
+func govueIOSPlayerLevels(_ view: UnsafeRawPointer, _ volume: UnsafeMutablePointer<Double>, _ brightness: UnsafeMutablePointer<Double>) {
+    let view = Unmanaged<UIView>.fromOpaque(view).takeUnretainedValue()
+    volume.pointee = Double(AVAudioSession.sharedInstance().outputVolume)
+    brightness.pointee = Double(view.window?.windowScene?.screen.brightness ?? 0.5)
+}
+
+@_cdecl("govue_ios_player_level")
+func govueIOSPlayerLevel(_ view: UnsafeRawPointer, _ volume: Bool, _ value: Double) {
+    guard value.isFinite else { return }
+    let level = max(0, min(1, value))
+    if volume {
+        systemVolume.showsRouteButton = false
+        if let slider = systemVolume.subviews.compactMap({ $0 as? UISlider }).first {
+            slider.setValue(Float(level), animated: false)
+            slider.sendActions(for: .touchUpInside)
+        }
+    } else {
+        let view = Unmanaged<UIView>.fromOpaque(view).takeUnretainedValue()
+        view.window?.windowScene?.screen.brightness = CGFloat(level)
+    }
 }

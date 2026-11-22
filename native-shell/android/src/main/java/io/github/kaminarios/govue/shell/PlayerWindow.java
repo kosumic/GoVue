@@ -3,6 +3,7 @@ package io.github.kaminarios.govue.shell;
 import android.app.Activity;
 import android.content.pm.ActivityInfo;
 import android.database.ContentObserver;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -12,6 +13,7 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.view.WindowManager;
 
 import com.longbridge.nsh.NshComponent;
 import com.longbridge.nsh.NshComponentContext;
@@ -79,6 +81,35 @@ public final class PlayerWindow {
                 setFullscreen(Boolean.TRUE.equals(value));
             } else if (name.equals("observe")) {
                 observe(Boolean.TRUE.equals(value));
+            }
+        }
+
+        @Override
+        public void command(String name, Object value) {
+            AudioManager audio = activity.getSystemService(AudioManager.class);
+            if (name.equals("levels")) {
+                float brightness = activity.getWindow().getAttributes().screenBrightness;
+                if (brightness < 0) {
+                    brightness = Settings.System.getInt(activity.getContentResolver(),
+                            Settings.System.SCREEN_BRIGHTNESS, 128) / 255f;
+                }
+                double volume = audio == null ? 1.0 : audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+                        / (double) Math.max(1, audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+                context.emit("levels", Map.of("volume", volume, "brightness", Math.max(0f, Math.min(1f, brightness))));
+            } else if (name.equals("level") && value instanceof Map<?, ?> args
+                    && args.get("value") instanceof Number number && Double.isFinite(number.doubleValue())) {
+                double level = Math.max(0.0, Math.min(1.0, number.doubleValue()));
+                if (Boolean.TRUE.equals(args.get("volume"))) {
+                    if (audio != null && !audio.isVolumeFixed()) {
+                        audio.setStreamVolume(AudioManager.STREAM_MUSIC,
+                                (int) (level * audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)), 0);
+                    }
+                } else {
+                    Window window = activity.getWindow();
+                    WindowManager.LayoutParams attributes = window.getAttributes();
+                    attributes.screenBrightness = (float) level;
+                    window.setAttributes(attributes);
+                }
             }
         }
 
