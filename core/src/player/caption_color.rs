@@ -24,7 +24,7 @@ fn rgb(h: f64, s: f64, v: f64) -> String {
     clippy::float_cmp,
     reason = "The maximum is selected directly from the same RGB operands to identify its channel."
 )]
-pub(super) fn color(command: &Value) -> Result<Value> {
+pub(crate) fn color(command: &Value) -> Result<Value> {
     let (h, s, v) = if command["hex"].is_string() {
         let text = crate::string(command, "hex")?.trim();
         let raw = text.strip_prefix('#').unwrap_or(text);

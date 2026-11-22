@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 static WRITES: Mutex<()> = Mutex::new(());
 mod caption;
-mod caption_color;
+pub(crate) mod caption_color;
 mod cast;
 mod diagnostics;
 mod gestures;

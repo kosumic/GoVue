@@ -27,6 +27,7 @@ mod reader_clock;
 mod reader_view;
 mod settings_view;
 mod sponsors;
+mod subtitle_style;
 mod ui;
 
 use std::rc::Rc;
@@ -209,7 +210,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         chat,
         palette,
         queue,
-        move |change| preferences.update(change),
+        preferences.clone(),
     );
     on_back_press({
         let browser = browser.clone();

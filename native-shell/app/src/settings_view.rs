@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
-use govue_shell_runtime::Core;
+use govue_shell_runtime::{CaptionStyle, Core};
 use nsh_core::element::dialog;
 use nsh_core::{Checked, Dialog, DialogButton, DialogButtonStyle, PressEvent, prelude::*};
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
@@ -47,6 +47,24 @@ impl Preferences {
 
     pub fn update(&self, changes: Value) {
         self.request(json!({"settings":changes}));
+    }
+
+    pub fn caption_style(&self) -> Option<CaptionStyle> {
+        self.state
+            .with_untracked(|settings| settings.as_ref()?.get("subtitleStyle").cloned())
+            .and_then(|style| serde_json::from_value(style).ok())
+            .or_else(|| self.default_caption_style())
+    }
+
+    pub fn default_caption_style(&self) -> Option<CaptionStyle> {
+        self.core
+            .state(json!({"op":"player_caption_style_default"}))
+            .ok()
+    }
+
+    pub fn caption_color<T: DeserializeOwned>(&self, mut values: Value) -> Option<T> {
+        values["op"] = json!("player_caption_color");
+        self.core.state(values).ok()
     }
 
     fn request(&self, mut values: Value) {

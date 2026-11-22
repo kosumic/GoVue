@@ -68,6 +68,10 @@ pub fn state_execute(request: String) -> String {
                 } else if command["op"] == "chat_notification_foreground" {
                     ai::chat_notification_foreground(command["active"] == true);
                     Ok(Value::Null)
+                } else if command["op"] == "player_caption_color" {
+                    player::caption_color::color(&command)
+                } else if command["op"] == "player_caption_style_default" {
+                    Ok(player::preferences::defaults()["subtitleStyle"].clone())
                 } else if command["op"]
                     .as_str()
                     .is_some_and(|op| op.starts_with("player_session_"))

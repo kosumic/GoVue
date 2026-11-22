@@ -18,6 +18,7 @@ use crate::queue::Queue;
 use crate::queue_view::queue_sheet;
 use crate::reader_view::timestamp;
 use crate::ui::{self, Palette, press};
+use crate::{settings_view::Preferences, subtitle_style::subtitle_style};
 
 const CC: &str = "M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm6 5a2 2 0 1 0 0 4m8-4a2 2 0 1 0 0 4";
 const TRANSCRIPT: &str =
@@ -38,7 +39,6 @@ const SPEED: &str = "M3 18a9 9 0 1 1 18 0H3zm9-2 4-5m-9 3h1m4-5v1";
 const AUDIO: &str = "M3 9h4l5-4v14l-5-4H3zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14";
 const PIP: &str = "M3 4h18v16H3zM12 11h7v6h-7z";
 
-type WriteSetting = Rc<dyn Fn(Value)>;
 type OpenVideo = Rc<dyn Fn(String)>;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -50,6 +50,7 @@ enum Menu {
     Quality,
     Audio,
     Queue,
+    Style,
 }
 
 #[derive(Clone)]
@@ -60,7 +61,7 @@ pub struct PlayerControls {
     chat: Chat,
     palette: Palette,
     queue: Queue,
-    settings: WriteSetting,
+    settings: Preferences,
     visible: Signal<bool>,
     menu: Signal<Option<Menu>>,
     activity: Signal<u64>,
@@ -76,7 +77,7 @@ impl PlayerControls {
         chat: Chat,
         palette: Palette,
         queue: Queue,
-        settings: impl Fn(Value) + 'static,
+        settings: Preferences,
     ) -> Self {
         let controller = Self {
             watch,
@@ -85,7 +86,7 @@ impl PlayerControls {
             chat,
             palette,
             queue,
-            settings: Rc::new(settings),
+            settings,
             visible: signal(true),
             menu: signal(None),
             activity: signal(0),
@@ -250,6 +251,7 @@ impl PlayerControls {
         let more = self.clone();
         let download_menu = downloads.clone();
         let options = self.clone();
+        let style = self.clone();
         let queue = self.queue.clone();
         let palette = self.palette;
         let in_pip = pip.mode;
@@ -322,6 +324,18 @@ impl PlayerControls {
                         queue.clone(),
                         open.clone(),
                         downloads.clone(),
+                        move || menu.set(None),
+                    )
+                },
+            ))
+            .child(when(
+                move || menu.get() == Some(Menu::Style) && bounds.get().visible && !in_pip.get(),
+                move || {
+                    subtitle_style(
+                        palette,
+                        style.settings.clone(),
+                        style.watch.video().map(|video| video.video_id),
+                        || nsh_core::element::window().height.0,
                         move || menu.set(None),
                     )
                 },
@@ -621,6 +635,9 @@ impl PlayerControls {
                     .child(player_menu_row("Audio track", AUDIO, move || {
                         menu.set(Some(Menu::Audio))
                     }))
+                    .child(player_menu_row("Subtitle style", CC, move || {
+                        menu.set(Some(Menu::Style))
+                    }))
                     .child(player_menu_row("Queue", QUEUE, move || {
                         menu.set(Some(Menu::Queue))
                     }))
@@ -662,7 +679,7 @@ impl PlayerControls {
                             });
                             player_option(p, label, selected, move || {
                                 watch.rate(speed);
-                                write(json!({"playbackSpeed":speed}));
+                                write.update(json!({"playbackSpeed":speed}));
                                 menu.set(None);
                             })
                         },
@@ -689,7 +706,7 @@ impl PlayerControls {
                         });
                         player_option(p, label.into(), selected, move || {
                             watch.resize(fit);
-                            write(json!({"resizeMode":mode}));
+                            write.update(json!({"resizeMode":mode}));
                             menu.set(None);
                         })
                     }),
@@ -813,7 +830,7 @@ impl PlayerControls {
         let write = self.settings.clone();
         self.watch
             .select_stream(selection, move |result| match result {
-                Ok(()) => write(settings),
+                Ok(()) => write.update(settings),
                 Err(message) => {
                     spawn(async move {
                         dialog(Dialog {
@@ -961,7 +978,7 @@ impl PlayerControls {
                                     } else {
                                         track.with(|track| track.id.clone())
                                     };
-                                    settings(json!({"subtitleKey":key}));
+                                    settings.update(json!({"subtitleKey":key}));
                                     menu.set(None);
                                 })
                                 .child(
@@ -988,6 +1005,18 @@ impl PlayerControls {
                                 }))
                         },
                     ))))
+                    .child(
+                        press()
+                            .min_h(px(46.0))
+                            .px(px(13.0))
+                            .justify_center()
+                            .on_press(move || menu.set(Some(Menu::Style)))
+                            .child(
+                                text("Subtitle style")
+                                    .text_size(px(14.0))
+                                    .text_color(move || p.ink()),
+                            ),
+                    )
                     .child(when(
                         move || loading.loading(),
                         move || {
