@@ -37,5 +37,6 @@ pub use video::{
 };
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub use watch::{
-    AudioTrack, PlaybackSelection, SubtitleTrack, VideoQuality, WatchPlayback, WatchVideo,
+    AudioTrack, Chapter, PlaybackSelection, SponsorSegment, SubtitleTrack, VideoQuality,
+    WatchPlayback, WatchVideo,
 };

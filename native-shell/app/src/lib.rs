@@ -28,6 +28,7 @@ mod queue;
 mod queue_view;
 mod reader_clock;
 mod reader_view;
+mod segments_view;
 mod settings_view;
 mod sponsors;
 mod subtitle_style;

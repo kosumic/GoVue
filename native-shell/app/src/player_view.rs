@@ -2,7 +2,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use govue_shell_runtime::{
-    PlaybackEvent, PlaybackFit, PlaybackSelection, TranscriptReader, WatchPlayback, WatchSubtitles,
+    Chapter, PlaybackEvent, PlaybackFit, PlaybackSelection, TranscriptReader, WatchPlayback,
+    WatchSubtitles,
 };
 use nsh_core::{
     Dialog, DialogButton, DialogButtonStyle, PointerEvents, PressEvent, element::dialog, prelude::*,
@@ -17,6 +18,7 @@ use crate::player_window::PlayerWindow;
 use crate::queue::Queue;
 use crate::queue_view::queue_sheet;
 use crate::reader_view::timestamp;
+use crate::segments_view::{SEGMENTS, category, segments_view};
 use crate::ui::{self, Palette, press};
 use crate::{settings_view::Preferences, subtitle_style::subtitle_style};
 
@@ -51,6 +53,7 @@ enum Menu {
     Audio,
     Queue,
     Style,
+    Segments,
 }
 
 #[derive(Clone)]
@@ -64,6 +67,7 @@ pub struct PlayerControls {
     settings: Preferences,
     visible: Signal<bool>,
     menu: Signal<Option<Menu>>,
+    chapter_preview: Signal<Option<Chapter>>,
     activity: Signal<u64>,
     ended: Signal<Option<u64>>,
     speeds: Signal<Vec<f64>>,
@@ -89,6 +93,7 @@ impl PlayerControls {
             settings,
             visible: signal(true),
             menu: signal(None),
+            chapter_preview: signal(None),
             activity: signal(0),
             ended: signal(None),
             speeds: signal(Vec::new()),
@@ -136,6 +141,7 @@ impl PlayerControls {
             move || {
                 let _ = video.get();
                 controller.menu.set(None);
+                controller.chapter_preview.set(None);
                 controller.show();
             }
         });
@@ -196,6 +202,10 @@ impl PlayerControls {
     }
 
     pub fn close_menu(&self) -> bool {
+        if self.chapter_preview.with_untracked(Option::is_some) {
+            self.chapter_preview.set(None);
+            return true;
+        }
         let was_open = self.menu.with_untracked(Option::is_some);
         if was_open {
             self.menu.set(None);
@@ -252,6 +262,8 @@ impl PlayerControls {
         let download_menu = downloads.clone();
         let options = self.clone();
         let style = self.clone();
+        let segments = self.watch.clone();
+        let preview = self.chapter_preview;
         let queue = self.queue.clone();
         let palette = self.palette;
         let in_pip = pip.mode;
@@ -338,6 +350,15 @@ impl PlayerControls {
                         || nsh_core::element::window().height.0,
                         move || menu.set(None),
                     )
+                },
+            ))
+            .child(when(
+                move || menu.get() == Some(Menu::Segments) && bounds.get().visible && !in_pip.get(),
+                move || {
+                    segments_view(palette, segments.clone(), preview, move || {
+                        preview.set(None);
+                        menu.set(None);
+                    })
                 },
             ))
     }
@@ -586,6 +607,14 @@ impl PlayerControls {
     ) -> View {
         let menu = self.menu;
         let watch = self.watch.clone();
+        let has_chapters = computed({
+            let watch = self.watch.clone();
+            move || {
+                watch
+                    .video()
+                    .is_some_and(|video| !video.chapters.is_empty())
+            }
+        });
         let available = computed({
             let pip = pip.clone();
             move || pip.available()
@@ -640,6 +669,12 @@ impl PlayerControls {
                     }))
                     .child(player_menu_row("Queue", QUEUE, move || {
                         menu.set(Some(Menu::Queue))
+                    }))
+                    .child(when(has_chapters, move || {
+                        player_menu_row("Chapters", SEGMENTS, move || menu.set(Some(Menu::Segments)))
+                    }))
+                    .child(when(move || !has_chapters.get(), move || {
+                        player_menu_row("Segments", SEGMENTS, move || menu.set(Some(Menu::Segments)))
                     }))
                     .child(player_menu_row("Download", DOWNLOAD, move || {
                         if let Some(video) = watch.video() {
@@ -853,6 +888,11 @@ impl PlayerControls {
     fn seek_bar(&self, bounds: Memo<govue_shell_runtime::EmbeddedVideoFrame>) -> View {
         let player = self.watch.clone();
         let state = self.watch.clone();
+        let marks = self.watch.clone();
+        let duration = computed({
+            let watch = self.watch.clone();
+            move || watch.status().and_then(|status| status.duration)
+        });
         press()
             .label("Seek")
             .h(px(8.0))
@@ -872,6 +912,33 @@ impl PlayerControls {
                     .w_full()
                     .bg(rgba(0xffffff66))
                     .rounded(px(1.0))
+                    .overflow_hidden()
+                    .child(
+                        view()
+                            .absolute()
+                            .left(px(0.0))
+                            .top(px(0.0))
+                            .h_full()
+                            .bg(rgba(0xffffff55))
+                            .w({
+                                let state = state.clone();
+                                move || {
+                                    percentage(
+                                        duration
+                                            .get()
+                                            .filter(|n| *n > 0.0)
+                                            .and_then(|total| {
+                                                state.status().map(|status| {
+                                                    (status.buffered_position / total)
+                                                        .clamp(0.0, 1.0)
+                                                        as f32
+                                                })
+                                            })
+                                            .unwrap_or(0.0),
+                                    )
+                                }
+                            }),
+                    )
                     .child(view().h_full().bg(rgb(0xff0000)).w(move || {
                         percentage(state.status().map_or(0.0, |status| {
                             let duration = status.duration.unwrap_or(0.0);
@@ -881,6 +948,59 @@ impl PlayerControls {
                                 0.0
                             }
                         }))
+                    }))
+                    .child(dynamic(move || {
+                        let duration = duration.get().filter(|n| *n > 0.0)?;
+                        let video = marks.video()?;
+                        let starts = video
+                            .chapters
+                            .iter()
+                            .filter(|chapter| chapter.start > 0.0 && chapter.start < duration);
+                        let segments = if video.offline {
+                            Vec::new()
+                        } else {
+                            marks.sponsor_segments(&video.video_id)
+                        };
+                        Some(
+                            view()
+                                .absolute()
+                                .inset(px(0.0))
+                                .pointer_events(PointerEvents::None)
+                                .children(
+                                    segments
+                                        .into_iter()
+                                        .filter(|segment| {
+                                            segment.start < duration && segment.end >= segment.start
+                                        })
+                                        .map(|segment| {
+                                            view()
+                                                .absolute()
+                                                .top(px(0.0))
+                                                .h_full()
+                                                .left(percentage((segment.start / duration) as f32))
+                                                .w(percentage(
+                                                    ((segment.end.min(duration) - segment.start)
+                                                        / duration)
+                                                        as f32,
+                                                ))
+                                                .bg(rgb(category(&segment.category).1))
+                                        })
+                                        .collect::<Vec<_>>(),
+                                )
+                                .children(
+                                    starts
+                                        .map(|chapter| {
+                                            view()
+                                                .absolute()
+                                                .top(px(0.0))
+                                                .h_full()
+                                                .left(percentage((chapter.start / duration) as f32))
+                                                .w(px(1.5))
+                                                .bg(rgba(0x000000bb))
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ),
+                        )
                     })),
             )
     }

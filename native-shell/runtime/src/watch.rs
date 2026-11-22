@@ -55,7 +55,6 @@ struct Page {
     position: Option<PositionRequest>,
     displayed: bool,
     media_ready: bool,
-    sponsor_segments: Option<(String, Value)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +70,22 @@ pub struct WatchVideo {
     pub audio_key: String,
     pub audio_tracks: Rc<[AudioTrack]>,
     pub subtitles: Rc<[SubtitleTrack]>,
+    pub chapters: Rc<[Chapter]>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Chapter {
+    pub start: f64,
+    pub title: String,
+    pub preview_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct SponsorSegment {
+    pub start: f64,
+    pub end: f64,
+    pub category: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -109,6 +124,7 @@ pub struct WatchPlayback {
     session_id: u64,
     player: VideoPlayer,
     page: Rc<RefCell<Page>>,
+    sponsorship: Signal<Option<(String, Value)>>,
     layout: Signal<Option<PageVideoLayout>>,
     presentation: Signal<Option<EmbeddedVideoFrame>>,
     settings: Signal<Option<Map<String, Value>>>,
@@ -130,6 +146,7 @@ impl WatchPlayback {
             session_id,
             player: VideoPlayer::new(),
             page: Rc::new(RefCell::new(Page::default())),
+            sponsorship: signal(None),
             layout: signal(None),
             presentation: signal(None),
             settings: signal(None),
@@ -228,6 +245,7 @@ impl WatchPlayback {
             audio_key: String::new(),
             audio_tracks: Rc::from([]),
             subtitles: Rc::from([]),
+            chapters: Rc::from([]),
         }));
         Ok(())
     }
@@ -289,14 +307,24 @@ impl WatchPlayback {
     }
 
     pub fn set_sponsor_segments(&self, video_id: String, segments: Value) {
-        self.page.borrow_mut().sponsor_segments = Some((video_id, segments));
+        self.sponsorship.set(Some((video_id, segments)));
         self.sponsor_page();
+    }
+
+    pub fn sponsor_segments(&self, video_id: &str) -> Vec<SponsorSegment> {
+        self.sponsorship.with(|value| {
+            value
+                .as_ref()
+                .filter(|(id, _)| id == video_id)
+                .and_then(|(_, segments)| Vec::deserialize(segments).ok())
+                .unwrap_or_default()
+        })
     }
 
     fn sponsor_page(&self) {
         let page = self.page.borrow();
-        if let Some((watch, (id, segments))) =
-            page.watch.as_ref().zip(page.sponsor_segments.as_ref())
+        let sponsorship = self.sponsorship.get_untracked();
+        if let Some((watch, (id, segments))) = page.watch.as_ref().zip(sponsorship.as_ref())
             && watch.video_id == *id
             && page.media_ready
         {
@@ -771,6 +799,9 @@ impl WatchPlayback {
                 .unwrap_or_default()
                 .into(),
             subtitles: Vec::<SubtitleTrack>::deserialize(&catalog["subtitles"])
+                .unwrap_or_default()
+                .into(),
+            chapters: Vec::<Chapter>::deserialize(&catalog["chapters"])
                 .unwrap_or_default()
                 .into(),
         }));
