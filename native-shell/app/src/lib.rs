@@ -14,7 +14,9 @@ mod camera_ios;
 mod chat;
 mod chat_activity;
 mod chat_markdown;
+mod chat_read_aloud;
 mod chat_view;
+mod chat_viewport;
 mod chat_voice;
 mod download_confirm;
 mod download_library;
@@ -145,7 +147,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         downloads.clone(),
         browser.clone(),
     );
-    let chat_view = ChatView::new(chat.clone(), palette);
+    let chat_view = ChatView::new(chat.clone(), palette, watch.clone());
     let has_watch_page = computed({
         let browser = browser.clone();
         let watch = watch.clone();
@@ -540,6 +542,7 @@ fn workspace(core: Core, watch: WatchPlayback) -> View {
         ));
     root.child(chat_view.camera())
         .child(chat_view.speech())
+        .child(chat_view.read_aloud())
         .child(PlayerRuntime::new().view())
         .child(TokenRuntime::new(core).view())
 }

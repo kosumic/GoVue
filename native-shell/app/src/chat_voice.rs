@@ -239,7 +239,13 @@ impl ChatVoice {
             })
     }
 
-    pub fn button(&self, p: Palette, chat: Chat, input: ElementRef) -> View {
+    pub fn button(
+        &self,
+        p: Palette,
+        chat: Chat,
+        input: ElementRef,
+        stop_reading: impl Fn() + 'static,
+    ) -> View {
         let phase = self.phase;
         let owner = self.owner;
         let voice = self.clone();
@@ -262,6 +268,7 @@ impl ChatVoice {
                 if let Some(id) = owner.get_untracked() {
                     voice.finish(id);
                 } else {
+                    stop_reading();
                     voice.start(&chat);
                 }
             })

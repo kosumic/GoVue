@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use govue_shell_runtime::WatchPlayback;
 use nsh_core::{
     KeyboardDismissMode, KeyboardTaps, PasteEvent,
     element::{ElementRef, input},
@@ -12,6 +13,8 @@ use serde_json::{Value, json};
 use crate::attachments_view::{AttachmentsView, PAPERCLIP};
 use crate::chat::{Chat, ChatTranscript, Message};
 use crate::chat_activity::{self, ToolSelection};
+use crate::chat_read_aloud::ReadAloud;
+use crate::chat_viewport::ChatViewports;
 use crate::chat_voice::ChatVoice;
 use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
@@ -52,14 +55,17 @@ pub struct ChatView {
     attachments: AttachmentsView,
     tool_selection: ToolSelection,
     voice: ChatVoice,
+    reading: ReadAloud,
+    viewports: ChatViewports,
 }
 
 impl ChatView {
-    pub fn new(chat: Chat, palette: Palette) -> Self {
+    pub fn new(chat: Chat, palette: Palette, watch: WatchPlayback) -> Self {
         let attachments = AttachmentsView::new(chat.core(), palette);
         let draft = signal(String::new());
         let layer = signal(Layer::Thread);
         let voice = ChatVoice::new(chat.core(), draft);
+        let reading = ReadAloud::new(chat.core(), watch);
         let editing = signal(None);
         let tool_selection = signal(None);
         effect({
@@ -82,10 +88,12 @@ impl ChatView {
         });
         effect({
             let voice = voice.clone();
+            let reading = reading.clone();
             let chat = chat.clone();
             move || {
                 voice_context.get();
                 chat.draft_revision();
+                reading.clear();
                 if !chat.visible() || layer.get() != Layer::Thread {
                     voice.clear();
                 } else {
@@ -95,9 +103,30 @@ impl ChatView {
         });
         effect({
             let voice = voice.clone();
+            let reading = reading.clone();
             move || {
-                if lifecycle() == Lifecycle::Background {
+                let phase = lifecycle();
+                if phase == Lifecycle::Background {
                     voice.cancel();
+                }
+                if phase != Lifecycle::Active {
+                    reading.stop();
+                }
+            }
+        });
+        effect({
+            let reading = reading.clone();
+            let chat = chat.clone();
+            move || {
+                if let Some(id) = reading.active()
+                    && !chat.current().is_some_and(|thread| {
+                        thread
+                            .messages
+                            .iter()
+                            .any(|message| message.id == id && message.status != "streaming")
+                    })
+                {
+                    reading.stop();
                 }
             }
         });
@@ -109,6 +138,8 @@ impl ChatView {
             palette,
             layer,
             voice,
+            reading,
+            viewports: ChatViewports::default(),
             draft,
             editing,
             reasoning_open: signal(false),
@@ -124,6 +155,10 @@ impl ChatView {
 
     pub fn speech(&self) -> NativeView {
         self.voice.native_view()
+    }
+
+    pub fn read_aloud(&self) -> NativeView {
+        self.reading.native()
     }
 
     fn edit(&self, message: Message) {
@@ -282,7 +317,16 @@ impl ChatView {
         let video_chat = self.chat.clone();
         let find = self.chat.clone();
         let assistant = self.chat.clone();
+        let reading = self.reading.clone();
+        let allow_reading = computed({
+            let voice = self.voice.clone();
+            let chat = self.chat.clone();
+            move || !voice.active() && !chat.loading()
+        });
         let tool_selection = self.tool_selection;
+        let viewports = self.viewports.clone();
+        let finding = computed(move || layer.get() == Layer::Find);
+        let sent = self.chat.sent_revision;
         let files = self.attachments.clone();
         let edit = self.clone();
         let composer = self.composer(open_transcript);
@@ -339,73 +383,122 @@ impl ChatView {
                             let search = find.clone();
                             let files = files.clone();
                             let assistant = assistant.clone();
+                            let reading = reading.clone();
                             let edit = edit.clone();
-                            scroll()
+                            let viewport = viewports.thread(
+                                assistant
+                                    .current()
+                                    .map(|thread| thread.id.clone())
+                                    .unwrap_or_default(),
+                                finding,
+                                sent,
+                            );
+                            let position = viewport.clone();
+                            let scrolled = viewport.clone();
+                            let begin = viewport.clone();
+                            let end = viewport.clone();
+                            let content = viewport.clone();
+                            view()
+                                .relative()
                                 .h_full()
                                 .w_full()
-                                .keyboard_taps(KeyboardTaps::Handled)
-                                .keyboard_dismiss_mode(KeyboardDismissMode::OnDrag)
                                 .child(
-                                    view()
+                                    scroll()
+                                        .element_ref(&viewport.scroll)
+                                        .h_full()
                                         .w_full()
-                                        .max_w(px(800.0))
-                                        .self_center()
-                                        .px(px(20.0))
-                                        .py(px(24.0))
-                                        .gap(px(28.0))
-                                        .child(each(
-                                            list,
-                                            |message| message.id.clone(),
-                                            move |message, _| {
-                                                let search = search.clone();
-                                                let id = message
-                                                    .with_untracked(|message| message.id.clone());
-                                                let found = computed(move || {
-                                                    search
-                                                        .matches()
-                                                        .and_then(|matches| {
-                                                            matches
-                                                                .current()
-                                                                .map(|hit| hit.message_id == id)
-                                                        })
-                                                        .unwrap_or(false)
-                                                });
-                                                let row = element_ref();
-                                                effect({
-                                                    move || {
-                                                        if found.get() {
-                                                            row.reveal(Default::default());
-                                                        }
-                                                    }
-                                                });
-                                                let user = message.with_untracked(|message| {
-                                                    message.role == "user"
-                                                });
-                                                let value = move || {
-                                                    message.with(|message| message.content.clone())
-                                                };
-                                                let bubble = if user {
-                                                    view()
-                                                        .flex_col()
-                                                        .w(percentage(0.88))
-                                                        .self_end()
-                                                        .gap(px(6.0))
-                                                        .child(files.strip(
-                                                            move || {
-                                                                message.with(|message| {
-                                                                    message.attachments.clone()
+                                        .keyboard_taps(KeyboardTaps::Handled)
+                                        .keyboard_dismiss_mode(KeyboardDismissMode::OnDrag)
+                                        .on_layout(move |frame: &Bounds<Points>| {
+                                            position.measured(frame, false)
+                                        })
+                                        .on_scroll(move |event: &nsh_core::element::ScrollEvent| {
+                                            scrolled.moved(event)
+                                        })
+                                        .on_scroll_drag_start(move |_: &nsh_core::Point<Points>| {
+                                            begin.drag(true)
+                                        })
+                                        .on_scroll_end(move |_: &nsh_core::Point<Points>| {
+                                            end.drag(false)
+                                        })
+                                        .child(
+                                            view()
+                                                .w_full()
+                                                .max_w(px(800.0))
+                                                .self_center()
+                                                .px(px(20.0))
+                                                .py(px(24.0))
+                                                .gap(px(28.0))
+                                                .on_layout(move |frame: &Bounds<Points>| {
+                                                    content.measured(frame, true)
+                                                })
+                                                .child(each(
+                                                    list,
+                                                    |message| message.id.clone(),
+                                                    move |message, _| {
+                                                        let search = search.clone();
+                                                        let id =
+                                                            message.with_untracked(|message| {
+                                                                message.id.clone()
+                                                            });
+                                                        let found = computed(move || {
+                                                            search
+                                                                .matches()
+                                                                .and_then(|matches| {
+                                                                    matches.current().map(|hit| {
+                                                                        hit.message_id == id
+                                                                    })
                                                                 })
-                                                            },
-                                                            None,
-                                                        ))
-                                                        .child(when(
+                                                                .unwrap_or(false)
+                                                        });
+                                                        let row = element_ref();
+                                                        effect({
                                                             move || {
-                                                                message.with(|message| {
-                                                                    !message.content.is_empty()
-                                                                })
-                                                            },
-                                                            move || {
+                                                                if found.get() {
+                                                                    row.reveal(Default::default());
+                                                                }
+                                                            }
+                                                        });
+                                                        let user =
+                                                            message.with_untracked(|message| {
+                                                                message.role == "user"
+                                                            });
+                                                        let value = move || {
+                                                            message.with(|message| {
+                                                                message.content.clone()
+                                                            })
+                                                        };
+                                                        let bubble =
+                                                            if user {
                                                                 view()
+                                                                    .flex_col()
+                                                                    .w(percentage(0.88))
+                                                                    .self_end()
+                                                                    .gap(px(6.0))
+                                                                    .child(files.strip(
+                                                                        move || {
+                                                                            message.with(
+                                                                                |message| {
+                                                                                    message
+                                                                                        .attachments
+                                                                                        .clone()
+                                                                                },
+                                                                            )
+                                                                        },
+                                                                        None,
+                                                                    ))
+                                                                    .child(when(
+                                                                        move || {
+                                                                            message.with(
+                                                                                |message| {
+                                                                                    !message
+                                                                                        .content
+                                                                                        .is_empty()
+                                                                                },
+                                                                            )
+                                                                        },
+                                                                        move || {
+                                                                            view()
                                                                     .self_end()
                                                                     .rounded(px(24.0))
                                                                     .bg(move || p.raised())
@@ -420,88 +513,96 @@ impl ChatView {
                                                                                 move || p.ink(),
                                                                             ),
                                                                     )
-                                                            },
-                                                        ))
-                                                } else {
-                                                    chat_activity::reply(
-                                                        p,
-                                                        message,
-                                                        assistant.clone(),
-                                                        tool_selection,
-                                                    )
-                                                };
-                                                let actions = if user {
-                                                    let panel = edit.clone();
-                                                    let state = edit.clone();
-                                                    view()
-                                                        .self_end()
-                                                        .flex_row()
-                                                        .child(ui::icon_button(
-                                                            p,
-                                                            ui::COPY,
-                                                            "Copy prompt",
-                                                            move || set_clipboard(value()),
-                                                        ))
-                                                        .child(
-                                                            ui::icon_button(
-                                                                p,
-                                                                ui::EDIT,
-                                                                "Edit message",
-                                                                move || {
-                                                                    panel.edit(
-                                                                        message.get_untracked(),
-                                                                    );
-                                                                },
-                                                            )
-                                                            .disabled(move || {
-                                                                state.chat.busy()
-                                                                    || state.chat.loading()
-                                                                    || state.chat.sending()
-                                                                    || state.attachments.busy()
-                                                            }),
-                                                        )
-                                                } else {
-                                                    chat_activity::footer(
-                                                        p,
-                                                        assistant.clone(),
-                                                        message,
-                                                    )
-                                                };
-                                                view()
-                                                    .element_ref(&row)
-                                                    .w_full()
-                                                    .rounded(px(12.0))
-                                                    .bg(move || {
-                                                        if found.get() {
-                                                            p.raised()
+                                                                        },
+                                                                    ))
+                                                            } else {
+                                                                chat_activity::reply(
+                                                                    p,
+                                                                    message,
+                                                                    assistant.clone(),
+                                                                    tool_selection,
+                                                                )
+                                                            };
+                                                        let actions = if user {
+                                                            let panel = edit.clone();
+                                                            let state = edit.clone();
+                                                            view()
+                                                                .self_end()
+                                                                .flex_row()
+                                                                .child(ui::icon_button(
+                                                                    p,
+                                                                    ui::COPY,
+                                                                    "Copy prompt",
+                                                                    move || set_clipboard(value()),
+                                                                ))
+                                                                .child(
+                                                                    ui::icon_button(
+                                                                        p,
+                                                                        ui::EDIT,
+                                                                        "Edit message",
+                                                                        move || {
+                                                                            panel.edit(
+                                                                                message
+                                                                                    .get_untracked(
+                                                                                    ),
+                                                                            );
+                                                                        },
+                                                                    )
+                                                                    .disabled(move || {
+                                                                        state.chat.busy()
+                                                                            || state.chat.loading()
+                                                                            || state.chat.sending()
+                                                                            || state
+                                                                                .attachments
+                                                                                .busy()
+                                                                    }),
+                                                                )
                                                         } else {
-                                                            rgba(0x00000000).into()
-                                                        }
-                                                    })
-                                                    .child(bubble)
-                                                    .child(when(
-                                                        move || {
-                                                            message.with(|message| {
-                                                                message.error.is_some()
+                                                            chat_activity::footer(
+                                                                p,
+                                                                assistant.clone(),
+                                                                message,
+                                                                &reading,
+                                                                allow_reading,
+                                                            )
+                                                        };
+                                                        view()
+                                                            .element_ref(&row)
+                                                            .w_full()
+                                                            .rounded(px(12.0))
+                                                            .bg(move || {
+                                                                if found.get() {
+                                                                    p.raised()
+                                                                } else {
+                                                                    rgba(0x00000000).into()
+                                                                }
                                                             })
-                                                        },
-                                                        move || {
-                                                            text(move || {
-                                                                message.with(|message| {
-                                                                    message
-                                                                        .error
-                                                                        .clone()
-                                                                        .unwrap_or_default()
-                                                                })
-                                                            })
-                                                            .text_size(px(13.0))
-                                                            .text_color(rgb(0xff0000))
-                                                        },
-                                                    ))
-                                                    .child(actions)
-                                            },
-                                        )),
+                                                            .child(bubble)
+                                                            .child(when(
+                                                                move || {
+                                                                    message.with(|message| {
+                                                                        message.error.is_some()
+                                                                    })
+                                                                },
+                                                                move || {
+                                                                    text(move || {
+                                                                        message.with(|message| {
+                                                                            message
+                                                                                .error
+                                                                                .clone()
+                                                                                .unwrap_or_default()
+                                                                        })
+                                                                    })
+                                                                    .text_size(px(13.0))
+                                                                    .text_color(rgb(0xff0000))
+                                                                },
+                                                            ))
+                                                            .child(actions)
+                                                    },
+                                                )),
+                                        ),
                                 )
+                                .child(viewport.jump_button(p))
                         },
                     )),
             )
@@ -516,6 +617,7 @@ impl ChatView {
                         .text_color(rgb(0xff0000))
                 }
             }))
+            .child(self.reading.notice(p))
             .child(when(
                 move || layer.get() != Layer::Find,
                 move || composer.clone(),
@@ -856,7 +958,10 @@ impl ChatView {
                                 reasoning_open,
                             ))
                             .child(view().flex_1())
-                            .child(self.voice.button(p, self.chat.clone(), input_ref))
+                            .child(self.voice.button(p, self.chat.clone(), input_ref, {
+                                let reading = self.reading.clone();
+                                move || reading.stop()
+                            }))
                             .child(when(
                                 {
                                     let busy = busy.clone();
@@ -878,7 +983,18 @@ impl ChatView {
                                     .bg(move || p.ink())
                                     .opacity(move || if enabled.get() { 1.0_f32 } else { 0.45 })
                                     .disabled(move || !enabled.get())
-                                    .label("Send message")
+                                    .label({
+                                        let chat = self.chat.clone();
+                                        move || {
+                                            if chat.busy() {
+                                                "Queue message"
+                                            } else if editing.with(Option::is_some) {
+                                                "Send edited message"
+                                            } else {
+                                                "Send message"
+                                            }
+                                        }
+                                    })
                                     .on_press(move || {
                                         let submitted = draft.get_untracked();
                                         let files = send_files.clone();

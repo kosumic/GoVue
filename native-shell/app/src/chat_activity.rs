@@ -431,11 +431,18 @@ pub fn tool_sheet(p: Palette, chat: Chat, selection: ToolSelection) -> impl Into
     )
 }
 
-pub fn footer(p: Palette, chat: Chat, message: ReadSignal<Message>) -> View {
+pub fn footer(
+    p: Palette,
+    chat: Chat,
+    message: ReadSignal<Message>,
+    reading: &crate::chat_read_aloud::ReadAloud,
+    allowed: Memo<bool>,
+) -> View {
     let open = signal(false);
     let copying = signal(false);
     let retry = chat.clone();
     let branch = chat.clone();
+    let read = reading.clone();
     let disabled = computed(move || {
         chat.busy()
             || chat.loading()
@@ -479,6 +486,10 @@ pub fn footer(p: Palette, chat: Chat, message: ReadSignal<Message>) -> View {
                             )
                         })),
                 )
+                .child(when(
+                    move || message.with(|message| !message.content.is_empty()),
+                    move || read.button(p, message, allowed),
+                ))
                 .child(when(
                     move || message.with(|message| !message.content.is_empty()),
                     move || {

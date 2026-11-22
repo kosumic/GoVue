@@ -185,6 +185,7 @@ pub struct Chat {
     sending: Signal<bool>,
     error: Signal<Option<String>>,
     draft_revision: Signal<u64>,
+    pub sent_revision: Signal<u64>,
     draft_reasoning: Signal<Option<String>>,
     reasoning_revision: Rc<Cell<u64>>,
     settings_busy: Signal<bool>,
@@ -209,6 +210,7 @@ impl Chat {
             sending: signal(false),
             error: signal(None),
             draft_revision: signal(0),
+            sent_revision: signal(0),
             draft_reasoning: signal(None),
             reasoning_revision: Rc::new(Cell::new(0)),
             settings_busy: signal(false),
@@ -650,6 +652,7 @@ impl Chat {
                             );
                             chat.current.set(Some(Rc::new(started.conversation)));
                         }
+                        chat.sent_revision.update(|revision| *revision += 1);
                     }
                     Err(error) => chat.error.set(Some(error.to_string())),
                 }
