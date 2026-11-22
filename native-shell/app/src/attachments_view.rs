@@ -39,6 +39,7 @@ pub struct AttachmentsView {
     owner: Owner,
     p: Palette,
     files: Signal<Vec<Attachment>>,
+    suspended: Signal<Option<Vec<Attachment>>>,
     limit: Signal<usize>,
     busy: Signal<bool>,
     actions: Signal<bool>,
@@ -56,6 +57,7 @@ impl AttachmentsView {
             owner: Owner::current(),
             p,
             files: signal(Vec::new()),
+            suspended: signal(None),
             limit: signal(0),
             busy: signal(false),
             actions: signal(false),
@@ -88,7 +90,47 @@ impl AttachmentsView {
         self.error.set(None);
     }
 
+    pub fn edit(&self, files: Vec<Attachment>) {
+        let previous = self.files.get_untracked();
+        self.files.set(files);
+        if self.suspended.with_untracked(Option::is_none) {
+            self.suspended.set(Some(previous));
+        } else {
+            self.release_replaced(previous);
+        }
+        self.error.set(None);
+    }
+
+    pub fn cancel_edit(&self) {
+        if let Some(suspended) = self.suspended.get_untracked() {
+            let previous = self.files.get_untracked();
+            self.suspended.set(None);
+            self.files.set(suspended);
+            self.release_replaced(previous);
+            self.error.set(None);
+        }
+    }
+
+    pub fn finish_edit(&self) {
+        if let Some(suspended) = self.suspended.get_untracked() {
+            self.suspended.set(None);
+            self.release_replaced(suspended);
+        }
+    }
+
+    fn release_replaced(&self, replaced: Vec<Attachment>) {
+        let current = self.ids();
+        self.release(
+            replaced
+                .into_iter()
+                .map(|file| file.id)
+                .filter(|id| !current.contains(id))
+                .collect(),
+        );
+    }
+
     pub fn reset(&self) {
+        self.finish_edit();
         let ids = self.ids();
         self.revision.update(|revision| *revision += 1);
         self.actions.set(false);
@@ -97,7 +139,12 @@ impl AttachmentsView {
         self.release(ids);
     }
 
-    fn release(&self, ids: Vec<String>) {
+    fn release(&self, mut ids: Vec<String>) {
+        self.suspended.with_untracked(|suspended| {
+            if let Some(suspended) = suspended {
+                ids.retain(|id| !suspended.iter().any(|file| &file.id == id));
+            }
+        });
         if ids.is_empty() {
             return;
         }

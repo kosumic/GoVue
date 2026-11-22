@@ -1,10 +1,14 @@
 use std::rc::Rc;
 
-use nsh_core::{PasteEvent, element::input, prelude::*};
+use nsh_core::{
+    KeyboardDismissMode, KeyboardTaps, PasteEvent,
+    element::{ElementRef, input},
+    prelude::*,
+};
 use serde_json::Value;
 
 use crate::attachments_view::{AttachmentsView, PAPERCLIP};
-use crate::chat::{Chat, ChatTranscript};
+use crate::chat::{Chat, ChatTranscript, Message};
 use crate::chat_activity::{self, ToolSelection};
 use crate::provider_view::ProviderView;
 use crate::ui::{self, Palette, press};
@@ -33,6 +37,8 @@ pub struct ChatView {
     chat: Chat,
     layer: Signal<Layer>,
     draft: Signal<String>,
+    editing: Signal<Option<(String, String)>>,
+    input: ElementRef,
     query: Signal<String>,
     find_query: Signal<String>,
     palette: Palette,
@@ -45,6 +51,7 @@ impl ChatView {
     pub fn new(chat: Chat, palette: Palette) -> Self {
         let attachments = AttachmentsView::new(chat.core(), palette);
         let draft = signal(String::new());
+        let editing = signal(None);
         let tool_selection = signal(None);
         effect({
             let attachments = attachments.clone();
@@ -53,6 +60,7 @@ impl ChatView {
                 reset.draft_revision();
                 attachments.reset();
                 draft.set(String::new());
+                editing.set(None);
                 tool_selection.set(None);
             }
         });
@@ -64,6 +72,8 @@ impl ChatView {
             palette,
             layer: signal(Layer::Thread),
             draft,
+            editing,
+            input: element_ref(),
             query: signal(String::new()),
             find_query: signal(String::new()),
         }
@@ -71,6 +81,25 @@ impl ChatView {
 
     pub fn camera(&self) -> NativeView {
         self.attachments.camera()
+    }
+
+    fn edit(&self, message: Message) {
+        let original = self
+            .editing
+            .get_untracked()
+            .map_or_else(|| self.draft.get_untracked(), |(_, text)| text);
+        self.editing.set(Some((message.id, original)));
+        self.attachments.edit(message.attachments);
+        self.draft.set(message.content);
+        self.input.focus();
+    }
+
+    fn cancel_edit(&self) {
+        if let Some((_, original)) = self.editing.get_untracked() {
+            self.attachments.cancel_edit();
+            self.draft.set(original);
+            self.editing.set(None);
+        }
     }
 
     pub fn back(&self) -> bool {
@@ -125,6 +154,7 @@ impl ChatView {
                 view()
                     .absolute()
                     .inset(px(0.0))
+                    .bottom(|| px((keyboard_height().0 - safe_area().bottom.0).max(0.0)))
                     .flex_col()
                     .bg(move || theme.background())
                     .child(when(
@@ -210,6 +240,7 @@ impl ChatView {
         let assistant = self.chat.clone();
         let tool_selection = self.tool_selection;
         let files = self.attachments.clone();
+        let edit = self.clone();
         let composer = self.composer(open_transcript);
 
         view()
@@ -264,126 +295,169 @@ impl ChatView {
                             let search = find.clone();
                             let files = files.clone();
                             let assistant = assistant.clone();
-                            scroll().h_full().w_full().child(
-                                view()
-                                    .w_full()
-                                    .max_w(px(800.0))
-                                    .self_center()
-                                    .px(px(20.0))
-                                    .py(px(24.0))
-                                    .gap(px(28.0))
-                                    .child(each(
-                                        list,
-                                        |message| message.id.clone(),
-                                        move |message, _| {
-                                            let search = search.clone();
-                                            let id = message
-                                                .with_untracked(|message| message.id.clone());
-                                            let found = computed(move || {
-                                                search
-                                                    .matches()
-                                                    .and_then(|matches| {
-                                                        matches
-                                                            .current()
-                                                            .map(|hit| hit.message_id == id)
-                                                    })
-                                                    .unwrap_or(false)
-                                            });
-                                            let row = element_ref();
-                                            effect({
-                                                move || {
-                                                    if found.get() {
-                                                        row.reveal(Default::default());
+                            let edit = edit.clone();
+                            scroll()
+                                .h_full()
+                                .w_full()
+                                .keyboard_taps(KeyboardTaps::Handled)
+                                .keyboard_dismiss_mode(KeyboardDismissMode::OnDrag)
+                                .child(
+                                    view()
+                                        .w_full()
+                                        .max_w(px(800.0))
+                                        .self_center()
+                                        .px(px(20.0))
+                                        .py(px(24.0))
+                                        .gap(px(28.0))
+                                        .child(each(
+                                            list,
+                                            |message| message.id.clone(),
+                                            move |message, _| {
+                                                let search = search.clone();
+                                                let id = message
+                                                    .with_untracked(|message| message.id.clone());
+                                                let found = computed(move || {
+                                                    search
+                                                        .matches()
+                                                        .and_then(|matches| {
+                                                            matches
+                                                                .current()
+                                                                .map(|hit| hit.message_id == id)
+                                                        })
+                                                        .unwrap_or(false)
+                                                });
+                                                let row = element_ref();
+                                                effect({
+                                                    move || {
+                                                        if found.get() {
+                                                            row.reveal(Default::default());
+                                                        }
                                                     }
-                                                }
-                                            });
-                                            let user = message
-                                                .with_untracked(|message| message.role == "user");
-                                            let value = move || {
-                                                message.with(|message| message.content.clone())
-                                            };
-                                            let bubble = if user {
+                                                });
+                                                let user = message.with_untracked(|message| {
+                                                    message.role == "user"
+                                                });
+                                                let value = move || {
+                                                    message.with(|message| message.content.clone())
+                                                };
+                                                let bubble = if user {
+                                                    view()
+                                                        .flex_col()
+                                                        .w(percentage(0.88))
+                                                        .self_end()
+                                                        .gap(px(6.0))
+                                                        .child(files.strip(
+                                                            move || {
+                                                                message.with(|message| {
+                                                                    message.attachments.clone()
+                                                                })
+                                                            },
+                                                            None,
+                                                        ))
+                                                        .child(when(
+                                                            move || {
+                                                                message.with(|message| {
+                                                                    !message.content.is_empty()
+                                                                })
+                                                            },
+                                                            move || {
+                                                                view()
+                                                                    .self_end()
+                                                                    .rounded(px(24.0))
+                                                                    .bg(move || p.raised())
+                                                                    .px(px(18.0))
+                                                                    .py(px(12.0))
+                                                                    .child(
+                                                                        text(value)
+                                                                            .selectable(true)
+                                                                            .text_size(px(16.0))
+                                                                            .line_height(px(24.0))
+                                                                            .text_color(
+                                                                                move || p.ink(),
+                                                                            ),
+                                                                    )
+                                                            },
+                                                        ))
+                                                } else {
+                                                    chat_activity::reply(
+                                                        p,
+                                                        message,
+                                                        assistant.clone(),
+                                                        tool_selection,
+                                                    )
+                                                };
+                                                let actions = if user {
+                                                    let panel = edit.clone();
+                                                    let state = edit.clone();
+                                                    view()
+                                                        .self_end()
+                                                        .flex_row()
+                                                        .child(ui::icon_button(
+                                                            p,
+                                                            ui::COPY,
+                                                            "Copy prompt",
+                                                            move || set_clipboard(value()),
+                                                        ))
+                                                        .child(
+                                                            ui::icon_button(
+                                                                p,
+                                                                ui::EDIT,
+                                                                "Edit message",
+                                                                move || {
+                                                                    panel.edit(
+                                                                        message.get_untracked(),
+                                                                    );
+                                                                },
+                                                            )
+                                                            .disabled(move || {
+                                                                state.chat.busy()
+                                                                    || state.chat.loading()
+                                                                    || state.chat.sending()
+                                                                    || state.attachments.busy()
+                                                            }),
+                                                        )
+                                                } else {
+                                                    chat_activity::footer(
+                                                        p,
+                                                        assistant.clone(),
+                                                        message,
+                                                    )
+                                                };
                                                 view()
-                                                    .w(percentage(0.88))
-                                                    .self_end()
-                                                    .rounded(px(24.0))
-                                                    .bg(move || p.raised())
-                                                    .px(px(18.0))
-                                                    .py(px(12.0))
-                                                    .child(files.strip(
-                                                        move || {
-                                                            message.with(|message| {
-                                                                message.attachments.clone()
-                                                            })
-                                                        },
-                                                        None,
-                                                    ))
+                                                    .element_ref(&row)
+                                                    .w_full()
+                                                    .rounded(px(12.0))
+                                                    .bg(move || {
+                                                        if found.get() {
+                                                            p.raised()
+                                                        } else {
+                                                            rgba(0x00000000).into()
+                                                        }
+                                                    })
+                                                    .child(bubble)
                                                     .child(when(
                                                         move || {
                                                             message.with(|message| {
-                                                                !message.content.is_empty()
+                                                                message.error.is_some()
                                                             })
                                                         },
                                                         move || {
-                                                            text(value)
-                                                                .selectable(true)
-                                                                .text_size(px(16.0))
-                                                                .line_height(px(24.0))
-                                                                .text_color(move || p.ink())
+                                                            text(move || {
+                                                                message.with(|message| {
+                                                                    message
+                                                                        .error
+                                                                        .clone()
+                                                                        .unwrap_or_default()
+                                                                })
+                                                            })
+                                                            .text_size(px(13.0))
+                                                            .text_color(rgb(0xff0000))
                                                         },
                                                     ))
-                                            } else {
-                                                chat_activity::reply(
-                                                    p,
-                                                    message,
-                                                    assistant.clone(),
-                                                    tool_selection,
-                                                )
-                                            };
-                                            let actions = if user {
-                                                view().self_end().child(ui::icon_button(
-                                                    p,
-                                                    ui::COPY,
-                                                    "Copy prompt",
-                                                    move || set_clipboard(value()),
-                                                ))
-                                            } else {
-                                                chat_activity::footer(p, assistant.clone(), message)
-                                            };
-                                            view()
-                                                .element_ref(&row)
-                                                .w_full()
-                                                .rounded(px(12.0))
-                                                .bg(move || {
-                                                    if found.get() {
-                                                        p.raised()
-                                                    } else {
-                                                        rgba(0x00000000).into()
-                                                    }
-                                                })
-                                                .child(bubble)
-                                                .child(when(
-                                                    move || {
-                                                        message
-                                                            .with(|message| message.error.is_some())
-                                                    },
-                                                    move || {
-                                                        text(move || {
-                                                            message.with(|message| {
-                                                                message
-                                                                    .error
-                                                                    .clone()
-                                                                    .unwrap_or_default()
-                                                            })
-                                                        })
-                                                        .text_size(px(13.0))
-                                                        .text_color(rgb(0xff0000))
-                                                    },
-                                                ))
-                                                .child(actions)
-                                        },
-                                    )),
-                            )
+                                                    .child(actions)
+                                            },
+                                        )),
+                                )
                         },
                     )),
             )
@@ -542,7 +616,9 @@ impl ChatView {
         let send_files = self.attachments.clone();
         let pick = self.attachments.clone();
         let pick_chat = self.chat.clone();
-        let input_ref = element_ref();
+        let input_ref = self.input;
+        let editing = self.editing;
+        let cancel = self.clone();
         let enabled = computed({
             let files = self.attachments.clone();
             let chat = self.chat.clone();
@@ -550,6 +626,7 @@ impl ChatView {
                 !files.busy()
                     && !chat.sending()
                     && !chat.loading()
+                    && (editing.with(Option::is_none) || !chat.busy())
                     && (!files.empty() || draft.with(|value| !value.trim().is_empty()))
             }
         });
@@ -561,6 +638,33 @@ impl ChatView {
             .pt(px(8.0))
             .pb(px(10.0))
             .gap(px(8.0))
+            .child(self.pending_messages())
+            .child(when(
+                move || editing.with(Option::is_some),
+                move || {
+                    let panel = cancel.clone();
+                    let state = cancel.chat.clone();
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .rounded(px(14.0))
+                        .bg(move || p.raised())
+                        .pl(px(14.0))
+                        .pr(px(4.0))
+                        .child(composer_note(
+                            p,
+                            || "Editing message",
+                            || "Sending replaces later messages and replies.".into(),
+                        ))
+                        .child(
+                            ui::icon_button(p, ui::CLOSE, "Cancel edit", move || {
+                                panel.cancel_edit()
+                            })
+                            .disabled(move || state.sending()),
+                        )
+                },
+            ))
             .child(when(
                 move || loaded.with(Option::is_some),
                 move || {
@@ -703,18 +807,101 @@ impl ChatView {
                                     .on_press(move || {
                                         let submitted = draft.get_untracked();
                                         let files = send_files.clone();
-                                        send.send(submitted.clone(), files.ids(), move || {
-                                            if draft.get_untracked() == submitted {
-                                                draft.set(String::new());
-                                            }
-                                            files.sent();
-                                        });
+                                        let replacing = editing.get_untracked().map(|(id, _)| id);
+                                        send.send(
+                                            submitted.clone(),
+                                            files.ids(),
+                                            replacing,
+                                            move || {
+                                                if draft.get_untracked() == submitted {
+                                                    draft.set(String::new());
+                                                }
+                                                files.sent();
+                                                files.finish_edit();
+                                                editing.set(None);
+                                            },
+                                        );
                                     })
                                     .child(ui::icon(ui::UP, 22.0, move || p.background())),
                             ),
                     ),
             )
             .child(self.attachments.notice())
+    }
+
+    fn pending_messages(&self) -> If {
+        let chat = self.chat.clone();
+        let pending = computed(move || {
+            chat.current()
+                .map(|thread| thread.pending_messages.clone())
+                .unwrap_or_default()
+        });
+        let chat = self.chat.clone();
+        let p = self.palette;
+        when(
+            move || pending.with(|messages| !messages.is_empty()),
+            move || {
+                let chat = chat.clone();
+                scroll()
+                    .max_h(px(160.0))
+                    .flex_shrink(1.0)
+                    .keyboard_taps(KeyboardTaps::Handled)
+                    .child(view().gap(px(8.0)).child(each(
+                        pending,
+                        |message| message.id.clone(),
+                        move |message, _| {
+                            let running = chat.clone();
+                            let state = chat.clone();
+                            let send = chat.clone();
+                            press()
+                                .px(px(14.0))
+                                .py(px(8.0))
+                                .rounded(px(14.0))
+                                .bg(move || p.raised())
+                                .label(move || {
+                                    if running.busy() {
+                                        "Queued message"
+                                    } else {
+                                        "Send queued message"
+                                    }
+                                })
+                                .disabled(move || {
+                                    state.busy() || state.sending() || state.loading()
+                                })
+                                .on_press(move || {
+                                    send.send_queued(
+                                        message.with_untracked(|message| message.id.clone()),
+                                    )
+                                })
+                                .child(composer_note(
+                                    p,
+                                    {
+                                        let chat = chat.clone();
+                                        move || {
+                                            if chat.busy() {
+                                                "Queued · steers after tool results"
+                                            } else {
+                                                "Not sent · tap to send"
+                                            }
+                                        }
+                                    },
+                                    move || {
+                                        message.with(|message| {
+                                            if message.content.is_empty() {
+                                                format!(
+                                                    "{} attached files",
+                                                    message.attachments.len()
+                                                )
+                                            } else {
+                                                message.content.clone()
+                                            }
+                                        })
+                                    },
+                                ))
+                        },
+                    )))
+            },
+        )
     }
 
     fn models(&self) -> View {
@@ -988,6 +1175,29 @@ fn active_model(config: &Value) -> Option<String> {
 fn model_name(name: &str) -> String {
     name.strip_prefix("gpt-")
         .map_or_else(|| name.to_owned(), |rest| format!("GPT-{rest}"))
+}
+
+fn composer_note(
+    p: Palette,
+    title: impl Fn() -> &'static str + 'static,
+    detail: impl Fn() -> String + 'static,
+) -> View {
+    view()
+        .flex_1()
+        .min_w(px(0.0))
+        .gap(px(2.0))
+        .child(
+            text(title)
+                .text_size(px(13.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || p.ink()),
+        )
+        .child(
+            text(detail)
+                .number_of_lines(2)
+                .text_size(px(11.0))
+                .text_color(move || p.muted()),
+        )
 }
 
 fn provider_models(config: &Value) -> Vec<Model> {

@@ -25,6 +25,16 @@ pub struct Conversation {
     pub model: String,
     pub messages: Vec<Message>,
     pub active_task: Option<String>,
+    #[serde(default)]
+    pub pending_messages: Vec<QueuedMessage>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct QueuedMessage {
+    pub id: String,
+    pub content: String,
+    #[serde(default)]
+    pub attachments: Vec<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -151,6 +161,7 @@ struct Progress {
     provider_label: Option<String>,
     usage: Value,
     usage_details: Value,
+    pending_messages: Option<Vec<QueuedMessage>>,
 }
 
 /// Keeps the displayed conversation and its streaming task in sync with GoVue's
@@ -484,13 +495,33 @@ impl Chat {
         &self,
         prompt: String,
         attachments: Vec<String>,
+        edit: Option<String>,
         accepted: impl FnOnce() + 'static,
     ) {
         let prompt = prompt.trim();
         if prompt.is_empty() && attachments.is_empty() {
             return;
         }
-        self.send_turn(json!({"prompt":prompt,"attachments":attachments}), accepted);
+        let mut command = json!({"prompt":prompt,"attachments":attachments});
+        if let Some(id) = edit {
+            if self.busy() {
+                return;
+            }
+            command["editMessageId"] = json!(id);
+        }
+        self.send_turn(command, accepted);
+    }
+
+    pub fn send_queued(&self, id: String) {
+        if !self.busy()
+            && let Some(current) = self.current.get_untracked()
+            && let Some(message) = current.pending_messages.iter().find(|m| m.id == id)
+        {
+            self.send_turn(
+                json!({"prompt":message.content,"queuedMessageId":id}),
+                || {},
+            );
+        }
     }
 
     pub fn retry(&self, id: String) {
@@ -537,9 +568,10 @@ impl Chat {
         let queue = self.task.get_untracked().is_some();
         command["id"] = json!(id);
         command["chatId"] = json!(current.as_ref().map(|chat| &chat.id));
-        let retry = command.get("retryMessageId").is_some();
+        let clear_feedback =
+            command.get("retryMessageId").is_some() || command.get("editMessageId").is_some();
         let request = json!({"op":"ai_chat_session_send","sessionId":SESSION,"version":epoch,"queue":queue,
-            "clearFeedback":retry,"command":command});
+            "clearFeedback":clear_feedback,"command":command});
         self.sending.set(true);
         self.error.set(None);
         let chat = self.clone();
@@ -698,6 +730,9 @@ impl Chat {
                 return Ok(());
             }
             let mut updated = (*current).clone();
+            if let Some(pending) = status.state.pending_messages {
+                updated.pending_messages = pending;
+            }
             if let Some(message) = updated
                 .messages
                 .last_mut()
