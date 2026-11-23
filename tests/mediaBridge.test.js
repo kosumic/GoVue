@@ -18,7 +18,7 @@ function setup({ bound = true } = {}) {
   let occluded = false;
   Object.defineProperties(window, { innerWidth: { value: 400 }, innerHeight: { value: 700 } });
   const transport = { postMessage: raw => messages.push(JSON.parse(raw)) };
-  if (bound) window.ReactNativeWebView = transport;
+  if (bound) window.__govuePageTransport = transport;
   window.fetch = async () => { throw Error('Layout tracking must not request media'); };
   window.HTMLMediaElement.prototype.pause = () => {};
   player.pauseVideo = () => {};

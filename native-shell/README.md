@@ -1,10 +1,7 @@
-# GoVue Native Shell port
+# GoVue Native Shell app
 
-The runtime crate uses Native Shell 0.6.1 and the existing `govue-core` crate.
-Use the current GoVue app as the reference for screen layout, navigation,
-gestures, and feature behavior. Preserve the YouTube launch screen, Chat in
-the bottom navigation and video player, and the existing player controls
-for subtitles and the transcript reader.
+The shared Rust UI lives in `app/`. The `runtime/` crate connects it to
+`govue-core` and the Android and iOS hosts.
 
 Build the standalone Android app with GoVue's Nix Android toolchain and Gradle
 9.4.1. Cargo supplies the Android host Java sources from the locked Native Shell
@@ -50,7 +47,7 @@ sandbox when the APK uses the existing app ID and signing key.
 starting an operation that publishes updates, then reload the affected state
 from Rust when its channel changes.
 
-The Android browser uses `androidx.webkit:webkit:1.14.0`. Register
+The Android browser uses AndroidX WebKit. Register
 `io.github.kaminarios.govue.shell.BrowserTab` on `NshView` before starting the
 Rust app. Give each retained tab a `BrowserTab` with its initial URL and last
 document generation. Feed its view the current media options and keep it

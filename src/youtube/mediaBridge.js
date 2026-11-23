@@ -8,7 +8,7 @@ export const MEDIA_BRIDGE = String.raw`
     return /^[\w-]{11}$/.test(value || '') ? value : null;
   };
   const player = () => document.getElementById('movie_player');
-  const post = value => (window.__govuePageTransport ?? window.ReactNativeWebView)?.postMessage(JSON.stringify(value));
+  const post = value => window.__govuePageTransport?.postMessage(JSON.stringify(value));
   let settings = { adBlock:true, sponsorBlock:true, categories:['sponsor','selfpromo','interaction'] };
   let owner = id();
   let segments = [];
@@ -82,7 +82,7 @@ export const MEDIA_BRIDGE = String.raw`
   };
   const adStyle = 'html[data-govue-adblock="true"] :is(#masthead-ad,#player-ads,ytd-ad-slot-renderer,ytm-ad-slot-renderer,ad-slot-renderer,ytd-display-ad-renderer,ytd-promoted-sparkles-web-renderer,ytm-promoted-sparkles-web-renderer,ytm-companion-ad-renderer,ytm-app-promo-renderer,ytm-app-install-ad-renderer,yt-mealbar-promo-renderer,ytm-open-in-app-renderer,.ytp-ad-overlay-container,.video-ads.ytp-ad-module,[data-govue-app-promo]){display:none!important}';
   function reportReady(videoId, p) {
-    const transport = window.__govuePageTransport ?? window.ReactNativeWebView;
+    const transport = window.__govuePageTransport;
     if (!videoId || typeof transport?.postMessage !== 'function') return;
     const now = performance.now();
     if (lastReady?.id === videoId && lastReady.transport === transport && now - lastReady.at < 1000) return;

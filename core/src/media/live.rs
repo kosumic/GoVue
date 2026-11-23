@@ -1,5 +1,5 @@
 //! Native HLS track metadata is transient. Never accept or store rendition URLs
-//! here: Expo owns the manifest, and the platform adapter pins a native track.
+//! here: the platform player loads the manifest, and the platform adapter pins a native track.
 use super::Result;
 use serde_json::{Value, json};
 

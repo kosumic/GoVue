@@ -4,8 +4,7 @@ import globals from 'globals';
 
 export default defineConfig([
   globalIgnores([
-    '.cache/**', '.expo/**', 'android/**', 'ios/**', 'dist/**', 'target/**',
-    'modules/govue-core/generated/**', 'modules/govue-core/ios/generated/**',
+    '.cache/**', 'target/**', 'native-shell/**/build/**',
     'src/youtube/generated/**',
     // Vendored DASH player and browser extension sources.
     'core/src/cast/assets/dash.all.min.js', 'src/youtube/litube/**',

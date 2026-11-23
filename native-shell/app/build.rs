@@ -32,12 +32,12 @@ fn main() {
         "../ios/GameRenderer.swift",
         "../ios/WordTools.swift",
         "../ios/ProviderQrScanner.swift",
-        "../../modules/govue-core/ios/CaptionSelectionSurface.swift",
-        "../../modules/govue-core/ios/DownloadMux.swift",
-        "../../modules/govue-core/ios/FileExport.swift",
-        "../../modules/govue-core/ios/IosDownloadHttp.swift",
-        "../../modules/govue-core/ios/BoundedHttp.swift",
-        "../../modules/govue-core/ios/NativeHttpSession.swift",
+        "../ios/CaptionSelectionSurface.swift",
+        "../ios/DownloadMux.swift",
+        "../ios/FileExport.swift",
+        "../ios/IosDownloadHttp.swift",
+        "../ios/BoundedHttp.swift",
+        "../ios/NativeHttpSession.swift",
     ];
     let status = Command::new(swift)
         .args([

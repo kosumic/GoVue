@@ -496,7 +496,7 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
 }
 
 /// One JSON boundary keeps the platform adapters identical and small. Work is
-/// dispatched off the JavaScript/UI thread by the Expo native module.
+/// run on a Native Shell worker.
 #[uniffi::export]
 pub fn execute(request: String, storage_path: String) -> String {
     let _span = trace::Section::begin(c"GoVue core: execute");

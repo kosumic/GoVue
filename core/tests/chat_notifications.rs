@@ -116,7 +116,7 @@ fn successful_away_replies_notify_once_and_visible_failed_stopped_deleted_replie
     );
     let provider = config["providers"][0]["id"].clone();
 
-    // First replies may complete before React receives the new chat ID.
+    // First replies may complete before the UI receives the new chat ID.
     attention(json!({"op":"chat_notification_visibility","chatId":null,"sessionId":"view"}));
     let first = call(
         root,

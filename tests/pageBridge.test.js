@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { YOUTUBE_BRIDGE, cancelPositionScript, pauseScript, playbackPositionScript, seekScript } from '../src/youtube/pageScripts.js';
+import { readFileSync } from 'node:fs';
+
+const YOUTUBE_BRIDGE = readFileSync(new URL('../src/youtube/pageBridge.js', import.meta.url), 'utf8');
 
 const videoId = 'abcdefghijk';
 const otherVideoId = '0123456789a';
@@ -23,7 +25,7 @@ function setup(fetch, { url = `https://www.youtube.com/watch?v=${videoId}`, trac
   window.document.body.append(watch);
   const messages = [];
   const requests = [];
-  window.ReactNativeWebView = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  window.__govuePageTransport = { postMessage: raw => messages.push(JSON.parse(raw)) };
   window.ytInitialPlayerResponse = { videoDetails: { videoId, title: 'Example' }, captions: { playerCaptionsTracklistRenderer: { captionTracks: tracks } } };
   window.ytcfg = { get: key => context && key === 'INNERTUBE_CONTEXT' ? { client: { clientName: 'WEB', clientVersion: 'fixture' } } : null };
   window.fetch = async (url, options) => {
@@ -49,15 +51,14 @@ test('bridge is idempotent, stays off other origins, and seeks only the current 
     assert.equal(env.window.__govue, bridge);
     let plays = 0;
     env.window.document.querySelector('video').play = () => { plays++; return Promise.resolve(); };
-    env.window.eval(seekScript(videoId, 42.5));
+    env.window.__govue.seek(videoId, 42.5);
     assert.equal(env.window.document.querySelector('video').currentTime, 42.5);
     assert.equal(plays, 1);
-    env.window.eval(seekScript(otherVideoId, 10));
+    env.window.__govue.seek(otherVideoId, 10);
     assert.equal(env.window.document.querySelector('video').currentTime, 42.5);
     assert.equal(plays, 1);
     other.window.eval(YOUTUBE_BRIDGE);
     assert.equal(other.window.__govue, undefined);
-    assert.doesNotThrow(() => new Function(playbackPositionScript('quote"\nrequest', videoId)));
   } finally { env.close(); other.close(); }
 });
 
@@ -71,7 +72,7 @@ test('caption taps seek and resume through the current YouTube player, rejecting
     player.playVideo = () => actions.push(['play']);
     env.window.document.body.append(player);
     env.window.eval(YOUTUBE_BRIDGE);
-    env.window.eval(seekScript(videoId, 24.8));
+    env.window.__govue.seek(videoId, 24.8);
     assert.deepEqual(actions, [['seek', 24.8, true], ['play']]);
     assert.equal(env.window.document.querySelector('video').currentTime, 0);
     for (const seconds of [-1, NaN, Infinity]) env.window.__govue.seek(videoId, seconds);
@@ -88,16 +89,16 @@ test('playback positions follow the web video across seeks and retain request co
     const video = env.window.document.querySelector('video');
     env.window.eval(YOUTUBE_BRIDGE);
     video.currentTime = 42.5;
-    env.window.eval(playbackPositionScript('position:1', videoId));
+    env.window.__govue.position('position:1', videoId);
     assert.deepEqual(env.messages.at(-1), { type: 'playbackPosition', requestId: 'position:1', videoId, seconds: 42.5 });
     video.currentTime = 3;
-    env.window.eval(playbackPositionScript('position:2', videoId));
+    env.window.__govue.position('position:2', videoId);
     assert.deepEqual(env.messages.at(-1), { type: 'playbackPosition', requestId: 'position:2', videoId, seconds: 3 });
     const count = env.messages.length;
-    env.window.eval(playbackPositionScript('stale', otherVideoId));
+    env.window.__govue.position('stale', otherVideoId);
     assert.equal(env.messages.length, count);
     const quoted = 'quote"\nrequest';
-    env.window.eval(playbackPositionScript(quoted, videoId));
+    env.window.__govue.position(quoted, videoId);
     assert.equal(env.messages.at(-1).requestId, quoted);
   } finally { env.close(); }
 });
@@ -114,25 +115,25 @@ test('playback positions reject a stale SPA player and hide ad or unavailable ti
     video.currentTime = 12;
     env.window.eval(YOUTUBE_BRIDGE);
     player.classList.add('ad-showing');
-    env.window.eval(playbackPositionScript('position:1', videoId));
+    env.window.__govue.position('position:1', videoId);
     assert.equal(env.messages.at(-1).seconds, null);
     player.classList.remove('ad-showing');
-    env.window.eval(playbackPositionScript('position:1', videoId));
+    env.window.__govue.position('position:1', videoId);
     assert.equal(env.messages.at(-1).seconds, 12);
     video.remove();
     player.getCurrentTime = () => NaN;
-    env.window.eval(playbackPositionScript('position:1', videoId));
+    env.window.__govue.position('position:1', videoId);
     assert.equal(env.messages.at(-1).seconds, null);
     player.getCurrentTime = () => 31.25;
-    env.window.eval(playbackPositionScript('position:1', videoId));
+    env.window.__govue.position('position:1', videoId);
     assert.equal(env.messages.at(-1).seconds, 31.25);
     env.window.history.pushState({}, '', `/watch?v=${otherVideoId}`);
     env.window.ytInitialPlayerResponse.videoDetails.videoId = otherVideoId;
     const count = env.messages.length;
-    env.window.eval(playbackPositionScript('position:2', otherVideoId));
+    env.window.__govue.position('position:2', otherVideoId);
     assert.equal(env.messages.length, count, 'The URL changed but the old player still owns the video');
     player.getVideoData = () => ({ video_id: otherVideoId });
-    env.window.eval(playbackPositionScript('position:2', otherVideoId));
+    env.window.__govue.position('position:2', otherVideoId);
     assert.equal(env.messages.at(-1).videoId, otherVideoId);
     assert.equal(env.messages.at(-1).seconds, 31.25);
   } finally { env.close(); }
@@ -154,27 +155,27 @@ test('line pauses require the current request, player, and timeline and can be c
     video.playbackRate = 1.5;
     Object.defineProperty(video, 'paused', { value: false });
     env.window.eval(YOUTUBE_BRIDGE);
-    env.window.eval(playbackPositionScript('current', videoId, true));
+    env.window.__govue.position('current', videoId, true);
     assert.deepEqual(env.messages.at(-1), { type: 'playbackPosition', requestId: 'current', videoId,
       seconds: 2, playing: true, seeking: false, rate: 1.5 });
-    env.window.eval(pauseScript('old', videoId, 2));
-    env.window.eval(pauseScript('current', otherVideoId, 2));
-    env.window.eval(pauseScript('current', videoId, 20));
+    env.window.__govue.pause('old', videoId, 2);
+    env.window.__govue.pause('current', otherVideoId, 2);
+    env.window.__govue.pause('current', videoId, 20);
     player.classList.add('ad-showing');
-    env.window.eval(pauseScript('current', videoId, 2));
+    env.window.__govue.pause('current', videoId, 2);
     player.classList.remove('ad-showing');
     owner = otherVideoId;
-    env.window.eval(pauseScript('current', videoId, 2));
+    env.window.__govue.pause('current', videoId, 2);
     owner = videoId;
     assert.equal(pauses, 0);
-    env.window.eval(pauseScript('current', videoId, 2));
+    env.window.__govue.pause('current', videoId, 2);
     assert.equal(pauses, 1);
-    env.window.eval(cancelPositionScript('current'));
-    env.window.eval(pauseScript('current', videoId, 2));
+    env.window.__govue.cancelPosition('current');
+    env.window.__govue.pause('current', videoId, 2);
     assert.equal(pauses, 1, 'closing the reader cancels queued pauses');
-    env.window.eval(playbackPositionScript('next', videoId, true));
+    env.window.__govue.position('next', videoId, true);
     Object.defineProperty(video, 'seeking', { value: true });
-    env.window.eval(pauseScript('next', videoId, 2));
+    env.window.__govue.pause('next', videoId, 2);
     assert.equal(pauses, 1, 'a seek invalidates the sampled timeline');
   } finally { env.close(); }
 });
@@ -199,7 +200,7 @@ test('preloaded startup waits for the selected video to finish seeking', { timeo
     window.eval(YOUTUBE_BRIDGE);
     const positions = [];
     const position = new Promise(resolve => {
-      window.ReactNativeWebView.postMessage = raw => {
+      window.__govuePageTransport.postMessage = raw => {
         const message = JSON.parse(raw);
         if (message.type === 'playbackPosition') {
           positions.push(message);

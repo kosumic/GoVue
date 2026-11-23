@@ -29,10 +29,8 @@ chosen AI model about what you just watched. Comments, recommendations,
 subscriptions, and account pages remain available through YouTube's web interface.
 
 GoVue began as a Rust-native port of [LiTube](https://github.com/HydeYYHH/Litube).
-It now combines shared React Native presentation with a Rust core and small
-Kotlin and Swift platform adapters.
-Android is the first implementation and verification target; the port is in
-progress. See [project status](#project-status) for verified behavior and open work.
+Android and iOS share a Rust UI built with Native Shell. The platform hosts
+provide WebView, media playback, and OS services. See [project status](#project-status) for verified behavior and open work.
 
 ## Contents
 

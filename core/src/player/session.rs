@@ -1,4 +1,4 @@
-//! Playback policy and asynchronous ownership, independent of React and Expo Video.
+//! Playback policy and asynchronous ownership, shared by the platform players.
 use crate::{Result, json};
 use serde_json::Value;
 use std::collections::HashMap;

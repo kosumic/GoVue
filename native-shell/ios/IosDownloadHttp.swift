@@ -35,7 +35,7 @@ final class IosDownloadHttp: @unchecked Sendable {
     var input = URLRequest(url: address)
     input.httpMethod = method
     // Enforced by URLSession even if Wi-Fi disappears after the path check or
-    // while Rust / React Native is running in the background.
+    // while the app runs in the background.
     input.allowsCellularAccess = !wifiOnly
     if method == "POST" { input.httpBody = Data([0x78, 0]) }
     input.setValue("identity", forHTTPHeaderField: "Accept-Encoding")

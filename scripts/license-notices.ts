@@ -68,7 +68,7 @@ async function npmNotices(): Promise<Notice[]> {
     return {
       id: `npm:${name}@${pkg.version}`,
       title: name,
-      license: name === 'lucide-react-native' ? 'ISC AND MIT' : pkg.license,
+      license: pkg.license,
       category: 'npm',
       sourceUrl: sourceUrl(pkg.repository, `https://www.npmjs.com/package/${name}`),
       attribution: `Direct npm dependency · version ${pkg.version}`,

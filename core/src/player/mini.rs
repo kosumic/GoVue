@@ -1,5 +1,5 @@
 //! LiTube mini-player geometry and persisted placement. Coordinates are relative
-//! to the inset-safe React Native workspace; only the settled frame is stored.
+//! to the inset-safe player workspace; only the settled frame is stored.
 use crate::{Result, media};
 use serde_json::{Value, json};
 

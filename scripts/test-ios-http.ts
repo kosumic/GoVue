@@ -8,8 +8,8 @@ const directory = mkdtempSync(join(tmpdir(), 'govue-ios-http-'));
 try {
   const binary = join(directory, 'ios-http-checks');
   execFileSync('xcrun', ['--sdk', 'macosx', 'swiftc', '-swift-version', '5',
-    'modules/govue-core/ios/NativeHttpSession.swift',
-    'modules/govue-core/ios/NativeMediaHttp.swift',
-    'modules/govue-core/ios/BoundedHttp.swift', 'tests/iosHttp.swift', '-o', binary], { stdio: 'inherit' });
+    'native-shell/ios/NativeHttpSession.swift',
+    'native-shell/ios/IosDownloadHttp.swift',
+    'native-shell/ios/BoundedHttp.swift', 'tests/iosHttp.swift', '-o', binary], { stdio: 'inherit' });
   execFileSync(binary, [], { stdio: 'inherit', timeout: 30_000 });
 } finally { rmSync(directory, { recursive: true, force: true }); }

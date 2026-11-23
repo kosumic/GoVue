@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { CAPTION_BRIDGE } from '../src/youtube/generated/captionBridge.js';
+import { readFileSync } from 'node:fs';
+
+const CAPTION_BRIDGE = readFileSync(new URL('../src/youtube/captionBridge.js', import.meta.url), 'utf8');
 
 const videoId = 'abcdefghijk';
 const otherVideo = '0123456789a';
@@ -16,7 +18,7 @@ function setup(t, fetch = async () => ({ ok: true, clone: () => ({ text: async (
   const { window } = dom;
   const messages = [], selections = [];
   const previous = { languageCode: 'fr', kind: 'asr', vss_id: 'a.fr' };
-  window.ReactNativeWebView = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  window.__govuePageTransport = { postMessage: raw => messages.push(JSON.parse(raw)) };
   window.fetch = fetch;
   window.ytInitialPlayerResponse = { videoDetails: { videoId }, captions: { playerCaptionsTracklistRenderer: { captionTracks: [
     { vssId: 'a.en', languageCode: 'en', kind: 'asr' }, { vssId: 'a.fr', languageCode: 'fr', kind: 'asr' },
@@ -81,8 +83,6 @@ test('leaving a Native Shell document cancels both caption requests and allows a
   let finish;
   const env = setup(t, () => new Promise(resolve => { finish = resolve; }));
   const { window, messages } = env;
-  delete window.ReactNativeWebView;
-  window.__govuePageTransport = { postMessage: raw => messages.push(JSON.parse(raw)) };
   const bridge = window.__govueCaptions;
   bridge.request('reader:primary', task);
   bridge.request('reader:comparison', { ...task, taskId: 8 });

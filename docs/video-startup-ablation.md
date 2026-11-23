@@ -1,5 +1,7 @@
 # Android video startup ablation
 
+These measurements and reproduction steps describe the former React Native app. The original profiling tools are available at revision `71bb8e5`.
+
 ## Status and interpretation
 
 The controlled screen found and removed a regression: the temporary startup

@@ -91,7 +91,7 @@ pub(super) fn started(session: Option<&str>, chat: &str) {
         && session.is_some()
         && state.session.as_deref() == session
     {
-        // Correlate before spawning: a fast first reply may finish before React
+        // Correlate before spawning: a fast first reply may finish before the UI
         // receives its new conversation ID and renders the next snapshot.
         state.chat = Some(chat.into());
     }

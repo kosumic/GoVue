@@ -31,7 +31,7 @@ navigation. The renderer permits that first top-level local load, then rejects
 subsequent HTTPS navigation, including navigation to the same base URL. A
 replacement renderer gets a fresh initial-load allowance.
 
-The Pixel verification extracted 11 streams and two caption tracks from the
+The original React Native build’s Pixel verification extracted 11 streams and two caption tracks from the
 public video `jNQXAC9IVRw`, played it through Expo Video, downloaded a 309,288-byte
 audio file using the Rust transfer engine, and parsed six English caption lines.
 The download probe used a separate temporary store. An iPad mini live check
@@ -123,7 +123,7 @@ it does not wait for the web player's readiness event. That event still updates
 the embedded surface and provides a fallback trigger without duplicating work.
 Rust-accepted navigation selects the native video before the WebView URL
 callback. Android also starts the same preparation job from a validated OS
-watch link while React starts; playback claims that work after navigation is
+watch link at startup; playback claims that work after navigation is
 accepted. A late callback for the preceding URL cannot select the old video.
 Playback extracts guest configuration from a bounded 64 KiB page prefix and
 reuses that configuration and its guest cookies in memory for 90 seconds across

@@ -9,7 +9,7 @@
   let preparationTimer;
   let lastCandidate = '';
   const post = (action, payload = {}) =>
-    (window.__govuePageTransport ?? window.ReactNativeWebView)?.postMessage(
+    window.__govuePageTransport?.postMessage(
       JSON.stringify({
         type: 'litube',
         action,

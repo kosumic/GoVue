@@ -9,7 +9,7 @@ test('video-card capture starts preparation before navigation through the shared
   });
   const { window } = dom;
   const messages = [];
-  window.ReactNativeWebView = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  window.__govuePageTransport = { postMessage: raw => messages.push(JSON.parse(raw)) };
   try {
     window.eval(readFileSync('scripts/browser-adapter.js', 'utf8'));
     window.__govueBrowser.setDocumentGeneration(42);
@@ -40,7 +40,7 @@ test('the active feed offers one visible video for preparation before a tap', as
   const [visible, below] = window.document.querySelectorAll('a');
   window.document.elementFromPoint = (_, y) => y < window.innerHeight / 2 ? visible : below;
   const messages = [];
-  window.ReactNativeWebView = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  window.__govuePageTransport = { postMessage: raw => messages.push(JSON.parse(raw)) };
   try {
     window.eval(readFileSync('scripts/browser-adapter.js', 'utf8'));
     window.__govueBrowser.setDocumentGeneration(42);
@@ -64,7 +64,7 @@ test('Chat survives bottom bar replacement and works when Trusted Types blocks H
   });
   const { window } = dom;
   const messages = [];
-  window.ReactNativeWebView = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  window.__govuePageTransport = { postMessage: raw => messages.push(JSON.parse(raw)) };
   const html = Object.getOwnPropertyDescriptor(window.Element.prototype, 'innerHTML');
   Object.defineProperty(window.Element.prototype, 'innerHTML', { get: html.get, set() { throw Error('TrustedHTML required'); }, configurable: true });
   try {

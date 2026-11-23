@@ -160,7 +160,7 @@ cached and late results cannot update another card.
 
 Rust selects indexed AAC audio,
 downloads its initialization and caption-overlapping fMP4 segments using bounded
-requests, and serves a local HLS clip to Expo Video. Subsequent plays use the
+requests, and serves a local HLS clip to the native player. Subsequent plays use the
 cached bytes, including after restart. Caption start/end offsets limit playback;
 the cache includes the complete overlapping media segments. Current captions
 provide line-level timing, so games should use short spoken phrases.

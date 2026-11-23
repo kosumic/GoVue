@@ -74,9 +74,8 @@ when its duration or the next caption supplies a valid end boundary. It shares
 the reader and games' lazy video-caption audio cache; words in the same caption
 reuse downloaded fragments.
 
-The first translation may download a language model. Android uses ML Kit through
-`expo-translate-text`; iOS translation requires iOS 18 or newer. Rebuild the native
-app after adding or changing the translation module.
+The first translation may download a language model. Android uses ML Kit. On iOS, GoVue uses Apple’s
+Translation framework and requires iOS 18 or newer for translation.
 
 ## Open a video conversation
 
@@ -212,9 +211,7 @@ falls back to draft vocabulary after 1.5 seconds. Android finishes on a pause;
 iOS supports continuous dictation until stopped. GoVue does not save audio
 recordings.
 
-Voice input uses `expo-speech-recognition`. Rebuild the native app after adding
-or changing the dependency so the speech module and microphone permissions are
-included.
+Voice input uses Android’s SpeechRecognizer and Apple’s Speech framework.
 
 ## Listen to a response
 

@@ -165,7 +165,7 @@ fn launch_preparation(control: &Control) {
     }
     let id = "launchVid01";
     control.block(id);
-    // Android can prepare before a browser document or React navigation exists.
+    // Android can prepare before a browser document or UI navigation exists.
     call(
         root,
         launch("Shared video: https://youtu.be/launchVid01?t=372"),

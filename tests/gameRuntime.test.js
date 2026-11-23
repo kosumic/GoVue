@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { gameDocument, scriptJSON } from '../src/ai/gameRuntime.js';
 
-const colors = { dark: true, background: '#0F0F0F', ink: '#FFFFFF', muted: '#AAAAAA', accent: '#FFFFFF', raised: '#272727' };
+const shellTemplate = readFileSync(new URL('../native-shell/app/src/game_shell.html', import.meta.url), 'utf8');
+const frameTemplate = readFileSync(new URL('../native-shell/app/src/game_frame.html', import.meta.url), 'utf8');
 
 function runtime(t, extra = {}) {
   const requests = [];
@@ -13,15 +14,20 @@ function runtime(t, extra = {}) {
       document.querySelector('#choose').onclick = () => game.dispatch('choose', { id: 'a' }).then(state => window.result = state.answer).catch(error => document.querySelector('#error').textContent = error.message);`,
     ...extra,
   };
-  const host = new JSDOM(gameDocument({ definition, state: { answer: 'Ready' }, cues: [], session: 'fixture', colors }), {
-    runScripts: 'dangerously', beforeParse(window) { window.ReactNativeWebView = { postMessage() {} }; },
+  const host = new JSDOM(shellTemplate, {
+    runScripts: 'dangerously', beforeParse(window) {
+      window.__GOVUE_SESSION__ = 'fixture';
+      window.__GOVUE_FRAME__ = frameTemplate;
+      window.GoVueGame = { postMessage() {} };
+    },
   });
   host.window.postMessage = message => requests.push(message);
   const frame = new JSDOM(host.window.document.querySelector('iframe').srcdoc, {
     runScripts: 'dangerously', beforeParse(window) {
       Object.defineProperty(window, 'parent', { value: host.window });
-      window.ReactNativeWebView = { postMessage() { throw Error('Direct native bridge used'); } };
-      window.webkit = { messageHandlers: { ReactNativeWebView: {} } };
+      window.__GOVUE_SPEC__ = { ...definition, state: { answer: 'Ready' }, cues: [] };
+      window.GoVueGame = { postMessage() { throw Error('Direct native bridge used'); } };
+      window.webkit = { messageHandlers: { govueGame: {} } };
     },
   });
   const reply = (value, source = host.window) => frame.window.dispatchEvent(new frame.window.MessageEvent('message', { source, data: { v: 1, ...value } }));
@@ -34,7 +40,7 @@ test('generated UI dispatches actions, accepts correlated host state, and displa
   const document = frame.window.document;
   assert.equal(document.querySelector('#answer').textContent, 'Ready');
   assert.equal(Object.isFrozen(frame.window.game), true);
-  assert.equal(frame.window.ReactNativeWebView, undefined);
+  assert.equal(frame.window.GoVueGame, undefined);
   assert.equal(frame.window.webkit, undefined);
   document.querySelector('#choose').click();
   const action = requests.find(message => message.method === 'action');
@@ -53,12 +59,11 @@ test('generated UI dispatches actions, accepts correlated host state, and displa
   assert.equal(document.querySelector('#error').textContent, 'That choice is unavailable.');
 });
 
-test('caption and script delimiters remain data and cannot inject a host script', t => {
+test('the game frame displays literal caption text', t => {
   const caption = '</script><script>window.injected = true</script>\u2028你好';
-  assert.equal(Function(`return ${scriptJSON(caption)}`)(), caption);
   const { host, frame } = runtime(t, {
     html: '<p id="caption"></p>',
-    script: `document.querySelector('#caption').textContent = ${scriptJSON(caption)};`,
+    script: `document.querySelector('#caption').textContent = ${JSON.stringify(caption)};`,
   });
   assert.equal(frame.window.document.querySelector('#caption').textContent, caption);
   assert.equal(host.window.injected, undefined);

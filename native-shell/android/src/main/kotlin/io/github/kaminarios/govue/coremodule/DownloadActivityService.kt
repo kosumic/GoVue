@@ -8,7 +8,7 @@ import android.content.Intent
 import android.app.Service
 import android.os.IBinder
 
-/** Keeps Rust workers eligible for background execution; no React timers are needed. */
+/** Keeps Rust workers eligible for background execution. */
 class DownloadActivityService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
   companion object { @Volatile var activeCount=0; private set }

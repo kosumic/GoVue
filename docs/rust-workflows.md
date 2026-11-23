@@ -1,8 +1,8 @@
 # Shared workflow ownership
 
-React Native renders snapshots and adapts view lifetime, permissions, sharing,
-WebView execution, and Expo Video calls. Workflow rules and application state live
-in Rust. The native adapters expose bounded platform effects through UniFFI.
+Native Shell renders the shared Rust screens. The platform hosts provide WebViews,
+media playback, permissions, sharing, and notifications. Workflow rules and
+application state live in the Rust core.
 
 ## Downloads
 
@@ -13,23 +13,19 @@ Transfers use the Rust range engine. HTTPS, capability checks, MP4 remuxing, OS
 publication, and Android foreground-service notifications remain native effects.
 Native callbacks run outside the core and storage locks.
 
-The React hook subscribes to `coreUpdate` notifications and requests snapshots.
-It has no polling timers or transfer orchestration. Android's service no longer
-starts a headless JavaScript task. Work remains subject to OS process lifetime;
-after process interruption, the existing restore policy pauses incomplete jobs.
+The downloads screen observes core updates and reloads its snapshot. After a
+process interruption, the restore policy pauses incomplete jobs.
 
 ## Playback and browser boundaries
 
 `core/src/player/session.rs` owns startup eligibility, retry cooldowns,
 preparation and replacement identities, quality transitions, and remembered
-preferences. React serializes and executes Expo Video effects, then acknowledges
-successful replacements. Stale generations cannot replace the selected video.
+preferences. The Native Shell runtime coordinates video replacement with the platform player. Stale generations cannot replace the selected video.
 
 The synchronous `state_execute` boundary performs only bounded memory operations.
 It also normalizes browser input, identifies YouTube videos, and validates layout
 and playback-position messages. DOM access and geometry used for rendering stay
-in JavaScript. `core/src/player/defaults.json` supplies the same initial defaults
-to Rust and React Native.
+in JavaScript. `core/src/player/defaults.json` supplies the initial player preferences.
 
 ## Transcripts and caption audio
 
@@ -38,8 +34,8 @@ documents, retains a usable primary while a comparison loads, and cancels replac
 requests. Snapshots contain normalized transcripts only.
 
 `core/src/ai/audio_requests.rs` shares in-flight caption preparation and owns media
-resolution, refresh retries, cancellation, and late-route revocation. Expo Video
-continues to own audio playback and presentation of its progress.
+resolution, refresh retries, cancellation, and late-route revocation. The platform player
+plays the audio and reports its position.
 
 Background workflows use the same extraction jobs as interactive requests.
 `TokenRuntime` responds to native notifications and executes only BotGuard tasks;
@@ -52,20 +48,17 @@ longer built or installed.
 `core/src/ai/chat_sessions.rs` serializes sends and cancellation per UI session,
 rejects superseded generations, and owns deferred game-feedback prompts. Saved
 game progress updates the Rust streaming projection, so later polls include the
-authoritative revisions. React applies revisioned deltas and guards its own
-rendering callbacks against a dismissed or changed view.
+authoritative revisions. The UI uses the current chat session to display updates.
 
 `core/src/ai/notifications.rs` decides whether a saved, successful reply needs an
 alert, correlates a newly created chat before its worker starts, and suppresses
 alerts for the foreground conversation. Native lifecycle callbacks update
-foreground state even when JavaScript is suspended. Kotlin and Swift present
-generic local notifications with opaque chat IDs; revisioned effects prevent an
-old presentation from overtaking dismissal. Native launch queues retain taps
-until React can open the conversation, including after a cold launch. Closing
+foreground state. The platform hosts present generic local notifications with
+opaque chat IDs and deliver taps to the app, including after a cold launch. Closing
 chat keeps the response running; Stop and changing conversation/video still
 cancel the owned request.
 
-## Verification
+## Verification of the former React Native app
 
 Verified on 2026-10-20 using an Android arm64 debug build and an iPhone 17 Pro
 simulator Release build over SSH to `mini`. Live checks covered real YouTube
@@ -74,7 +67,7 @@ offline playback, and caption audio preparation/playback. Chat queueing and
 cancellation used a temporary loopback Responses server with dummy credentials.
 The real app's player controls also opened the rendered transcript reader.
 
-`npm run check` and `npx expo install --check` pass. Rust regressions cover browser
+`npm run check` and `npx expo install --check` passed for that build. Rust regressions cover browser
 message bounds/correlation, startup policy and stale generations, transcript
 release-before-load/disposal, chat cancellation ownership, cached caption audio,
 and download scheduling, Wi-Fi gating, pause/cancel, export, and file retention.

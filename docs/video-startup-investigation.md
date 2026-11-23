@@ -1,5 +1,7 @@
 # Video startup investigation and fixes
 
+These measurements and reproduction steps describe the former React Native app. The original profiling tools are available at revision `71bb8e5`.
+
 Current measurements and release decisions are in the
 [ablation study](video-startup-ablation.md). It found that the startup cap
 caused rebuffering even when the initial resolution was already 480p; the

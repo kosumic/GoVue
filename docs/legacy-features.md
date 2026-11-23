@@ -1,4 +1,6 @@
-# GoVue
+# Historical GoVue features
+
+This document describes the retired React Native app. See the [current build instructions](../README.md#development) for Native Shell.
 
 A mobile WebView browser with a YouTube transcript reader, built with **React Native + a shared Rust core** for Android and iOS. It is independent of `../herdr-android`. Litube was reviewed as a reference; no Litube source was copied.
 

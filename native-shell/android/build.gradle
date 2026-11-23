@@ -43,12 +43,9 @@ android {
 
     sourceSets.main {
         java.srcDir nshJava
-        java.srcDir "../../modules/govue-core/android/src/shared/java"
         jniLibs.srcDir nativeInputs.dir("jniLibs").asFile
         res.srcDir nativeInputs.dir("res").asFile
-        res.srcDir "../../modules/govue-core/android/src/main/res"
     }
-    sourceSets.main.kotlin.srcDir "../../modules/govue-core/android/src/shared/kotlin"
 
     signingConfigs {
         if (!preview && keyStore) {

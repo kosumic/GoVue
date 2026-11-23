@@ -4,7 +4,7 @@ import { WebPoMinter } from 'bgutils-js/webpo';
 // Network and native APIs are unavailable in this dedicated renderer. Rust
 // fetches challenge bytes and owns each job; this adapter only executes them.
 const signals = new Map();
-const post = reply => (window.__govueTokenTransport ?? window.ReactNativeWebView)?.postMessage(JSON.stringify(reply));
+const post = reply => window.__govueTokenTransport?.postMessage(JSON.stringify(reply));
 const release = requestId => {
   const state = signals.get(requestId);
   signals.delete(requestId);
