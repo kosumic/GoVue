@@ -817,13 +817,15 @@ impl WatchPlayback {
             return;
         };
         let token = attempt.token;
+        let fresh = self.video.with_untracked(Option::is_some)
+            || self.error.with_untracked(Option::is_some);
         self.preparing.set(true);
         self.error.set(None);
         let controller = self.clone();
         let task = self.owner.run(|| {
             spawn(async move {
                 let result = controller
-                    .prepare(&watch, attempt, settings, selection.as_ref())
+                    .prepare(&watch, attempt, settings, selection.as_ref(), fresh)
                     .await;
                 if !controller
                     .session("finish", json!({"token":token}))
@@ -865,22 +867,31 @@ impl WatchPlayback {
         attempt: Attempt,
         mut settings: Map<String, Value>,
         selection: Option<&PlaybackSelection>,
+        fresh: bool,
     ) -> Result<(), CoreError> {
         let previous = self.status.get_untracked();
-        let position = if let Some(previous) = &previous {
-            Some(previous.position)
-        } else {
-            self.probe_position(watch, attempt.token).await
-        };
-        self.page.borrow_mut().displayed = true;
-        watch.native_player(true);
         let agent = self.page.borrow().user_agent.clone();
-        let catalog = tokio::select! {
-            catalog = self.core.resolve_media(watch.video_id.clone(), agent.clone(), true) => catalog?,
-            () = timer(Duration::from_secs(95)) => {
-                return Err(CoreError::Request("YouTube extraction timed out. Try again.".into()));
+        let (position, catalog) = tokio::join!(
+            async {
+                let position = if let Some(previous) = &previous {
+                    Some(previous.position)
+                } else {
+                    self.probe_position(watch, attempt.token).await
+                };
+                self.page.borrow_mut().displayed = true;
+                watch.native_player(true);
+                position
+            },
+            async {
+                tokio::select! {
+                    catalog = self.core.resolve_media(watch.video_id.clone(), agent.clone(), fresh) => catalog,
+                    () = timer(Duration::from_secs(95)) => {
+                        Err(CoreError::Request("YouTube extraction timed out. Try again.".into()))
+                    }
+                }
             }
-        };
+        );
+        let catalog = catalog?;
         if catalog["videoId"] != watch.video_id {
             return Err(CoreError::Request(
                 "The video changed during extraction.".into(),

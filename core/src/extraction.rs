@@ -825,6 +825,9 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
             if kind == "media"
                 && claim_preparation(&mut jobs, root, id, request, command["fresh"] == true)
             {
+                drop(jobs);
+                // Native renderers only service claimed jobs. A token task may already be waiting.
+                crate::changed("extraction-token");
                 return Ok(json!({"done":false,"prepared":true}));
             }
             if preparing && let Some(previous) = jobs.remove(&key) {
