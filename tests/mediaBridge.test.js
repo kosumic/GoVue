@@ -6,7 +6,7 @@ import { MEDIA_BRIDGE } from '../src/youtube/mediaBridge.js';
 const videoId = 'abcdefghijk';
 const otherVideoId = '0123456789a';
 
-function setup() {
+function setup({ bound = true } = {}) {
   const dom = new JSDOM('<!doctype html><div id="movie_player"><video></video></div><section id="comments"></section>', {
     url: `https://m.youtube.com/watch?v=${videoId}`, runScripts: 'outside-only', pretendToBeVisual: true,
   });
@@ -17,7 +17,8 @@ function setup() {
   const rect = { left: 0, top: 48, width: 400, height: 225 };
   let occluded = false;
   Object.defineProperties(window, { innerWidth: { value: 400 }, innerHeight: { value: 700 } });
-  window.ReactNativeWebView = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  const transport = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  if (bound) window.ReactNativeWebView = transport;
   window.fetch = async () => { throw Error('Layout tracking must not request media'); };
   window.HTMLMediaElement.prototype.pause = () => {};
   player.pauseVideo = () => {};
@@ -25,9 +26,29 @@ function setup() {
   player.getBoundingClientRect = () => rect;
   window.document.elementFromPoint = () => occluded ? comments : player;
   window.eval(MEDIA_BRIDGE);
-  return { window, player, rect, messages, occlude: value => { occluded = value; },
+  return { window, player, rect, messages, bind: () => { window.__govuePageTransport = transport; },
+    occlude: value => { occluded = value; },
     layout: () => messages.filter(m => m.type === 'playerLayout').at(-1), close: () => window.close() };
 }
+
+test('reports the current video as soon as the transport binds or its metadata arrives', () => {
+  const env = setup({ bound: false });
+  const ready = () => env.messages.filter(message => message.type === 'mediaReady');
+  try {
+    assert.deepEqual(ready(), []);
+    env.bind();
+    env.window.__govueMedia.configure({});
+    assert.deepEqual(ready(), [{ type: 'mediaReady', videoId }]);
+
+    env.window.history.pushState({}, '', `/watch?v=${otherVideoId}`);
+    const video = env.player.querySelector('video');
+    video.dispatchEvent(new env.window.Event('durationchange'));
+    assert.equal(ready().length, 1, 'the previous player cannot report readiness for this URL');
+    env.player.getPlayerResponse = () => ({ videoDetails: { videoId: otherVideoId } });
+    video.dispatchEvent(new env.window.Event('loadedmetadata'));
+    assert.deepEqual(ready().at(-1), { type: 'mediaReady', videoId: otherVideoId });
+  } finally { env.close(); }
+});
 
 test('reports the inline video slot and follows scrolling without resizing the page player', async () => {
   const env = setup();

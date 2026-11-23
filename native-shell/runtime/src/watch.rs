@@ -895,32 +895,6 @@ impl WatchPlayback {
     ) -> Result<(), CoreError> {
         let previous = self.status.get_untracked();
         let agent = self.page.borrow().user_agent.clone();
-        let (position, catalog) = tokio::join!(
-            async {
-                let position = if let Some(previous) = &previous {
-                    Some(previous.position)
-                } else {
-                    self.probe_position(watch, attempt.token).await
-                };
-                self.page.borrow_mut().displayed = true;
-                watch.native_player(true);
-                position
-            },
-            async {
-                tokio::select! {
-                    catalog = self.core.resolve_media(watch.video_id.clone(), agent.clone(), fresh) => catalog,
-                    () = timer(Duration::from_secs(95)) => {
-                        Err(CoreError::Request("YouTube extraction timed out. Try again.".into()))
-                    }
-                }
-            }
-        );
-        let catalog = catalog?;
-        if catalog["videoId"] != watch.video_id {
-            return Err(CoreError::Request(
-                "The video changed during extraction.".into(),
-            ));
-        }
         settings.extend(attempt.settings);
         let mut quality = (attempt.height, attempt.fps);
         let current = self.video.get_untracked();
@@ -934,30 +908,21 @@ impl WatchPlayback {
             Some(PlaybackSelection::Audio(key)) => audio_key = key,
             None => {}
         }
-        let request = PlaybackRequest {
-            catalog: &catalog,
-            height: quality.0,
-            fps: quality.1,
-            audio_key,
-            user_agent: &agent,
-            allow_fallback: selection.is_none(),
-        };
-        let source = if cfg!(target_os = "ios") {
-            PlaybackSource::prepare_ios(&self.core, request).await?
-        } else {
-            PlaybackSource::prepare_android(&self.core, request).await?
-        };
+        let (position, prepared) = tokio::join!(
+            async {
+                let position = if let Some(previous) = &previous {
+                    Some(previous.position)
+                } else {
+                    self.probe_position(watch, attempt.token).await
+                };
+                self.page.borrow_mut().displayed = true;
+                watch.native_player(true);
+                position
+            },
+            self.prepare_source(&watch.video_id, &agent, quality, audio_key, selection.is_none(), fresh)
+        );
+        let (catalog, source, qualities) = prepared?;
         let live = catalog["live"] == true;
-        let qualities = if live {
-            Vec::new()
-        } else {
-            self.core
-                .execute::<Vec<VideoQuality>>(
-                    json!({"op":"media_playback_choices","catalog":catalog}),
-                )
-                .await
-                .unwrap_or_default()
-        };
         let previous = self.status.get_untracked().or(previous);
         let position = if previous.is_some() && !live {
             previous.as_ref().map(|status| status.position)
@@ -1018,6 +983,52 @@ impl WatchPlayback {
         }));
         self.catalog.set(Some((generation, Rc::new(catalog))));
         Ok(())
+    }
+
+    async fn prepare_source(
+        &self,
+        video_id: &str,
+        agent: &str,
+        quality: (u32, u32),
+        audio_key: &str,
+        allow_fallback: bool,
+        fresh: bool,
+    ) -> Result<(Value, PlaybackSource, Vec<VideoQuality>), CoreError> {
+        let catalog = tokio::select! {
+            catalog = self.core.resolve_media(video_id.to_owned(), agent.to_owned(), fresh) => catalog?,
+            () = timer(Duration::from_secs(95)) => {
+                return Err(CoreError::Request("YouTube extraction timed out. Try again.".into()));
+            }
+        };
+        if catalog["videoId"] != video_id {
+            return Err(CoreError::Request(
+                "The video changed during extraction.".into(),
+            ));
+        }
+        let request = PlaybackRequest {
+            catalog: &catalog,
+            height: quality.0,
+            fps: quality.1,
+            audio_key,
+            user_agent: agent,
+            allow_fallback,
+        };
+        let source = if cfg!(target_os = "ios") {
+            PlaybackSource::prepare_ios(&self.core, request).await?
+        } else {
+            PlaybackSource::prepare_android(&self.core, request).await?
+        };
+        let qualities = if catalog["live"] == true {
+            Vec::new()
+        } else {
+            self.core
+                .execute::<Vec<VideoQuality>>(
+                    json!({"op":"media_playback_choices","catalog":catalog}),
+                )
+                .await
+                .unwrap_or_default()
+        };
+        Ok((catalog, source, qualities))
     }
 
     async fn probe_position(&self, watch: &WatchDocument, token: u64) -> Option<f64> {
