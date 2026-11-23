@@ -1,5 +1,5 @@
 plugins {
-    id "com.android.application" version "9.2.1"
+    id "com.android.application" version "9.5.2"
 }
 
 def source = providers.environmentVariable("GOVUE_NSH_ANDROID_JAVA")
@@ -80,14 +80,14 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:5.5.1"
     implementation "com.google.mlkit:translate:17.0.3"
     implementation "com.google.mlkit:barcode-scanning:17.3.0"
-    implementation "androidx.camera:camera-camera2:1.6.0"
-    implementation "androidx.camera:camera-lifecycle:1.6.0"
-    implementation "androidx.camera:camera-view:1.6.0"
+    implementation "androidx.camera:camera-camera2:1.7.0"
+    implementation "androidx.camera:camera-lifecycle:1.7.0"
+    implementation "androidx.camera:camera-view:1.7.0"
     constraints {
         implementation("androidx.arch.core:core-runtime:2.2.0") {
             because "Align ML Kit's transitive Lifecycle runtime with AndroidX core-common"
         }
-        implementation("androidx.appcompat:appcompat:1.7.1") {
+        implementation("androidx.appcompat:appcompat:1.8.0") {
             because "Keep the CameraX preview and AppCompat resources on the same release"
         }
         implementation("androidx.core:core-ktx:1.13.1") {
