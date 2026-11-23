@@ -724,7 +724,6 @@ fn launch_cover(ready: impl Fn() -> bool + 'static) -> NativeView {
         .size(px(1.0))
         .opacity(0.0)
         .pointer_events(nsh_core::PointerEvents::None)
-        .prop("dark", move || Value::Bool(dark()))
         .prop("ready", move || Value::Bool(ready()))
 }
 

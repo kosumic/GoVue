@@ -1,9 +1,8 @@
 <resources>
     <style name="Theme.GoVue.Starting" parent="Theme.GoVue.Starting.Platform" />
-    <style name="Theme.GoVue.Starting.Platform" parent="Theme.GoVue.Base">
+    <style name="Theme.GoVue.Starting.Platform" parent="Theme.GoVue.Splash">
         <item name="android:windowSplashScreenBackground">@color/govue_launch_background</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/govue_splash_mark</item>
-        <item name="android:windowSplashScreenIconBackgroundColor">@color/govue_background_light</item>
-        <item name="android:windowLightNavigationBar">@bool/govue_dark_status_icons</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>

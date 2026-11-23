@@ -1,3 +1,4 @@
+<!-- Center the original 200dp image in Android's 288dp splash canvas. -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
     android:drawable="@drawable/govue_icon"
-    android:inset="32%" />
+    android:inset="15.277778%" />

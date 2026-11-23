@@ -1,15 +1,17 @@
 <resources>
-    <color name="govue_background_light">#FFFFFF</color>
-    <color name="govue_background_dark">#0F0F0F</color>
-    <color name="govue_launch_background">@color/govue_background_light</color>
-    <bool name="govue_dark_status_icons">true</bool>
-    <dimen name="govue_launch_icon_size">160dp</dimen>
+    <color name="govue_launch_background">#FFFFFF</color>
+    <color name="govue_window_background">#FFFFFF</color>
+    <dimen name="govue_launch_icon_size">200dp</dimen>
 
-    <style name="Theme.GoVue.Starting" parent="Theme.GoVue.Base" />
+    <style name="Theme.GoVue.Starting" parent="Theme.GoVue.Splash" />
+    <style name="Theme.GoVue.Splash" parent="Theme.GoVue.Base">
+        <item name="android:windowBackground">@drawable/govue_launch_window</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
     <style name="Theme.GoVue.Base" parent="@android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/govue_launch_background</item>
+        <item name="android:windowBackground">@color/govue_window_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">@bool/govue_dark_status_icons</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
