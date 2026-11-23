@@ -57,6 +57,7 @@ import java.util.Map;
 /** Media3 decoding and presentation for the Rust-owned GoVue player. */
 @UnstableApi
 public final class VideoPlayer implements NshComponent {
+    private static final long PRELOAD_DURATION_MS = 4000;
     private record StagedMedia(MediaItem item, String uri, long position) {}
 
     private final NshComponentContext context;
@@ -111,7 +112,8 @@ public final class VideoPlayer implements NshComponent {
         int buffer = DefaultLoadControl.DEFAULT_MAX_BUFFER_MS;
         preloadBuilder = new DefaultPreloadManager.Builder(context.getContext(), ignored ->
                 staged == null ? DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_NOT_PRELOADED
-                        : DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(staged.position(), 2000))
+                        : DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(
+                                staged.position(), PRELOAD_DURATION_MS))
                 .setRenderersFactory(renderers)
                 .setTrackSelectorFactory(ctx -> new DefaultTrackSelector(ctx, new StartupTrackSelection()))
                 .setLoadControl(new DefaultLoadControl.Builder()
