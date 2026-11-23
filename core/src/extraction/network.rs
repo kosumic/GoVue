@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 pub(super) static HTTP: OnceLock<Box<dyn ExtractionHttp>> = OnceLock::new();
+static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
 
 pub(super) fn allowed_address(raw: &str, interpreter: bool) -> Result<()> {
     let url = Url::parse(raw).map_err(|_| "Invalid extraction address.")?;
@@ -129,13 +130,15 @@ pub(super) fn fetch_response_bounded(
     let reply = if let Some(http) = HTTP.get() {
         http.request(request)
     } else {
-        // Host CLI uses the same bounded contract as Android/iOS.
-        let agent = ureq::Agent::config_builder()
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(15)))
-            .build()
-            .new_agent();
+        // Reuse HTTPS connections across requests. Cookies stay in the job's headers.
+        let agent = AGENT.get_or_init(|| {
+            ureq::Agent::config_builder()
+                .max_redirects(0)
+                .http_status_as_error(false)
+                .timeout_global(Some(Duration::from_secs(15)))
+                .build()
+                .new_agent()
+        });
         let mut call = ureq::http::Request::builder()
             .method(request.method.as_str())
             .uri(&request.url);
