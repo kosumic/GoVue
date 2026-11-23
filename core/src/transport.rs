@@ -27,7 +27,7 @@ pub(crate) struct Source {
     mime: String,
     post: AtomicBool,
     redirected: Mutex<Option<String>>,
-    startup: Option<Arc<[u8]>>,
+    startup: Option<Arc<[startup::Range]>>,
 }
 impl Source {
     pub(crate) fn length(&self) -> u64 {
@@ -318,16 +318,23 @@ struct Body {
 impl Body {
     fn fill(&mut self) -> io::Result<()> {
         let mut end = (self.next + self.chunk - 1).min(self.end);
-        if let Some(bytes) = &self.source.startup
-            && self.next < bytes.len() as u64
-        {
-            let _span = crate::trace::Section::begin(c"GoVue transport: prefetched bytes");
-            end = end.min(bytes.len() as u64 - 1);
-            self.bytes = Box::new(io::Cursor::new(
-                bytes[self.next as usize..=end as usize].to_vec(),
-            ));
+        if let Some(range) = self.source.startup.as_ref().and_then(|ranges| {
+            ranges
+                .iter()
+                .find(|range| (range.start..range.end()).contains(&self.next))
+        }) {
+            let _span = crate::trace::Section::begin(if range.start == 0 {
+                c"GoVue transport: prefetched bytes"
+            } else {
+                c"GoVue transport: prefetched resume bytes"
+            });
+            end = end.min(range.end() - 1);
+            let from = usize::try_from(self.next - range.start).map_err(io::Error::other)?;
+            let through = usize::try_from(end - range.start).map_err(io::Error::other)?;
+            self.bytes = Box::new(io::Cursor::new(range.bytes[from..=through].to_vec()));
         } else {
             self.bytes = streaming::open(&self.source, self.next, end)?;
+            self.chunk = (self.chunk * 2).min(CHUNK);
         }
         // Receive a small prefix before sending success, without waiting for
         // an entire range when the platform supports incremental byte reads.
@@ -342,7 +349,6 @@ impl Body {
         prefix.truncate(count);
         self.prefix = io::Cursor::new(prefix);
         self.next = end + 1;
-        self.chunk = (self.chunk * 2).min(CHUNK);
         Ok(())
     }
 }

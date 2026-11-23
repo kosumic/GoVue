@@ -31,6 +31,14 @@ impl WatchDocument {
         let video = json!(self.video_id);
         self.inject(&format!("window.__govueMedia?.native({video},{enabled});"));
     }
+
+    fn request_position(&self, request: &str) {
+        let request = json!(request);
+        let video = json!(self.video_id);
+        self.inject(&format!(
+            "window.__govue?.position({request},{video},true);"
+        ));
+    }
 }
 
 #[derive(Deserialize)]
@@ -54,6 +62,7 @@ struct Page {
     pending: Option<(u64, Spawned<()>)>,
     position: Option<PositionRequest>,
     displayed: bool,
+    bridge_ready: bool,
     media_ready: bool,
 }
 
@@ -548,8 +557,13 @@ impl WatchPlayback {
             return;
         }
         match event {
-            BrowserEvent::Navigation { document, .. } | BrowserEvent::Ready { document } => {
+            BrowserEvent::Navigation { document, .. } => {
                 self.change_document(Some((tab, document.clone())), false);
+            }
+            BrowserEvent::Ready { document } => {
+                self.change_document(Some((tab, document.clone())), false);
+                self.page.borrow_mut().bridge_ready = true;
+                self.maybe_start();
             }
             BrowserEvent::Error { .. } => self.change_document(None, false),
             BrowserEvent::PageMessage {
@@ -644,11 +658,18 @@ impl WatchPlayback {
                 }
             }
             Some("mediaReady") => {
-                let displayed = {
+                let (displayed, pending_position) = {
                     let mut page = self.page.borrow_mut();
                     page.media_ready = true;
-                    page.displayed || self.offline()
+                    (
+                        page.displayed || self.offline(),
+                        page.position.as_ref().map(|request| request.id.clone()),
+                    )
                 };
+                if let Some(request) = pending_position {
+                    // A probe started before the web player was available.
+                    watch.request_position(&request);
+                }
                 if displayed {
                     watch.native_player(true);
                 }
@@ -731,6 +752,7 @@ impl WatchPlayback {
             self.queue_target.set(None);
         }
         page.watch = next;
+        page.bridge_ready = false;
         page.media_ready = false;
         page.displayed = retain;
         if offline && let Some(watch) = &page.watch {
@@ -752,7 +774,7 @@ impl WatchPlayback {
         let Some(settings) = self.settings.get_untracked() else {
             return;
         };
-        let (id, pending, ready) = {
+        let (id, pending, ready, bridge_ready) = {
             let page = self.page.borrow();
             let Some(watch) = page.watch.as_ref() else {
                 return;
@@ -761,8 +783,10 @@ impl WatchPlayback {
                 watch.video_id.clone(),
                 page.pending.is_some(),
                 page.media_ready,
+                page.bridge_ready,
             )
         };
+        let ready = ready || (bridge_ready && self.core.playback_preloaded(&id));
         let requested = self.queue_target.with_untracked(|target| {
             target
                 .as_ref()
@@ -1003,16 +1027,13 @@ impl WatchPlayback {
             id: id.clone(),
             send,
         });
-        let escaped_id = json!(id);
-        let video = json!(watch.video_id);
-        watch.inject(&format!(
-            "window.__govue?.position({escaped_id},{video},true);"
-        ));
+        watch.request_position(&id);
         let position = tokio::select! {
             response = receive => response.ok().flatten(),
             () = timer(Duration::from_millis(500)) => None,
         };
         self.page.borrow_mut().position = None;
+        let escaped_id = json!(id);
         watch.inject(&format!("window.__govue?.cancelPosition({escaped_id});"));
         position
     }

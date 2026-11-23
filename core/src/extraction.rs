@@ -751,6 +751,60 @@ pub fn register_caption_page(
     page::set_registration(adapter, video, storage).map_err(|error| error.to_string())
 }
 
+struct ExtractionWork {
+    root: String,
+    video: String,
+    kind: String,
+    track: String,
+    audio: String,
+    fresh: bool,
+    speculative: bool,
+}
+
+impl ExtractionWork {
+    fn spawn(self, job: Arc<Job>) -> std::io::Result<thread::JoinHandle<()>> {
+        struct Running;
+        impl Drop for Running {
+            fn drop(&mut self) {
+                WORKERS.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
+        thread::Builder::new()
+            .name("youtube-extraction".into())
+            .spawn(move || {
+                let _running = Running;
+                let result = match self.kind.as_str() {
+                    "media" => catalog(&job, &self.root, &self.video, self.fresh),
+                    "chapters" => chapter_catalog(&job, &self.root, &self.video, self.fresh),
+                    _ => transcript(
+                        &job,
+                        &self.root,
+                        &self.video,
+                        &self.track,
+                        &self.audio,
+                        self.fresh,
+                    ),
+                };
+                let startup = self
+                    .speculative
+                    .then(|| result.as_ref().ok().cloned())
+                    .flatten();
+                if let Ok(mut output) = job.result.lock() {
+                    *output = Some(result);
+                }
+                if let Some(catalog) = startup
+                    && job.check().is_ok()
+                    && let Ok(settings) =
+                        crate::player::preferences::settings(&json!({}), &self.root)
+                {
+                    crate::transport::startup::warm(&self.root, &catalog, &settings, || {
+                        job.check().is_ok()
+                    });
+                }
+            })
+    }
+}
+
 pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
     let op = crate::string(command, "op")?;
     if op == "extract_page_register" {
@@ -871,47 +925,16 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 wake: Condvar::new(),
             });
             jobs.insert(key.clone(), job.clone());
-            let (root, id, kind, track, audio_key, fresh) = (
-                root.to_owned(),
-                id.to_owned(),
-                kind.to_owned(),
-                track.to_owned(),
-                audio_key.to_owned(),
-                command["fresh"] == true,
-            );
-            let worker = job;
-            let speculative = preparing && command["speculative"] == true;
-            if thread::Builder::new()
-                .name("youtube-extraction".into())
-                .spawn(move || {
-                    struct Running;
-                    impl Drop for Running {
-                        fn drop(&mut self) {
-                            WORKERS.fetch_sub(1, Ordering::AcqRel);
-                        }
-                    }
-                    let _running = Running;
-                    let result = match kind.as_str() {
-                        "media" => catalog(&worker, &root, &id, fresh),
-                        "chapters" => chapter_catalog(&worker, &root, &id, fresh),
-                        _ => transcript(&worker, &root, &id, &track, &audio_key, fresh),
-                    };
-                    let startup = speculative.then(|| result.as_ref().ok().cloned()).flatten();
-                    if let Ok(mut output) = worker.result.lock() {
-                        *output = Some(result);
-                    }
-                    if let Some(catalog) = startup
-                        && worker.check().is_ok()
-                        && let Ok(settings) =
-                            crate::player::preferences::settings(&json!({}), &root)
-                    {
-                        crate::transport::startup::warm(&catalog, &settings, || {
-                            worker.check().is_ok()
-                        });
-                    }
-                })
-                .is_err()
-            {
+            let work = ExtractionWork {
+                root: root.to_owned(),
+                video: id.to_owned(),
+                kind: kind.to_owned(),
+                track: track.to_owned(),
+                audio: audio_key.to_owned(),
+                fresh: command["fresh"] == true,
+                speculative: preparing && command["speculative"] == true,
+            };
+            if work.spawn(job).is_err() {
                 WORKERS.fetch_sub(1, Ordering::AcqRel);
                 jobs.remove(&key);
                 return Err("Could not start YouTube extraction.".into());

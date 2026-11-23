@@ -112,6 +112,11 @@ pub use extraction::{
     register_caption_page, resolve_caption_track, resolve_media_catalog,
 };
 
+/// True when the selected video has its native startup ranges in memory.
+pub fn playback_preloaded(storage: &str, video_id: &str) -> bool {
+    transport::startup::ready(storage, video_id)
+}
+
 /// Releases an opaque loopback route after a native player retires its source.
 pub fn release_playback_route(uri: &str) {
     let _ = transport::release(&json!({"uri": uri}));

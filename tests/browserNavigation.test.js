@@ -30,6 +30,34 @@ test('video-card capture starts preparation before navigation through the shared
   } finally { window.close(); }
 });
 
+test('the active feed offers one visible video for preparation before a tap', async () => {
+  const dom = new JSDOM('<a href="/watch?v=abcdefghijk">Visible</a><a href="/watch?v=0123456789a">Below</a>', {
+    url: 'https://m.youtube.com/results?search_query=fixture',
+    runScripts: 'outside-only',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  const [visible, below] = window.document.querySelectorAll('a');
+  window.document.elementFromPoint = (_, y) => y < window.innerHeight / 2 ? visible : below;
+  const messages = [];
+  window.ReactNativeWebView = { postMessage: raw => messages.push(JSON.parse(raw)) };
+  try {
+    window.eval(readFileSync('scripts/browser-adapter.js', 'utf8'));
+    window.__govueBrowser.setDocumentGeneration(42);
+    window.__govueBrowser.configure({ adBlock: true });
+    window.dispatchEvent(new window.CustomEvent('tabVisibilityChanged', { detail: { active: true } }));
+    await new Promise(resolve => window.setTimeout(resolve, 550));
+    assert.deepEqual(messages.map(({ action, payload }) => ({ action, payload })), [
+      { action: 'prefetch', payload: { url: visible.href } },
+    ]);
+    window.dispatchEvent(new window.CustomEvent('tabVisibilityChanged', { detail: { active: false } }));
+    window.document.elementFromPoint = () => below;
+    window.dispatchEvent(new window.Event('scroll'));
+    await new Promise(resolve => window.setTimeout(resolve, 550));
+    assert.equal(messages.length, 1);
+  } finally { window.close(); }
+});
+
 test('Chat survives bottom bar replacement and works when Trusted Types blocks HTML insertion', async () => {
   const dom = new JSDOM('<ytm-pivot-bar-renderer><ytm-pivot-bar-item-renderer>Home</ytm-pivot-bar-item-renderer><ytm-pivot-bar-item-renderer>You</ytm-pivot-bar-item-renderer></ytm-pivot-bar-renderer>', {
     url: 'https://m.youtube.com/watch?v=abcdefghijk', runScripts: 'outside-only', pretendToBeVisual: true,

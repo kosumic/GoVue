@@ -53,6 +53,11 @@ public final class VideoPlayer implements NshComponent {
         @Override
         public void run() {
             if (!hasSource || destroyed) return;
+            if (firstFrame && startupHeight > 0 && player.getTotalBufferedDuration() >= 1000) {
+                startupHeight = 0;
+                player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                        .setMaxVideoSize(Integer.MAX_VALUE, Integer.MAX_VALUE).build());
+            }
             emitStatus();
             main.postDelayed(this, 250);
         }
@@ -136,11 +141,6 @@ public final class VideoPlayer implements NshComponent {
                     mark("GoVue playback: first height " + player.getVideoSize().height);
                 }
                 firstFrameMs = Math.max(0, renderTimeMs - sourceStartedAt);
-                if (startupHeight > 0) {
-                    startupHeight = 0;
-                    player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
-                            .setMaxVideoSize(Integer.MAX_VALUE, Integer.MAX_VALUE).build());
-                }
                 emit("firstFrame", Collections.emptyMap());
             }
         });

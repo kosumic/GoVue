@@ -139,6 +139,10 @@ impl Core {
         .await
     }
 
+    pub(crate) fn playback_preloaded(&self, video_id: &str) -> bool {
+        govue_core::playback_preloaded(&self.storage, video_id)
+    }
+
     pub async fn resolve_transcript(
         &self,
         video: String,
