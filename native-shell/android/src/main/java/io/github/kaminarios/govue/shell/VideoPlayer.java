@@ -2,9 +2,11 @@ package io.github.kaminarios.govue.shell;
 
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.os.Trace;
 import android.view.TextureView;
 import android.widget.FrameLayout;
 
@@ -15,9 +17,11 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.Player;
 import androidx.media3.common.Timeline;
+import androidx.media3.common.TrackGroup;
 import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.VideoSize;
+import androidx.media3.common.util.Clock;
 import androidx.media3.common.util.Log;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultDataSource;
@@ -25,10 +29,21 @@ import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.DecoderCounters;
+import androidx.media3.exoplayer.DecoderReuseEvaluation;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.chunk.MediaChunk;
+import androidx.media3.exoplayer.source.chunk.MediaChunkIterator;
+import androidx.media3.exoplayer.source.preload.DefaultPreloadManager;
+import androidx.media3.exoplayer.source.preload.PreloadException;
+import androidx.media3.exoplayer.source.preload.PreloadManagerListener;
+import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+import androidx.media3.exoplayer.upstream.BandwidthMeter;
 
+import com.google.common.collect.ImmutableList;
 import com.longbridge.nsh.NshComponent;
 import com.longbridge.nsh.NshComponentContext;
 import com.longbridge.nsh.NshView;
@@ -42,10 +57,19 @@ import java.util.Map;
 /** Media3 decoding and presentation for the Rust-owned GoVue player. */
 @UnstableApi
 public final class VideoPlayer implements NshComponent {
+    private static final long PRELOAD_DURATION_MS = 4000;
+    private record StagedMedia(MediaItem item, String uri, long position) {}
+
     private final NshComponentContext context;
     private final FrameLayout container;
     private final TextureView texture;
     private final ExoPlayer player;
+    private final DefaultPreloadManager.Builder preloadBuilder;
+    private DefaultPreloadManager preloadManager;
+    private StagedMedia staged;
+    private MediaItem adopted;
+    private long preloadSequence;
+    private boolean preloadFailed;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override
@@ -62,7 +86,7 @@ public final class VideoPlayer implements NshComponent {
     private boolean firstFrame;
     private boolean videoEnabled = true;
     private boolean destroyed;
-    private int startupHeight;
+    private volatile int startupHeight;
     private long sourceStartedAt;
     private Long firstFrameMs;
     private String videoDecoder;
@@ -86,13 +110,20 @@ public final class VideoPlayer implements NshComponent {
         DefaultRenderersFactory renderers = new DefaultRenderersFactory(context.getContext())
                 .forceEnableMediaCodecAsynchronousQueueing().setEnableDecoderFallback(true);
         int buffer = DefaultLoadControl.DEFAULT_MAX_BUFFER_MS;
-        player = new ExoPlayer.Builder(context.getContext(), renderers)
+        preloadBuilder = new DefaultPreloadManager.Builder(context.getContext(), ignored ->
+                staged == null ? DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_NOT_PRELOADED
+                        : DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(
+                                staged.position(), PRELOAD_DURATION_MS))
+                .setRenderersFactory(renderers)
+                .setTrackSelectorFactory(ctx -> new DefaultTrackSelector(ctx, new StartupTrackSelection()))
                 .setLoadControl(new DefaultLoadControl.Builder()
-                        .setBufferDurationsMs(buffer, buffer, 250, 250).build())
+                        .setBufferDurationsMsForLocalPlayback(buffer, buffer, 250, 250)
+                        .setBufferDurationsMsForStreaming(buffer, buffer, 750, 1500)
+                        .build());
+        player = preloadBuilder.buildExoPlayer(new ExoPlayer.Builder(context.getContext())
                 .setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
                         .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
-                .setHandleAudioBecomingNoisy(true)
-                .build();
+                .setHandleAudioBecomingNoisy(true));
         player.setVideoTextureView(texture);
         player.addListener(new Player.Listener() {
             @Override
@@ -100,6 +131,15 @@ public final class VideoPlayer implements NshComponent {
                 if (!isCurrent()) return;
                 if (events.contains(Player.EVENT_VIDEO_SIZE_CHANGED)) resize();
                 if (events.contains(Player.EVENT_TRACKS_CHANGED)) emitTracks();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Trace.isEnabled()) {
+                    if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+                        mark("GoVue playback: state " + owner.getPlaybackState());
+                        mark("GoVue playback: buffered " + owner.getTotalBufferedDuration());
+                    }
+                    if (events.contains(Player.EVENT_IS_PLAYING_CHANGED)) {
+                        mark("GoVue playback: playing " + owner.isPlaying());
+                    }
+                }
                 emitStatus();
             }
         });
@@ -115,20 +155,70 @@ public final class VideoPlayer implements NshComponent {
             }
 
             @Override
+            public void onVideoInputFormatChanged(EventTime event, Format format, DecoderReuseEvaluation reuse) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Trace.isEnabled() && isCurrent(event)) {
+                    mark("GoVue playback: selected height " + format.height);
+                }
+            }
+
+            @Override
             public void onRenderedFirstFrame(EventTime event, Object output, long renderTimeMs) {
                 if (!isCurrent(event) || !videoEnabled) return;
                 texture.setAlpha(1);
                 if (firstFrame) return;
                 firstFrame = true;
-                firstFrameMs = Math.max(0, renderTimeMs - sourceStartedAt);
-                if (startupHeight > 0) {
-                    startupHeight = 0;
-                    player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
-                            .setMaxVideoSize(Integer.MAX_VALUE, Integer.MAX_VALUE).build());
+                startupHeight = 0;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Trace.isEnabled()) {
+                    mark("GoVue playback: first frame");
+                    mark("GoVue playback: first position " + Math.max(0, player.getCurrentPosition()));
+                    mark("GoVue playback: first height " + player.getVideoSize().height);
                 }
+                firstFrameMs = Math.max(0, renderTimeMs - sourceStartedAt);
                 emit("firstFrame", Collections.emptyMap());
             }
         });
+    }
+
+    private final class StartupTrackSelection extends AdaptiveTrackSelection.Factory {
+        @Override
+        protected AdaptiveTrackSelection createAdaptiveTrackSelection(TrackGroup group, int[] tracks,
+                int type, BandwidthMeter bandwidth, ImmutableList<AdaptiveTrackSelection.AdaptationCheckpoint> checkpoints) {
+            int height = startupHeight;
+            if (height <= 0 || group.type != C.TRACK_TYPE_VIDEO) {
+                return super.createAdaptiveTrackSelection(group, tracks, type, bandwidth, checkpoints);
+            }
+            return new AdaptiveTrackSelection(group, tracks, type, bandwidth,
+                    AdaptiveTrackSelection.DEFAULT_MIN_DURATION_FOR_QUALITY_INCREASE_MS,
+                    AdaptiveTrackSelection.DEFAULT_MAX_DURATION_FOR_QUALITY_DECREASE_MS,
+                    AdaptiveTrackSelection.DEFAULT_MIN_DURATION_TO_RETAIN_AFTER_DISCARD_MS,
+                    AdaptiveTrackSelection.DEFAULT_MAX_WIDTH_TO_DISCARD,
+                    AdaptiveTrackSelection.DEFAULT_MAX_HEIGHT_TO_DISCARD,
+                    AdaptiveTrackSelection.DEFAULT_BANDWIDTH_FRACTION,
+                    AdaptiveTrackSelection.DEFAULT_BUFFERED_FRACTION_TO_LIVE_EDGE_FOR_QUALITY_INCREASE,
+                    checkpoints, Clock.DEFAULT) {
+                private boolean initial = true;
+
+                @Override
+                public void updateSelectedTrack(long position, long buffered, long available,
+                        List<? extends MediaChunk> queue, MediaChunkIterator[] iterators) {
+                    super.updateSelectedTrack(position, buffered, available, queue, iterators);
+                    initial = false;
+                }
+
+                @Override
+                protected boolean canSelectFormat(Format format, int bitrate, long budget) {
+                    // Start near the prefetched rendition. Normal adaptation can upgrade
+                    // once enough media is buffered, within the same sample stream.
+                    return initial ? format.height > 0 && format.height <= height
+                            : super.canSelectFormat(format, bitrate, budget);
+                }
+            };
+        }
+    }
+
+    private static void mark(String phase) {
+        Trace.beginSection(phase);
+        Trace.endSection();
     }
 
     @Override
@@ -147,12 +237,78 @@ public final class VideoPlayer implements NshComponent {
                 && load.get("generation") instanceof Number revision && revision.longValue() > generation) {
             replace(revision.longValue(), load);
         }
+        if (name.equals("preload")) {
+            try {
+                stage(value);
+            } catch (IllegalStateException | IllegalArgumentException failure) {
+                clearStaged();
+                mark("GoVue playback: preload unavailable");
+            }
+        }
+    }
+
+    private void stage(Object value) {
+        clearStaged();
+        if (hasSource || !(value instanceof Map<?, ?> load)
+                || !(load.get("source") instanceof Map<?, ?> source)
+                || !(source.get("uri") instanceof String uri) || !uri.startsWith("http://127.0.0.1:")
+                || !(load.get("position") instanceof Number position)) return;
+        if (preloadManager == null) {
+            preloadManager = preloadBuilder.build();
+            preloadManager.addListener(new PreloadManagerListener() {
+                @Override
+                public void onCompleted(MediaItem item) {
+                    if (staged != null && staged.item().equals(item)) mark("GoVue playback: preload ready");
+                }
+
+                @Override
+                public void onError(PreloadException error) {
+                    if (staged != null && staged.item().equals(error.mediaItem)) {
+                        preloadFailed = true;
+                        mark("GoVue playback: preload failed");
+                    }
+                }
+            });
+        }
+        preloadFailed = false;
+        startupHeight = startupHeight(source);
+        MediaItem item = mediaItem(source, uri, "govue-preload:" + ++preloadSequence);
+        staged = new StagedMedia(item, uri, millis(position));
+        mark("GoVue playback: preload samples");
+        preloadManager.add(mediaSource(source, item), 0);
+        preloadManager.invalidate();
+    }
+
+    private void clearStaged() {
+        if (staged == null) return;
+        MediaItem item = staged.item();
+        staged = null;
+        mark("GoVue playback: drop preloaded samples");
+        preloadManager.remove(item);
+    }
+
+    private MediaSource takeStaged(String uri, long position) {
+        if (staged == null) return null;
+        // Media3 reuses a queued period only at the exact requested position.
+        if (preloadFailed || !uri.equals(staged.uri()) || position != staged.position()) {
+            if (!preloadFailed) {
+                mark(uri.equals(staged.uri()) ? "GoVue playback: preload resume changed"
+                        : "GoVue playback: preload source changed");
+            }
+            clearStaged();
+            return null;
+        }
+        adopted = staged.item();
+        staged = null;
+        mark("GoVue playback: reuse preloaded samples");
+        return preloadManager.getMediaSource(adopted);
     }
 
     private void replace(long revision, Map<?, ?> load) {
         generation = revision;
         hasSource = false;
         firstFrame = false;
+        startupHeight = 0;
         firstFrameMs = null;
         videoDecoder = null;
         audioDecoder = null;
@@ -160,6 +316,10 @@ public final class VideoPlayer implements NshComponent {
         main.removeCallbacks(tick);
         player.stop();
         player.clearMediaItems();
+        if (adopted != null) {
+            preloadManager.remove(adopted);
+            adopted = null;
+        }
         if (load.get("source") instanceof Map<?, ?> source && source.get("uri") instanceof String uri) {
             try {
                 open(load, source, uri);
@@ -176,11 +336,39 @@ public final class VideoPlayer implements NshComponent {
     }
 
     private void open(Map<?, ?> load, Map<?, ?> source, String uri) {
-        mediaId = "govue-media:" + generation;
-        MediaItem.Builder item = new MediaItem.Builder().setUri(uri).setMediaId(mediaId);
+        long position = load.get("position") instanceof Number seconds ? millis(seconds) : C.TIME_UNSET;
+        MediaSource media = takeStaged(uri, position);
+        if (media == null) media = mediaSource(source, mediaItem(source, uri, "govue-media:" + generation));
+        mediaId = media.getMediaItem().mediaId;
+        startupHeight = startupHeight(source);
+        player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                .build());
+        player.setPlaybackSpeed(load.get("rate") instanceof Number speed ? speed.floatValue() : 1);
+        player.setMediaSource(media, position);
+        hasSource = true;
+        sourceStartedAt = SystemClock.elapsedRealtime();
+        player.setPlayWhenReady(Boolean.TRUE.equals(load.get("playing")));
+        Trace.beginSection("GoVue playback: prepare");
+        try {
+            player.prepare();
+        } finally {
+            Trace.endSection();
+        }
+    }
+
+    private static int startupHeight(Map<?, ?> source) {
+        return source.get("startupHeight") instanceof Number height ? Math.max(0, height.intValue()) : 0;
+    }
+
+    private static MediaItem mediaItem(Map<?, ?> source, String uri, String id) {
+        MediaItem.Builder item = new MediaItem.Builder().setUri(uri).setMediaId(id);
         if ("dash".equals(source.get("contentType"))) item.setMimeType(MimeTypes.APPLICATION_MPD);
         if ("hls".equals(source.get("contentType"))) item.setMimeType(MimeTypes.APPLICATION_M3U8);
+        return item.build();
+    }
 
+    private MediaSource mediaSource(Map<?, ?> source, MediaItem item) {
         Map<String, String> headers = new LinkedHashMap<>();
         if (source.get("headers") instanceof Map<?, ?> fields) {
             for (Map.Entry<?, ?> entry : fields.entrySet()) {
@@ -191,21 +379,8 @@ public final class VideoPlayer implements NshComponent {
         }
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(false).setDefaultRequestProperties(headers);
-        DefaultMediaSourceFactory factory = new DefaultMediaSourceFactory(
-                new DefaultDataSource.Factory(context.getContext().getApplicationContext(), http));
-
-        startupHeight = source.get("startupHeight") instanceof Number height && height.intValue() > 0
-                ? height.intValue() : 0;
-        player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
-                .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-                .setMaxVideoSize(Integer.MAX_VALUE, startupHeight > 0 ? startupHeight : Integer.MAX_VALUE).build());
-        player.setPlaybackSpeed(load.get("rate") instanceof Number speed ? speed.floatValue() : 1);
-        long position = load.get("position") instanceof Number seconds ? millis(seconds) : C.TIME_UNSET;
-        player.setMediaSource(factory.createMediaSource(item.build()), position);
-        hasSource = true;
-        sourceStartedAt = SystemClock.elapsedRealtime();
-        player.setPlayWhenReady(Boolean.TRUE.equals(load.get("playing")));
-        player.prepare();
+        return new DefaultMediaSourceFactory(new DefaultDataSource.Factory(
+                context.getContext().getApplicationContext(), http)).createMediaSource(item);
     }
 
     private boolean isCurrent() {
@@ -386,5 +561,6 @@ public final class VideoPlayer implements NshComponent {
         main.removeCallbacks(tick);
         player.clearVideoTextureView(texture);
         player.release();
+        if (preloadManager != null) preloadManager.release();
     }
 }

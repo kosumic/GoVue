@@ -171,6 +171,11 @@ impl BrowserTab {
         self.element.command("clearCache", Value::Null);
     }
 
+    #[cfg(target_os = "android")]
+    pub fn prefetch_watch(&self, candidate: Value) {
+        self.element.command("prefetchWatch", candidate);
+    }
+
     /// Evaluate only while the target YouTube document is current.
     pub fn inject(&self, document: &BrowserDocument, script: &str) {
         self.element.command(

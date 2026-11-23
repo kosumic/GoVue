@@ -3,6 +3,8 @@ package io.github.kaminarios.govue.shell;
 import android.annotation.SuppressLint;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.CancellationSignal;
+import android.os.Trace;
 import android.view.MotionEvent;
 import android.webkit.CookieManager;
 import android.webkit.RenderProcessGoneDetail;
@@ -14,10 +16,14 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import androidx.annotation.OptIn;
+import androidx.webkit.PrefetchException;
+import androidx.webkit.Profile;
 import androidx.webkit.ScriptHandler;
 import androidx.webkit.WebMessageCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
+import androidx.webkit.WebViewOutcomeReceiver;
 
 import com.longbridge.nsh.NshComponent;
 import com.longbridge.nsh.NshComponentContext;
@@ -61,6 +67,8 @@ public final class BrowserTab implements NshComponent {
     private boolean failed;
     private boolean contentPainted;
     private boolean painted;
+    private CancellationSignal prefetch;
+    private String prefetchedAddress;
 
     public static void register(NshView view) {
         view.registerComponent("govue/browser-tab", BrowserTab::new);
@@ -257,6 +265,10 @@ public final class BrowserTab implements NshComponent {
     }
 
     private void emitReady() {
+        if (active && "/watch".equals(Uri.parse(address).getPath())) {
+            Trace.beginSection("GoVue browser: watch bridge ready");
+            Trace.endSection();
+        }
         emit("ready", Collections.singletonMap("document", document()));
     }
 
@@ -364,6 +376,47 @@ public final class BrowserTab implements NshComponent {
         if (urlPolicy(url) == INTERNAL) emitNavigation();
     }
 
+    @OptIn(markerClass = Profile.ExperimentalUrlPrefetch.class)
+    private void prefetchWatch(String url) {
+        if (web == null || !active || url.equals(prefetchedAddress) || urlPolicy(url) != INTERNAL) return;
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+                || !WebViewFeature.isFeatureSupported(WebViewFeature.PROFILE_URL_PREFETCH)) {
+            Trace.beginSection("GoVue browser: watch prefetch unavailable");
+            Trace.endSection();
+            return;
+        }
+        Uri target = Uri.parse(url);
+        String origin = allowedOrigin(target);
+        if (origin.isEmpty() || !origin.equals(allowedOrigin(Uri.parse(address)))
+                || !"/watch".equals(target.getPath())) return;
+        String video = target.getQueryParameter("v");
+        if (video == null || !video.matches("[A-Za-z0-9_-]{11}")) return;
+        if (prefetch != null) prefetch.cancel();
+        prefetch = new CancellationSignal();
+        prefetchedAddress = url;
+        Trace.beginSection("GoVue browser: prefetch watch");
+        try {
+            WebViewCompat.getProfile(web).prefetchUrlAsync(url, prefetch, Runnable::run,
+                    new WebViewOutcomeReceiver<Void, PrefetchException>() {
+                        @Override
+                        public void onResult(Void result) {
+                            Trace.beginSection("GoVue browser: watch prefetched");
+                            Trace.endSection();
+                        }
+
+                        @Override
+                        public void onError(PrefetchException error) {
+                            Trace.beginSection("GoVue browser: watch prefetch failed");
+                            Trace.endSection();
+                        }
+                    });
+        } catch (UnsupportedOperationException ignored) {
+            // Older WebView providers can leave the watch URL to ordinary navigation.
+        } finally {
+            Trace.endSection();
+        }
+    }
+
     @Override
     public void command(String name, Object args) {
         if (bootstrap == null || configuration == null) return;
@@ -375,6 +428,10 @@ public final class BrowserTab implements NshComponent {
             else web.reload();
         } else if (name.equals("clearCache") && web != null) {
             web.clearCache(true);
+        } else if (name.equals("prefetchWatch") && args instanceof Map<?, ?> input
+                && input.get("generation") instanceof Number revision && revision.longValue() == generation
+                && input.get("url") instanceof String url) {
+            prefetchWatch(url);
         } else if (name.equals("back") && web != null && web.canGoBack()) {
             web.goBack();
         } else if (name.equals("inject") && args instanceof Map<?, ?> input
@@ -386,6 +443,9 @@ public final class BrowserTab implements NshComponent {
     }
 
     private void closeWebView() {
+        if (prefetch != null) prefetch.cancel();
+        prefetch = null;
+        prefetchedAddress = null;
         if (web == null) return;
         WebView previous = web;
         web = null;

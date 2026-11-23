@@ -14,6 +14,7 @@ use std::time::Duration;
 use std::{io, thread};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
+pub(super) mod startup;
 pub(crate) mod streaming;
 
 const CHUNK: u64 = 1_048_576;
@@ -26,6 +27,7 @@ pub(crate) struct Source {
     mime: String,
     post: AtomicBool,
     redirected: Mutex<Option<String>>,
+    startup: Option<Arc<[startup::Range]>>,
 }
 impl Source {
     pub(crate) fn length(&self) -> u64 {
@@ -98,15 +100,57 @@ pub(crate) fn header(name: &str, value: &str) -> Result<Header> {
     Header::from_bytes(name, value).map_err(|()| "Invalid HTTP response header.".into())
 }
 pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<Vec<u8>> {
-    range_bytes_with(source, start, end, None)
+    range_body(source, start, end, None, false)?.into_bytes()
 }
 
-fn range_bytes_with(
+enum RangeBody {
+    Buffered(Vec<u8>),
+    Direct(ureq::Body),
+}
+
+impl RangeBody {
+    fn length(&self) -> Option<u64> {
+        match self {
+            Self::Buffered(bytes) => Some(bytes.len() as u64),
+            Self::Direct(body) => body.content_length(),
+        }
+    }
+
+    fn into_bytes(self) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Buffered(bytes) => Ok(bytes),
+            Self::Direct(body) => {
+                let mut bytes = Vec::new();
+                body.into_reader().take(CHUNK + 1).read_to_end(&mut bytes)?;
+                Ok(bytes)
+            }
+        }
+    }
+}
+
+struct RangeResponse {
+    status: i32,
+    location: Option<String>,
+    body: RangeBody,
+}
+
+impl From<crate::MediaRangeReply> for RangeResponse {
+    fn from(reply: crate::MediaRangeReply) -> Self {
+        Self {
+            status: reply.status,
+            location: reply.location,
+            body: RangeBody::Buffered(reply.body),
+        }
+    }
+}
+
+fn range_body(
     source: &Source,
     start: u64,
     end: u64,
     download: Option<&dyn Fn() -> io::Result<bool>>,
-) -> io::Result<Vec<u8>> {
+    incremental: bool,
+) -> io::Result<RangeBody> {
     let agent = AGENT.get_or_init(|| {
         ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(8)))
@@ -129,7 +173,7 @@ fn range_bytes_with(
     let mut attempt = 0;
     while attempt < 3 {
         note("upstreamStart", json!(start));
-        let reply = if let Some(permit) = download {
+        let mut reply = if let Some(permit) = download {
             let wifi_only = permit()?;
             crate::downloads::transfer::fetch(crate::DownloadRequest {
                 url: url.clone(),
@@ -139,15 +183,18 @@ fn range_bytes_with(
                 range: Some(crate::DownloadRange { start, end }),
                 wifi_only,
             })?
+            .into()
         } else if let Some(backend) = HTTP.get() {
-            backend.fetch_range(
-                url.clone(),
-                source.user_agent.clone(),
-                source.origin.clone(),
-                if post { "POST" } else { "GET" }.into(),
-                start,
-                end,
-            )
+            backend
+                .fetch_range(
+                    url.clone(),
+                    source.user_agent.clone(),
+                    source.origin.clone(),
+                    if post { "POST" } else { "GET" }.into(),
+                    start,
+                    end,
+                )
+                .into()
         } else {
             let address = format!(
                 "{url}{}range={start}-{end}",
@@ -171,26 +218,18 @@ fn range_bytes_with(
                         .get("Location")
                         .and_then(|value| value.to_str().ok())
                         .map(str::to_owned);
-                    let mut bytes = Vec::with_capacity(
-                        usize::try_from(end - start + 1)
-                            .map_err(|_| io::Error::other("Media range is too large."))?,
-                    );
-                    response
-                        .into_body()
-                        .into_reader()
-                        .take(CHUNK + 1)
-                        .read_to_end(&mut bytes)?;
-                    crate::MediaRangeReply {
+                    RangeResponse {
                         status,
-                        body: bytes,
                         location,
+                        body: RangeBody::Direct(response.into_body()),
                     }
                 }
                 Err(_) => crate::MediaRangeReply {
                     status: 0,
                     body: Vec::new(),
                     location: None,
-                },
+                }
+                .into(),
             }
         };
         if download.is_some() && reply.status == -1 {
@@ -221,7 +260,14 @@ fn range_bytes_with(
             url = next;
             continue;
         }
-        if matches!(reply.status, 200 | 206) && reply.body.len() as u64 == end - start + 1 {
+        if matches!(reply.status, 200 | 206)
+            && matches!(&reply.body, RangeBody::Direct(_))
+            && (!incremental || reply.body.length().is_none())
+        {
+            // Validate unframed bodies before forwarding any bytes.
+            reply.body = RangeBody::Buffered(reply.body.into_bytes()?);
+        }
+        if matches!(reply.status, 200 | 206) && reply.body.length() == Some(end - start + 1) {
             note("received", json!(end + 1));
             note("lastError", Value::Null);
             source.post.store(post, Ordering::Relaxed);
@@ -232,7 +278,11 @@ fn range_bytes_with(
             }
             return Ok(reply.body);
         }
-        last = format!("Media HTTP {} ({} bytes).", reply.status, reply.body.len());
+        last = format!(
+            "Media HTTP {} ({} bytes).",
+            reply.status,
+            reply.body.length().unwrap_or(0)
+        );
         note("lastError", json!(last));
         if reply.status == 403 {
             post = true;
@@ -283,6 +333,7 @@ impl DownloadSource {
                 .into(),
             post: AtomicBool::new(false),
             redirected: Mutex::new(None),
+            startup: None,
         }))
     }
     pub(crate) fn bytes(&self, start: u64, end: u64) -> io::Result<Vec<u8>> {
@@ -300,7 +351,7 @@ impl DownloadSource {
         if start > end || end >= self.0.length || end - start >= CHUNK {
             return Err(io::Error::other("Invalid download range."));
         }
-        range_bytes_with(&self.0, start, end, Some(permit))
+        range_body(&self.0, start, end, Some(permit), false)?.into_bytes()
     }
 }
 
@@ -314,8 +365,25 @@ struct Body {
 }
 impl Body {
     fn fill(&mut self) -> io::Result<()> {
-        let end = (self.next + self.chunk - 1).min(self.end);
-        self.bytes = streaming::open(&self.source, self.next, end)?;
+        let mut end = (self.next + self.chunk - 1).min(self.end);
+        if let Some(range) = self.source.startup.as_ref().and_then(|ranges| {
+            ranges
+                .iter()
+                .find(|range| (range.start..range.end()).contains(&self.next))
+        }) {
+            let _span = crate::trace::Section::begin(if range.start == 0 {
+                c"GoVue transport: prefetched bytes"
+            } else {
+                c"GoVue transport: prefetched resume bytes"
+            });
+            end = end.min(range.end() - 1);
+            let from = usize::try_from(self.next - range.start).map_err(io::Error::other)?;
+            let through = usize::try_from(end - range.start).map_err(io::Error::other)?;
+            self.bytes = Box::new(io::Cursor::new(range.bytes[from..=through].to_vec()));
+        } else {
+            self.bytes = streaming::open(&self.source, self.next, end)?;
+            self.chunk = (self.chunk * 2).min(CHUNK);
+        }
         // Receive a small prefix before sending success, without waiting for
         // an entire range when the platform supports incremental byte reads.
         let mut prefix = vec![0; 8192];
@@ -329,7 +397,6 @@ impl Body {
         prefix.truncate(count);
         self.prefix = io::Cursor::new(prefix);
         self.next = end + 1;
-        self.chunk = (self.chunk * 2).min(CHUNK);
         Ok(())
     }
 }
@@ -539,7 +606,7 @@ pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
     if user_agent.len() > 1000 || user_agent.contains(['\r', '\n']) {
         return Err("Invalid media agent.".into());
     }
-    Ok(Arc::new(Source {
+    let mut source = Source {
         url,
         length,
         user_agent: user_agent.into(),
@@ -547,7 +614,10 @@ pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
         mime: media::container(command).unwrap_or("video/mp4").into(),
         post: AtomicBool::new(false),
         redirected: Mutex::new(None),
-    }))
+        startup: None,
+    };
+    source.startup = startup::lookup(&source);
+    Ok(Arc::new(source))
 }
 
 fn server() -> Result<&'static Proxy> {
@@ -622,23 +692,10 @@ pub(super) fn proxy(command: &Value) -> Result<Value> {
     )))
 }
 
-pub(super) fn playback(command: &Value) -> Result<Value> {
-    let catalog = &command["catalog"];
-    if catalog["live"] == true {
-        let url = catalog["hlsUrl"]
-            .as_str()
-            .and_then(media::media_url)
-            .ok_or("No playable live manifest is available. Refresh the video.")?;
-        let agent = catalog["hlsUserAgent"]
-            .as_str()
-            .filter(|agent| !agent.is_empty())
-            .or_else(|| command["userAgent"].as_str())
-            .filter(|s| s.len() <= 1000 && !s.contains(['\r', '\n']))
-            .unwrap_or("");
-        return Ok(
-            json!({"uri":url,"contentType":"hls","qualityHeight":0,"remote":true,"headers":{"User-Agent":agent,"Referer":format!("{}/",catalog["origin"].as_str().unwrap_or("https://m.youtube.com")),"Origin":catalog["origin"]}}),
-        );
-    }
+fn select_video<'a>(
+    catalog: &'a Value,
+    command: &Value,
+) -> Result<(Vec<&'a Value>, &'a Value, u64)> {
     let videos = playback::videos(catalog)?;
     let fps = command["fps"].as_u64().unwrap_or(0);
     let mut requested = command["height"]
@@ -665,12 +722,36 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
             })
             .ok_or("Selected resolution is unavailable. Refresh the video.")?
     };
-    let file_source = |stream: &Value| {
-        source(&json!({"url":stream["url"],"length":stream["bytes"],
+    Ok((videos, selected, requested))
+}
+
+fn stream_source(catalog: &Value, stream: &Value, user_agent: &str) -> Result<Arc<Source>> {
+    source(&json!({"url":stream["url"],"length":stream["bytes"],
         "mimeType":stream["mimeType"],
         "origin":catalog["origin"],"userAgent":stream["userAgent"].as_str().filter(|s| !s.is_empty())
-            .unwrap_or(command["userAgent"].as_str().unwrap_or(""))}))
-    };
+            .unwrap_or(user_agent)}))
+}
+
+pub(super) fn playback(command: &Value) -> Result<Value> {
+    let catalog = &command["catalog"];
+    if catalog["live"] == true {
+        let url = catalog["hlsUrl"]
+            .as_str()
+            .and_then(media::media_url)
+            .ok_or("No playable live manifest is available. Refresh the video.")?;
+        let agent = catalog["hlsUserAgent"]
+            .as_str()
+            .filter(|agent| !agent.is_empty())
+            .or_else(|| command["userAgent"].as_str())
+            .filter(|s| s.len() <= 1000 && !s.contains(['\r', '\n']))
+            .unwrap_or("");
+        return Ok(
+            json!({"uri":url,"contentType":"hls","qualityHeight":0,"remote":true,"headers":{"User-Agent":agent,"Referer":format!("{}/",catalog["origin"].as_str().unwrap_or("https://m.youtube.com")),"Origin":catalog["origin"]}}),
+        );
+    }
+    let (videos, selected, requested) = select_video(catalog, command)?;
+    let user_agent = command["userAgent"].as_str().unwrap_or("");
+    let file_source = |stream: &Value| stream_source(catalog, stream, user_agent);
     if selected["kind"] == "combined" {
         let stream = file_source(selected)?;
         let uri = proxy(

@@ -139,6 +139,15 @@ impl Core {
         .await
     }
 
+    pub(crate) fn playback_preloaded(&self, video_id: &str) -> bool {
+        govue_core::playback_preloaded(&self.storage, video_id)
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn prepared_media(&self, video_id: &str) -> Option<Value> {
+        govue_core::prepared_media(&self.storage, video_id)
+    }
+
     pub async fn resolve_transcript(
         &self,
         video: String,

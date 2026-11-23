@@ -178,3 +178,43 @@ test('line pauses require the current request, player, and timeline and can be c
     assert.equal(pauses, 1, 'a seek invalidates the sampled timeline');
   } finally { env.close(); }
 });
+
+test('preloaded startup waits for the selected video to finish seeking', { timeout: 2000 }, async () => {
+  const env = setup(async () => env.response({}));
+  try {
+    const { window } = env;
+    const player = window.document.createElement('div');
+    player.id = 'movie_player';
+    let owner = otherVideoId;
+    player.getVideoData = () => ({ video_id: owner });
+    const video = window.document.querySelector('video');
+    player.append(video);
+    window.document.body.append(player);
+    let seeking = true;
+    Object.defineProperties(video, {
+      readyState: { value: 1 },
+      seeking: { get: () => seeking },
+    });
+    video.currentTime = 91.5;
+    window.eval(YOUTUBE_BRIDGE);
+    const positions = [];
+    const position = new Promise(resolve => {
+      window.ReactNativeWebView.postMessage = raw => {
+        const message = JSON.parse(raw);
+        if (message.type === 'playbackPosition') {
+          positions.push(message);
+          resolve(message);
+        }
+      };
+    });
+    window.__govue.probeStart('startup', videoId);
+    owner = videoId;
+    await new Promise(resolve => window.setTimeout(resolve, 65));
+    assert.deepEqual(positions, []);
+    seeking = false;
+    assert.deepEqual(await position, {
+      type: 'playbackPosition', requestId: 'startup', videoId,
+      seconds: 91.5, playing: false, seeking: false, rate: 1,
+    });
+  } finally { env.close(); }
+});

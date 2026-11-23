@@ -52,6 +52,7 @@ pub struct PlaybackRequest<'a> {
 
 /// A planned source keeps its loopback route alive until it is discarded or
 /// retired by the native player. Source addresses and headers stay in memory.
+#[derive(Clone)]
 pub struct PlaybackSource(Rc<Source>);
 
 impl PlaybackSource {
@@ -298,6 +299,8 @@ impl PlaybackEvent {
 pub struct VideoPlayer {
     element: ElementRef,
     load: Signal<Load>,
+    #[cfg(target_os = "android")]
+    preload: Signal<Option<(Rc<Source>, f64)>>,
     remote: Stored<Option<Rc<RemoteCommand>>>,
     #[cfg(not(target_os = "ios"))]
     retired: Rc<RefCell<BTreeMap<u64, Rc<Source>>>>,
@@ -312,6 +315,8 @@ impl VideoPlayer {
         Self {
             element: element_ref(),
             load: signal(Load::default()),
+            #[cfg(target_os = "android")]
+            preload: signal(None),
             remote: stored(None),
             #[cfg(not(target_os = "ios"))]
             retired: Rc::new(RefCell::new(BTreeMap::new())),
@@ -328,7 +333,7 @@ impl VideoPlayer {
     ) -> NativeView {
         let load = self.load;
         let retired = self.retired.clone();
-        nsh_core::element::native("govue/video-player")
+        let native = nsh_core::element::native("govue/video-player")
             .element_ref(&self.element)
             .pointer_events(PointerEvents::None)
             .prop("fit", move || json!(fit()))
@@ -338,23 +343,41 @@ impl VideoPlayer {
                     json!({"generation": load.generation, "source": source,
                     "position": load.position, "playing": load.playing, "rate": load.rate})
                 })
-            })
-            .on_native_event(move |event: &NativeEvent| {
-                if event.name.as_ref() != "playback" {
-                    return;
-                }
-                let Ok(event) = PlaybackEvent::deserialize(&event.data) else {
-                    return;
-                };
-                if let PlaybackEvent::Applied { generation } = &event {
-                    retired
-                        .borrow_mut()
-                        .retain(|previous, _| previous >= generation);
-                }
-                if event.generation() == load.with(|current| current.generation) {
-                    on_event(event);
-                }
-            })
+            });
+        #[cfg(target_os = "android")]
+        let native = native.prop("preload", {
+            let preload = self.preload;
+            move || {
+                preload.with(|preload| {
+                    preload.as_ref().map_or(
+                        Value::Null,
+                        |(source, position)| json!({"source":source.as_ref(), "position":position}),
+                    )
+                })
+            }
+        });
+        native.on_native_event(move |event: &NativeEvent| {
+            if event.name.as_ref() != "playback" {
+                return;
+            }
+            let Ok(event) = PlaybackEvent::deserialize(&event.data) else {
+                return;
+            };
+            if let PlaybackEvent::Applied { generation } = &event {
+                retired
+                    .borrow_mut()
+                    .retain(|previous, _| previous >= generation);
+            }
+            if event.generation() == load.with(|current| current.generation) {
+                on_event(event);
+            }
+        })
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn set_preload(&self, preload: Option<(PlaybackSource, f64)>) {
+        self.preload
+            .set(preload.map(|(source, position)| (source.0, position)));
     }
 
     /// Use the same mounted view as page controls move or cover the video.

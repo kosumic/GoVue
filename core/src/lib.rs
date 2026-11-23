@@ -112,6 +112,16 @@ pub use extraction::{
     register_caption_page, resolve_caption_track, resolve_media_catalog,
 };
 
+/// True when the selected video has its native startup ranges in memory.
+pub fn playback_preloaded(storage: &str, video_id: &str) -> bool {
+    transport::startup::ready(storage, video_id)
+}
+
+/// A prepared catalog and its startup bytes, scoped to the current prediction.
+pub fn prepared_media(storage: &str, video_id: &str) -> Option<serde_json::Value> {
+    extraction::prepared_media(storage, video_id)
+}
+
 /// Releases an opaque loopback route after a native player retires its source.
 pub fn release_playback_route(uri: &str) {
     let _ = transport::release(&json!({"uri": uri}));
@@ -392,6 +402,11 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     }
     if op == "gallery_fetch" {
         return gallery::fetch(&command, root);
+    }
+    if op == "sponsor_fetch" {
+        // The request and response parsing don't touch shared state.
+        let _span = trace::Section::begin(c"GoVue core op: sponsor_fetch");
+        return media::dispatch(&command, root);
     }
     // These reads take immutable snapshots under their own short lock scopes.
     if op == "restore" {

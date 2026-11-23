@@ -4,6 +4,10 @@
   let preferences = {};
   let documentGeneration = 0;
   let lastTransient = '';
+  let active = false;
+  let nativePlayback = false;
+  let preparationTimer;
+  let lastCandidate = '';
   const post = (action, payload = {}) =>
     (window.__govuePageTransport ?? window.ReactNativeWebView)?.postMessage(
       JSON.stringify({
@@ -24,6 +28,34 @@
       return null;
     }
   };
+  const isFeed = () => ['/', '/results', '/feed/subscriptions'].includes(location.pathname);
+  function schedulePreparation(restart = false) {
+    if (restart) {
+      clearTimeout(preparationTimer);
+      preparationTimer = undefined;
+    }
+    if (preparationTimer !== undefined || !active || !nativePlayback || !documentGeneration || !isFeed()) return;
+    preparationTimer = setTimeout(() => {
+      preparationTimer = undefined;
+      if (document.hidden || !isFeed()) return;
+      const selector = 'a[href*="/watch?"]';
+      for (const y of [0.35, 0.55, 0.72]) {
+        const item = document.elementFromPoint?.(innerWidth / 2, innerHeight * y);
+        const link = item?.closest(selector) ?? item?.closest(
+          'ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-rich-item-renderer, ytm-media-item, yt-lockup-view-model'
+        )?.querySelector(selector);
+        if (!link) continue;
+        const target = new URL(link.href);
+        if (target.origin !== location.origin || target.pathname !== '/watch'
+            || !/^[\w-]{11}$/.test(target.searchParams.get('v') ?? '')) continue;
+        if (target.href !== lastCandidate) {
+          lastCandidate = target.href;
+          post('prefetch', { url: lastCandidate });
+        }
+        return;
+      }
+    }, 500);
+  }
   window.Bridge = {
     getPreferences: () => JSON.stringify(preferences),
     prepare: (url) => post('prepare', { url }),
@@ -55,9 +87,16 @@
     currentDocumentGeneration: () => documentGeneration,
   };
   window.Download = { postMessage: (value) => post('download', parse(value)) };
-  window.addEventListener('tabVisibilityChanged', () => {
+  window.addEventListener('tabVisibilityChanged', event => {
     lastTransient = '';
+    active = event.detail?.active === true;
+    if (!active) lastCandidate = '';
+    schedulePreparation(true);
   });
+  window.addEventListener('scroll', () => schedulePreparation(true), { capture: true, passive: true });
+  window.addEventListener('resize', () => schedulePreparation(true), { passive: true });
+  document.addEventListener('visibilitychange', () => schedulePreparation(true));
+  new MutationObserver(() => schedulePreparation()).observe(document, { subtree: true, childList: true });
   window.__govueBrowser = {
     observeFirstContent(callback) {
       if (!globalThis.PerformanceObserver?.supportedEntryTypes?.includes('paint')) return;
@@ -76,9 +115,13 @@
     setDocumentGeneration(value) {
       if (!Number.isSafeInteger(value) || value <= documentGeneration) return;
       documentGeneration = value;
+      lastCandidate = '';
+      schedulePreparation(true);
       window.dispatchEvent(new CustomEvent('govueDocumentChanged'));
     },
     configure(settings) {
+      nativePlayback = Boolean(settings.adBlock || settings.backgroundPlayback || settings.autoPip);
+      schedulePreparation(true);
       preferences = {
         enable_display_dislikes: settings.showDislikes,
         enable_show_likes: settings.showLikes,

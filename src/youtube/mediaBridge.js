@@ -15,7 +15,7 @@ export const MEDIA_BRIDGE = String.raw`
   let nativeOwner = null;
   let lastSkip = '';
   let lastSkipAt = 0;
-  let lastReadyAt = 0;
+  let lastReady = null;
   let lastLayout = '';
   let layoutFrame = 0;
   let observedPlayer = null;
@@ -81,10 +81,24 @@ export const MEDIA_BRIDGE = String.raw`
     return Reflect.apply(send,this,args);
   };
   const adStyle = 'html[data-govue-adblock="true"] :is(#masthead-ad,#player-ads,ytd-ad-slot-renderer,ytm-ad-slot-renderer,ad-slot-renderer,ytd-display-ad-renderer,ytd-promoted-sparkles-web-renderer,ytm-promoted-sparkles-web-renderer,ytm-companion-ad-renderer,ytm-app-promo-renderer,ytm-app-install-ad-renderer,yt-mealbar-promo-renderer,ytm-open-in-app-renderer,.ytp-ad-overlay-container,.video-ads.ytp-ad-module,[data-govue-app-promo]){display:none!important}';
+  function reportReady(videoId, p) {
+    const transport = window.__govuePageTransport ?? window.ReactNativeWebView;
+    if (!videoId || typeof transport?.postMessage !== 'function') return;
+    const now = performance.now();
+    if (lastReady?.id === videoId && lastReady.transport === transport && now - lastReady.at < 1000) return;
+    if (p.getPlayerResponse?.()?.videoDetails?.videoId !== videoId) return;
+    transport.postMessage(JSON.stringify({type:'mediaReady',videoId}));
+    lastReady = {id:videoId, transport, at:now};
+  }
+  function reportMediaChange(event) {
+    const p = player();
+    if (p && event.target === p.querySelector('video')) reportReady(id(), p);
+  }
   function tick() {
     const videoId = id();
     if (owner !== videoId) {
       owner = videoId; segments = []; nativeOwner = null; lastSkip = ''; lastLayout = '';
+      if (lastReady?.id !== videoId) lastReady = null;
     }
     const root = document.documentElement;
     if (root) {
@@ -103,9 +117,7 @@ export const MEDIA_BRIDGE = String.raw`
     const video = p?.querySelector('video');
     reportLayout();
     if (!p || !video) return;
-    if (videoId && Date.now()-lastReadyAt>1000 && p.getPlayerResponse?.()?.videoDetails?.videoId===videoId) {
-      lastReadyAt=Date.now();post({type:'mediaReady',videoId});
-    }
+    reportReady(videoId, p);
     if (nativeOwner === videoId) { if (!video.paused) { p.pauseVideo?.(); video.pause(); } return; }
     const adPlayer = document.querySelector('.ad-showing,.ad-interrupting');
     const advertising = !!adPlayer;
@@ -141,6 +153,8 @@ export const MEDIA_BRIDGE = String.raw`
   window.addEventListener('resize',scheduleLayout,{passive:true});
   window.visualViewport?.addEventListener('resize',scheduleLayout,{passive:true});
   window.visualViewport?.addEventListener('scroll',scheduleLayout,{passive:true});
+  document.addEventListener('loadedmetadata',reportMediaChange,true);
+  document.addEventListener('durationchange',reportMediaChange,true);
   document.addEventListener('yt-navigate-finish',tick);
   tick();
 })();

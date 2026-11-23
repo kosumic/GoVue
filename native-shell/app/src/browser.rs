@@ -9,7 +9,11 @@ use govue_shell_runtime::{
 };
 #[cfg(target_os = "android")]
 use nsh_core::element::NativeEvent;
-use nsh_core::{PointerEvents, platform::Appearance, prelude::*};
+use nsh_core::{
+    PointerEvents,
+    platform::{Appearance, Lifecycle},
+    prelude::*,
+};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
@@ -329,7 +333,7 @@ impl Browser {
                             }
                             _ => {}
                         }
-                        browser.event(id, &native, event);
+                        browser.event(id, &native, event, visible.get_untracked());
                     }
                 },
             )
@@ -397,7 +401,7 @@ impl Browser {
             ))
     }
 
-    fn event(&self, id: u64, tab: &BrowserTab, event: BrowserEvent) {
+    fn event(&self, id: u64, tab: &BrowserTab, event: BrowserEvent, visible: bool) {
         self.watch.receive(tab, &event);
         match event {
             BrowserEvent::Navigation { document, .. } => self.post(
@@ -425,12 +429,19 @@ impl Browser {
                 document,
                 origin,
                 raw,
-            } if self.active(id) => self.page_message(id, document, origin, &raw),
+            } if self.active(id) => self.page_message(id, document, origin, &raw, visible),
             _ => {}
         }
     }
 
-    fn page_message(&self, id: u64, document: BrowserDocument, origin: String, raw: &str) {
+    fn page_message(
+        &self,
+        id: u64,
+        document: BrowserDocument,
+        origin: String,
+        raw: &str,
+        visible: bool,
+    ) {
         if raw.len() > 65536 {
             return;
         }
@@ -445,6 +456,22 @@ impl Browser {
         }
         let payload = &message["payload"];
         match message["action"].as_str() {
+            Some(action @ ("prepare" | "prefetch")) if visible && lifecycle() == Lifecycle::Active => {
+                if let Some(url) = payload["url"].as_str()
+                    && self.settings.with_untracked(|settings| {
+                        settings.as_ref().is_some_and(|settings| {
+                            ["adBlock", "backgroundPlayback", "autoPip"].iter()
+                                .any(|key| settings.get(*key) == Some(&Value::Bool(true)))
+                        })
+                    })
+                {
+                    // Keep preparation ordered with the browser's accepted navigation.
+                    let _ = self.actions.send(json!({"op":"extract_prepare","requestId":"prepare:media",
+                        "speculative":action == "prefetch",
+                        "id":id,"origin":origin,"documentUrl":document.url,
+                        "generation":document.generation,"url":url}));
+                }
+            }
             Some("openTab") => {
                 if let Some(url) = payload["url"].as_str() {
                     self.open(url.to_owned());
@@ -668,9 +695,46 @@ impl Browser {
 
     async fn run(self, mut pending: mpsc::UnboundedReceiver<Value>) {
         while let Some(mut request) = pending.recv().await {
+            if request["op"] == "extract_prepare" {
+                #[cfg(target_os = "android")]
+                let candidate = (request["speculative"] == true).then(|| {
+                    (
+                        request["id"].as_u64(),
+                        json!({
+                            "generation": request["generation"], "url": request["url"]
+                        }),
+                    )
+                });
+                let _preparation = self.core.execute::<Value>(request).await;
+                #[cfg(target_os = "android")]
+                if _preparation.is_ok_and(|value| value["prepared"] != false)
+                    && let Some((Some(id), candidate)) = candidate
+                    && self.active(id)
+                    && let Some(tab) = self.retained.borrow().get(&id)
+                {
+                    if let (Some(generation), Some(url)) =
+                        (candidate["generation"].as_u64(), candidate["url"].as_str())
+                        && let Ok(identity) = self
+                            .core
+                            .state::<Value>(json!({"op":"browser_identity", "url":url}))
+                        && let Some(video_id) = identity["videoId"].as_str()
+                    {
+                        self.watch
+                            .preload_watch(tab, generation, video_id.to_owned());
+                    }
+                    tab.prefetch_watch(candidate);
+                }
+                continue;
+            }
             if request["op"] == "browser_shared_url" {
                 match self.core.execute::<String>(request).await {
                     Ok(url) => {
+                        let _ = self
+                            .core
+                            .execute::<Value>(json!({
+                                "op":"extract_launch","requestId":"prepare:media","text":url
+                            }))
+                            .await;
                         request = json!({"op":"browser_open","url":url});
                     }
                     Err(error) => {
