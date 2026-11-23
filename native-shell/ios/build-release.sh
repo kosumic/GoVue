@@ -19,7 +19,6 @@ if [[ "${GOVUE_PREVIEW:-0}" == 1 ]]; then
 fi
 export GOVUE_APP_ID="$app_id"
 cargo_command=build
-link_args=()
 if [[ "$sdk" == iphonesimulator ]]; then
     # The simulator reads Xcode-style simulated entitlements from the executable.
     entitlement_dir="$repo/native-shell/ios/build/$sdk"
@@ -36,20 +35,20 @@ if [[ "$sdk" == iphonesimulator ]]; then
 EOF
     /usr/bin/derq query --format xml --input "$entitlements" --output "$entitlements.der" --raw
     cargo_command=rustc
-    link_args=(--
-        -C link-arg=-Xlinker -C link-arg=-sectcreate
-        -C link-arg=-Xlinker -C link-arg=__TEXT
-        -C link-arg=-Xlinker -C link-arg=__entitlements
-        -C link-arg=-Xlinker -C "link-arg=$entitlements"
-        -C link-arg=-Xlinker -C link-arg=-sectcreate
-        -C link-arg=-Xlinker -C link-arg=__TEXT
-        -C link-arg=-Xlinker -C link-arg=__ents_der
-        -C link-arg=-Xlinker -C "link-arg=$entitlements.der")
+    set -- "$@" -- \
+        -C link-arg=-Xlinker -C link-arg=-sectcreate \
+        -C link-arg=-Xlinker -C link-arg=__TEXT \
+        -C link-arg=-Xlinker -C link-arg=__entitlements \
+        -C link-arg=-Xlinker -C "link-arg=$entitlements" \
+        -C link-arg=-Xlinker -C link-arg=-sectcreate \
+        -C link-arg=-Xlinker -C link-arg=__TEXT \
+        -C link-arg=-Xlinker -C link-arg=__ents_der \
+        -C link-arg=-Xlinker -C "link-arg=$entitlements.der"
 fi
 env -u CC -u CXX -u CFLAGS -u CPPFLAGS -u LDFLAGS -u MACOSX_DEPLOYMENT_TARGET \
     SDKROOT="$sdk_path" IPHONEOS_DEPLOYMENT_TARGET=16.0 \
     cargo "$cargo_command" --locked --release --manifest-path native-shell/app/Cargo.toml \
-        --target "$target" --bin GoVue "$@" "${link_args[@]}"
+        --target "$target" --bin GoVue "$@"
 
 version=$(node -p 'require("./package.json").version')
 bundle="$repo/native-shell/ios/build/$sdk/GoVue.app"
