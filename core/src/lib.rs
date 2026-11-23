@@ -403,6 +403,11 @@ fn dispatch(request: &str, root: &str) -> Result<Value> {
     if op == "gallery_fetch" {
         return gallery::fetch(&command, root);
     }
+    if op == "sponsor_fetch" {
+        // The request and response parsing don't touch shared state.
+        let _span = trace::Section::begin(c"GoVue core op: sponsor_fetch");
+        return media::dispatch(&command, root);
+    }
     // These reads take immutable snapshots under their own short lock scopes.
     if op == "restore" {
         return transcript::restore(&command, root);

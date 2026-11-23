@@ -187,6 +187,11 @@ pub(crate) fn boundary(command: &Value) -> Result<Value> {
             {
                 return Ok(Value::Null);
             }
+            let _span = crate::trace::Section::begin(if request.starts_with("native-start:") {
+                c"GoVue browser: preloaded position confirmed"
+            } else {
+                c"GoVue browser: position confirmed"
+            });
             Ok(
                 json!({"position":seconds,"playing":message["playing"]==true,"seeking":message["seeking"]==true,
                 "rate":message["rate"].as_f64().filter(|n|n.is_finite() && *n>0.0 && *n<=16.0).unwrap_or(1.0)}),
