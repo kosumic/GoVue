@@ -6,7 +6,10 @@ use govue_shell_runtime::{
     WatchSubtitles,
 };
 use nsh_core::{
-    Dialog, DialogButton, DialogButtonStyle, PointerEvents, PressEvent, element::dialog, prelude::*,
+    Dialog, DialogButton, DialogButtonStyle, PointerEvents, PressEvent,
+    canvas::LineCap,
+    element::{Animation, dialog},
+    prelude::*,
 };
 use serde_json::{Value, json};
 
@@ -734,16 +737,7 @@ impl PlayerControls {
                                 }
                             })
                             .on_press(move || play.toggle())
-                            .child(when(busy, || {
-                                view()
-                                    .size(px(36.0))
-                                    .rounded_full()
-                                    .border(px(3.0))
-                                    .border_color(rgb(0xffffff))
-                                    .border_b_color(rgba(0xffffff00))
-                                    .pointer_events(PointerEvents::None)
-                                    .when(!reduce_motion(), |indicator| indicator.animate_spin())
-                            }))
+                            .child(when(busy, loading_spinner))
                             .child(when(
                                 move || !busy.get() && paused.get(),
                                 || ui::icon(ui::PLAY, 38.0, || rgb(0xffffff).into()),
@@ -1562,6 +1556,32 @@ impl PlayerControls {
                     ),
             )
     }
+}
+
+fn loading_spinner() -> CanvasView {
+    let motion = !reduce_motion();
+    let sweep = animated_value(if motion { 0.7 } else { 2.4 });
+    if motion {
+        let timing = Timing::new(680.0, Easing::EaseInOut);
+        let animation = Animation::sequence([
+            Animation::timing(&sweep, 4.6, timing),
+            Animation::timing(&sweep, 0.7, timing),
+        ])
+        .looped(None);
+        animation.start();
+        stored(animation);
+    }
+    canvas(
+        Painter::new()
+            .stroke_color(rgb(0xffffff))
+            .line_width(2.25)
+            .line_cap(LineCap::Round)
+            .arc(18.0, 18.0, 16.0, &sweep.mul(-0.5), &sweep.mul(0.5))
+            .stroke(),
+    )
+    .size(px(36.0))
+    .pointer_events(PointerEvents::None)
+    .when(motion, |indicator| indicator.animate_spin())
 }
 
 fn error_button(p: Palette, title: &'static str, action: impl Fn() + 'static) -> View {
