@@ -14,6 +14,7 @@ use std::time::Duration;
 use std::{io, thread};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
+pub(super) mod startup;
 pub(crate) mod streaming;
 
 const CHUNK: u64 = 1_048_576;
@@ -26,6 +27,7 @@ pub(crate) struct Source {
     mime: String,
     post: AtomicBool,
     redirected: Mutex<Option<String>>,
+    startup: Option<Arc<[u8]>>,
 }
 impl Source {
     pub(crate) fn length(&self) -> u64 {
@@ -283,6 +285,7 @@ impl DownloadSource {
                 .into(),
             post: AtomicBool::new(false),
             redirected: Mutex::new(None),
+            startup: None,
         }))
     }
     pub(crate) fn bytes(&self, start: u64, end: u64) -> io::Result<Vec<u8>> {
@@ -314,8 +317,18 @@ struct Body {
 }
 impl Body {
     fn fill(&mut self) -> io::Result<()> {
-        let end = (self.next + self.chunk - 1).min(self.end);
-        self.bytes = streaming::open(&self.source, self.next, end)?;
+        let mut end = (self.next + self.chunk - 1).min(self.end);
+        if let Some(bytes) = &self.source.startup
+            && self.next < bytes.len() as u64
+        {
+            let _span = crate::trace::Section::begin(c"GoVue transport: prefetched bytes");
+            end = end.min(bytes.len() as u64 - 1);
+            self.bytes = Box::new(io::Cursor::new(
+                bytes[self.next as usize..=end as usize].to_vec(),
+            ));
+        } else {
+            self.bytes = streaming::open(&self.source, self.next, end)?;
+        }
         // Receive a small prefix before sending success, without waiting for
         // an entire range when the platform supports incremental byte reads.
         let mut prefix = vec![0; 8192];
@@ -539,7 +552,7 @@ pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
     if user_agent.len() > 1000 || user_agent.contains(['\r', '\n']) {
         return Err("Invalid media agent.".into());
     }
-    Ok(Arc::new(Source {
+    let mut source = Source {
         url,
         length,
         user_agent: user_agent.into(),
@@ -547,7 +560,10 @@ pub(crate) fn source(command: &Value) -> Result<Arc<Source>> {
         mime: media::container(command).unwrap_or("video/mp4").into(),
         post: AtomicBool::new(false),
         redirected: Mutex::new(None),
-    }))
+        startup: None,
+    };
+    source.startup = startup::lookup(&source);
+    Ok(Arc::new(source))
 }
 
 fn server() -> Result<&'static Proxy> {
@@ -622,23 +638,10 @@ pub(super) fn proxy(command: &Value) -> Result<Value> {
     )))
 }
 
-pub(super) fn playback(command: &Value) -> Result<Value> {
-    let catalog = &command["catalog"];
-    if catalog["live"] == true {
-        let url = catalog["hlsUrl"]
-            .as_str()
-            .and_then(media::media_url)
-            .ok_or("No playable live manifest is available. Refresh the video.")?;
-        let agent = catalog["hlsUserAgent"]
-            .as_str()
-            .filter(|agent| !agent.is_empty())
-            .or_else(|| command["userAgent"].as_str())
-            .filter(|s| s.len() <= 1000 && !s.contains(['\r', '\n']))
-            .unwrap_or("");
-        return Ok(
-            json!({"uri":url,"contentType":"hls","qualityHeight":0,"remote":true,"headers":{"User-Agent":agent,"Referer":format!("{}/",catalog["origin"].as_str().unwrap_or("https://m.youtube.com")),"Origin":catalog["origin"]}}),
-        );
-    }
+fn select_video<'a>(
+    catalog: &'a Value,
+    command: &Value,
+) -> Result<(Vec<&'a Value>, &'a Value, u64)> {
     let videos = playback::videos(catalog)?;
     let fps = command["fps"].as_u64().unwrap_or(0);
     let mut requested = command["height"]
@@ -665,12 +668,36 @@ pub(super) fn playback(command: &Value) -> Result<Value> {
             })
             .ok_or("Selected resolution is unavailable. Refresh the video.")?
     };
-    let file_source = |stream: &Value| {
-        source(&json!({"url":stream["url"],"length":stream["bytes"],
+    Ok((videos, selected, requested))
+}
+
+fn stream_source(catalog: &Value, stream: &Value, user_agent: &str) -> Result<Arc<Source>> {
+    source(&json!({"url":stream["url"],"length":stream["bytes"],
         "mimeType":stream["mimeType"],
         "origin":catalog["origin"],"userAgent":stream["userAgent"].as_str().filter(|s| !s.is_empty())
-            .unwrap_or(command["userAgent"].as_str().unwrap_or(""))}))
-    };
+            .unwrap_or(user_agent)}))
+}
+
+pub(super) fn playback(command: &Value) -> Result<Value> {
+    let catalog = &command["catalog"];
+    if catalog["live"] == true {
+        let url = catalog["hlsUrl"]
+            .as_str()
+            .and_then(media::media_url)
+            .ok_or("No playable live manifest is available. Refresh the video.")?;
+        let agent = catalog["hlsUserAgent"]
+            .as_str()
+            .filter(|agent| !agent.is_empty())
+            .or_else(|| command["userAgent"].as_str())
+            .filter(|s| s.len() <= 1000 && !s.contains(['\r', '\n']))
+            .unwrap_or("");
+        return Ok(
+            json!({"uri":url,"contentType":"hls","qualityHeight":0,"remote":true,"headers":{"User-Agent":agent,"Referer":format!("{}/",catalog["origin"].as_str().unwrap_or("https://m.youtube.com")),"Origin":catalog["origin"]}}),
+        );
+    }
+    let (videos, selected, requested) = select_video(catalog, command)?;
+    let user_agent = command["userAgent"].as_str().unwrap_or("");
+    let file_source = |stream: &Value| stream_source(catalog, stream, user_agent);
     if selected["kind"] == "combined" {
         let stream = file_source(selected)?;
         let uri = proxy(

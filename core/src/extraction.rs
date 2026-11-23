@@ -880,6 +880,7 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 command["fresh"] == true,
             );
             let worker = job;
+            let speculative = preparing && command["speculative"] == true;
             if thread::Builder::new()
                 .name("youtube-extraction".into())
                 .spawn(move || {
@@ -895,8 +896,18 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                         "chapters" => chapter_catalog(&worker, &root, &id, fresh),
                         _ => transcript(&worker, &root, &id, &track, &audio_key, fresh),
                     };
+                    let startup = speculative.then(|| result.as_ref().ok().cloned()).flatten();
                     if let Ok(mut output) = worker.result.lock() {
                         *output = Some(result);
+                    }
+                    if let Some(catalog) = startup
+                        && worker.check().is_ok()
+                        && let Ok(settings) =
+                            crate::player::preferences::settings(&json!({}), &root)
+                    {
+                        crate::transport::startup::warm(&catalog, &settings, || {
+                            worker.check().is_ok()
+                        });
                     }
                 })
                 .is_err()

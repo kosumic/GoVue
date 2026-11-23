@@ -2,6 +2,7 @@ package io.github.kaminarios.govue.shell;
 
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -101,6 +102,14 @@ public final class VideoPlayer implements NshComponent {
                 if (!isCurrent()) return;
                 if (events.contains(Player.EVENT_VIDEO_SIZE_CHANGED)) resize();
                 if (events.contains(Player.EVENT_TRACKS_CHANGED)) emitTracks();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Trace.isEnabled()) {
+                    if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+                        mark("GoVue playback: state " + owner.getPlaybackState());
+                    }
+                    if (events.contains(Player.EVENT_IS_PLAYING_CHANGED)) {
+                        mark("GoVue playback: playing " + owner.isPlaying());
+                    }
+                }
                 emitStatus();
             }
         });
@@ -121,8 +130,11 @@ public final class VideoPlayer implements NshComponent {
                 texture.setAlpha(1);
                 if (firstFrame) return;
                 firstFrame = true;
-                Trace.beginSection("GoVue playback: first frame");
-                Trace.endSection();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Trace.isEnabled()) {
+                    mark("GoVue playback: first frame");
+                    mark("GoVue playback: first position " + Math.max(0, player.getCurrentPosition()));
+                    mark("GoVue playback: first height " + player.getVideoSize().height);
+                }
                 firstFrameMs = Math.max(0, renderTimeMs - sourceStartedAt);
                 if (startupHeight > 0) {
                     startupHeight = 0;
@@ -132,6 +144,11 @@ public final class VideoPlayer implements NshComponent {
                 emit("firstFrame", Collections.emptyMap());
             }
         });
+    }
+
+    private static void mark(String phase) {
+        Trace.beginSection(phase);
+        Trace.endSection();
     }
 
     @Override
