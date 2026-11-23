@@ -100,15 +100,57 @@ pub(crate) fn header(name: &str, value: &str) -> Result<Header> {
     Header::from_bytes(name, value).map_err(|()| "Invalid HTTP response header.".into())
 }
 pub(crate) fn range_bytes(source: &Source, start: u64, end: u64) -> io::Result<Vec<u8>> {
-    range_bytes_with(source, start, end, None)
+    range_body(source, start, end, None, false)?.into_bytes()
 }
 
-fn range_bytes_with(
+enum RangeBody {
+    Buffered(Vec<u8>),
+    Direct(ureq::Body),
+}
+
+impl RangeBody {
+    fn length(&self) -> Option<u64> {
+        match self {
+            Self::Buffered(bytes) => Some(bytes.len() as u64),
+            Self::Direct(body) => body.content_length(),
+        }
+    }
+
+    fn into_bytes(self) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Buffered(bytes) => Ok(bytes),
+            Self::Direct(body) => {
+                let mut bytes = Vec::new();
+                body.into_reader().take(CHUNK + 1).read_to_end(&mut bytes)?;
+                Ok(bytes)
+            }
+        }
+    }
+}
+
+struct RangeResponse {
+    status: i32,
+    location: Option<String>,
+    body: RangeBody,
+}
+
+impl From<crate::MediaRangeReply> for RangeResponse {
+    fn from(reply: crate::MediaRangeReply) -> Self {
+        Self {
+            status: reply.status,
+            location: reply.location,
+            body: RangeBody::Buffered(reply.body),
+        }
+    }
+}
+
+fn range_body(
     source: &Source,
     start: u64,
     end: u64,
     download: Option<&dyn Fn() -> io::Result<bool>>,
-) -> io::Result<Vec<u8>> {
+    incremental: bool,
+) -> io::Result<RangeBody> {
     let agent = AGENT.get_or_init(|| {
         ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(8)))
@@ -131,7 +173,7 @@ fn range_bytes_with(
     let mut attempt = 0;
     while attempt < 3 {
         note("upstreamStart", json!(start));
-        let reply = if let Some(permit) = download {
+        let mut reply = if let Some(permit) = download {
             let wifi_only = permit()?;
             crate::downloads::transfer::fetch(crate::DownloadRequest {
                 url: url.clone(),
@@ -141,15 +183,18 @@ fn range_bytes_with(
                 range: Some(crate::DownloadRange { start, end }),
                 wifi_only,
             })?
+            .into()
         } else if let Some(backend) = HTTP.get() {
-            backend.fetch_range(
-                url.clone(),
-                source.user_agent.clone(),
-                source.origin.clone(),
-                if post { "POST" } else { "GET" }.into(),
-                start,
-                end,
-            )
+            backend
+                .fetch_range(
+                    url.clone(),
+                    source.user_agent.clone(),
+                    source.origin.clone(),
+                    if post { "POST" } else { "GET" }.into(),
+                    start,
+                    end,
+                )
+                .into()
         } else {
             let address = format!(
                 "{url}{}range={start}-{end}",
@@ -173,26 +218,18 @@ fn range_bytes_with(
                         .get("Location")
                         .and_then(|value| value.to_str().ok())
                         .map(str::to_owned);
-                    let mut bytes = Vec::with_capacity(
-                        usize::try_from(end - start + 1)
-                            .map_err(|_| io::Error::other("Media range is too large."))?,
-                    );
-                    response
-                        .into_body()
-                        .into_reader()
-                        .take(CHUNK + 1)
-                        .read_to_end(&mut bytes)?;
-                    crate::MediaRangeReply {
+                    RangeResponse {
                         status,
-                        body: bytes,
                         location,
+                        body: RangeBody::Direct(response.into_body()),
                     }
                 }
                 Err(_) => crate::MediaRangeReply {
                     status: 0,
                     body: Vec::new(),
                     location: None,
-                },
+                }
+                .into(),
             }
         };
         if download.is_some() && reply.status == -1 {
@@ -223,7 +260,14 @@ fn range_bytes_with(
             url = next;
             continue;
         }
-        if matches!(reply.status, 200 | 206) && reply.body.len() as u64 == end - start + 1 {
+        if matches!(reply.status, 200 | 206)
+            && matches!(&reply.body, RangeBody::Direct(_))
+            && (!incremental || reply.body.length().is_none())
+        {
+            // Validate unframed bodies before forwarding any bytes.
+            reply.body = RangeBody::Buffered(reply.body.into_bytes()?);
+        }
+        if matches!(reply.status, 200 | 206) && reply.body.length() == Some(end - start + 1) {
             note("received", json!(end + 1));
             note("lastError", Value::Null);
             source.post.store(post, Ordering::Relaxed);
@@ -234,7 +278,11 @@ fn range_bytes_with(
             }
             return Ok(reply.body);
         }
-        last = format!("Media HTTP {} ({} bytes).", reply.status, reply.body.len());
+        last = format!(
+            "Media HTTP {} ({} bytes).",
+            reply.status,
+            reply.body.length().unwrap_or(0)
+        );
         note("lastError", json!(last));
         if reply.status == 403 {
             post = true;
@@ -303,7 +351,7 @@ impl DownloadSource {
         if start > end || end >= self.0.length || end - start >= CHUNK {
             return Err(io::Error::other("Invalid download range."));
         }
-        range_bytes_with(&self.0, start, end, Some(permit))
+        range_body(&self.0, start, end, Some(permit), false)?.into_bytes()
     }
 }
 

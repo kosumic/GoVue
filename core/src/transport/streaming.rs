@@ -1,6 +1,6 @@
 //! Incremental HTTPS bodies use bounded byte reads and opaque response handles.
 //! Signed addresses remain in native memory, never in persistent storage.
-use super::{CHUNK, Source};
+use super::{CHUNK, RangeBody, Source};
 use crate::MediaStreamHttp;
 use crate::media;
 use crate::transport;
@@ -17,7 +17,7 @@ pub(crate) fn install(backend: Box<dyn MediaStreamHttp>) {
     let _ = HTTP.set(backend);
 }
 pub(super) fn available() -> bool {
-    HTTP.get().is_some()
+    HTTP.get().is_some() || transport::HTTP.get().is_none()
 }
 
 struct Body {
@@ -69,9 +69,13 @@ pub(super) fn open(source: &Source, start: u64, end: u64) -> io::Result<Box<dyn 
         return Err(io::Error::other("Invalid media range."));
     }
     let Some(backend) = HTTP.get() else {
-        return Ok(Box::new(io::Cursor::new(transport::range_bytes(
-            source, start, end,
-        )?)));
+        let _span = crate::trace::Section::begin(c"GoVue transport: open media range");
+        return Ok(
+            match transport::range_body(source, start, end, None, true)? {
+                RangeBody::Buffered(bytes) => Box::new(io::Cursor::new(bytes)),
+                RangeBody::Direct(body) => Box::new(body.into_reader()),
+            },
+        );
     };
     let mut url = source
         .redirected
