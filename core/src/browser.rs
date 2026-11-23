@@ -380,13 +380,12 @@ pub(super) fn preparation_video(command: &Value, root: &str) -> Option<String> {
     // The selected link can commit its SPA URL before the click message is
     // delivered. Bind preparation to the document and origin, then correlate
     // the selected video separately when playback claims the job.
-    if page_context(
-            &json!({"origin":command["origin"],"documentUrl":command["documentUrl"],"knownUrl":tab.url}),
-        ).is_none()
-    {
+    let Some((_, document, known)) = page_context(
+        &json!({"origin":command["origin"],"documentUrl":command["documentUrl"],"knownUrl":tab.url}),
+    ) else {
         let _span = crate::trace::Section::begin(c"GoVue extraction: invalid preparation origin");
         return None;
-    }
+    };
     let (target, kind) = address(command["url"].as_str()?).ok()?;
     let target = Url::parse(&target).ok()?;
     if kind != "watch"
@@ -394,6 +393,14 @@ pub(super) fn preparation_video(command: &Value, root: &str) -> Option<String> {
             target.host_str(),
             Some("youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com")
         )
+    {
+        return None;
+    }
+    if command["speculative"] == true
+        && (document != known
+            || !matches!(document.path(), "/" | "/results" | "/feed/subscriptions")
+            || target.path() != "/watch"
+            || target.origin() != document.origin())
     {
         return None;
     }

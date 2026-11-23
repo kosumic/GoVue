@@ -456,7 +456,7 @@ impl Browser {
         }
         let payload = &message["payload"];
         match message["action"].as_str() {
-            Some("prepare") if visible && lifecycle() == Lifecycle::Active => {
+            Some(action @ ("prepare" | "prefetch")) if visible && lifecycle() == Lifecycle::Active => {
                 if let Some(url) = payload["url"].as_str()
                     && self.settings.with_untracked(|settings| {
                         settings.as_ref().is_some_and(|settings| {
@@ -467,6 +467,7 @@ impl Browser {
                 {
                     // Keep preparation ordered with the browser's accepted navigation.
                     let _ = self.actions.send(json!({"op":"extract_prepare","requestId":"prepare:media",
+                        "speculative":action == "prefetch",
                         "id":id,"origin":origin,"documentUrl":document.url,
                         "generation":document.generation,"url":url}));
                 }
@@ -695,7 +696,23 @@ impl Browser {
     async fn run(self, mut pending: mpsc::UnboundedReceiver<Value>) {
         while let Some(mut request) = pending.recv().await {
             if request["op"] == "extract_prepare" {
-                let _ = self.core.execute::<Value>(request).await;
+                #[cfg(target_os = "android")]
+                let candidate = (request["speculative"] == true).then(|| {
+                    (
+                        request["id"].as_u64(),
+                        json!({
+                            "generation": request["generation"], "url": request["url"]
+                        }),
+                    )
+                });
+                let _preparation = self.core.execute::<Value>(request).await;
+                #[cfg(target_os = "android")]
+                if _preparation.is_ok_and(|value| value["prepared"] != false)
+                    && let Some((Some(id), candidate)) = candidate
+                    && let Some(tab) = self.retained.borrow().get(&id)
+                {
+                    tab.prefetch_watch(candidate);
+                }
                 continue;
             }
             if request["op"] == "browser_shared_url" {

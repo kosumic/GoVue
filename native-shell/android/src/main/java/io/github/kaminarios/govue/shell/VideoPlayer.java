@@ -5,6 +5,7 @@ import android.graphics.Matrix;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.os.Trace;
 import android.view.TextureView;
 import android.widget.FrameLayout;
 
@@ -120,6 +121,8 @@ public final class VideoPlayer implements NshComponent {
                 texture.setAlpha(1);
                 if (firstFrame) return;
                 firstFrame = true;
+                Trace.beginSection("GoVue playback: first frame");
+                Trace.endSection();
                 firstFrameMs = Math.max(0, renderTimeMs - sourceStartedAt);
                 if (startupHeight > 0) {
                     startupHeight = 0;
@@ -205,7 +208,12 @@ public final class VideoPlayer implements NshComponent {
         hasSource = true;
         sourceStartedAt = SystemClock.elapsedRealtime();
         player.setPlayWhenReady(Boolean.TRUE.equals(load.get("playing")));
-        player.prepare();
+        Trace.beginSection("GoVue playback: prepare");
+        try {
+            player.prepare();
+        } finally {
+            Trace.endSection();
+        }
     }
 
     private boolean isCurrent() {

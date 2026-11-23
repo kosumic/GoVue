@@ -830,6 +830,14 @@ pub(crate) fn dispatch(command: &Value, root: &str) -> Result<Value> {
                 crate::changed("extraction-token");
                 return Ok(json!({"done":false,"prepared":true}));
             }
+            if preparing
+                && command["speculative"] == true
+                && jobs
+                    .get(&key)
+                    .is_some_and(|job| job.at.elapsed() < Duration::from_secs(3))
+            {
+                return Ok(json!({"prepared":false}));
+            }
             if preparing && let Some(previous) = jobs.remove(&key) {
                 previous.cancel();
             }
