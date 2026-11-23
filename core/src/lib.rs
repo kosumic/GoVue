@@ -117,6 +117,11 @@ pub fn playback_preloaded(storage: &str, video_id: &str) -> bool {
     transport::startup::ready(storage, video_id)
 }
 
+/// A prepared catalog and its startup bytes, scoped to the current prediction.
+pub fn prepared_media(storage: &str, video_id: &str) -> Option<serde_json::Value> {
+    extraction::prepared_media(storage, video_id)
+}
+
 /// Releases an opaque loopback route after a native player retires its source.
 pub fn release_playback_route(uri: &str) {
     let _ = transport::release(&json!({"uri": uri}));

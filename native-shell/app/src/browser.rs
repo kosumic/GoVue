@@ -709,8 +709,19 @@ impl Browser {
                 #[cfg(target_os = "android")]
                 if _preparation.is_ok_and(|value| value["prepared"] != false)
                     && let Some((Some(id), candidate)) = candidate
+                    && self.active(id)
                     && let Some(tab) = self.retained.borrow().get(&id)
                 {
+                    if let (Some(generation), Some(url)) =
+                        (candidate["generation"].as_u64(), candidate["url"].as_str())
+                        && let Ok(identity) = self
+                            .core
+                            .state::<Value>(json!({"op":"browser_identity", "url":url}))
+                        && let Some(video_id) = identity["videoId"].as_str()
+                    {
+                        self.watch
+                            .preload_watch(tab, generation, video_id.to_owned());
+                    }
                     tab.prefetch_watch(candidate);
                 }
                 continue;

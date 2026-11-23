@@ -14,6 +14,9 @@ use crate::{
     VideoPlayer,
 };
 
+#[cfg(target_os = "android")]
+mod preload;
+
 #[derive(Clone)]
 struct WatchDocument {
     tab: BrowserTab,
@@ -61,6 +64,8 @@ struct Page {
     user_agent: String,
     pending: Option<(u64, Spawned<()>)>,
     position: Option<PositionRequest>,
+    startup_probe: Option<String>,
+    startup_position: Option<f64>,
     displayed: bool,
     bridge_ready: bool,
     media_ready: bool,
@@ -132,6 +137,8 @@ pub struct WatchPlayback {
     owner: Owner,
     session_id: u64,
     player: VideoPlayer,
+    #[cfg(target_os = "android")]
+    preload: Rc<RefCell<Option<preload::Prediction>>>,
     page: Rc<RefCell<Page>>,
     sponsorship: Signal<Option<(String, Value)>>,
     layout: Signal<Option<PageVideoLayout>>,
@@ -157,6 +164,8 @@ impl WatchPlayback {
             owner: Owner::current(),
             session_id,
             player: VideoPlayer::new(),
+            #[cfg(target_os = "android")]
+            preload: Rc::new(RefCell::new(None)),
             page: Rc::new(RefCell::new(Page::default())),
             sponsorship: signal(None),
             layout: signal(None),
@@ -177,6 +186,8 @@ impl WatchPlayback {
             let watch = watch.clone();
             move || {
                 watch.cancel_pending();
+                #[cfg(target_os = "android")]
+                watch.cancel_preload();
                 let _ = watch.session::<Value>("dispose", json!({}));
             }
         });
@@ -205,6 +216,12 @@ impl WatchPlayback {
                 .get_untracked()
                 .map(|state| (tab, state.document))
         });
+        #[cfg(target_os = "android")]
+        if let Some((_, document)) = &document {
+            self.keep_preload(document);
+        } else if tab.is_none() {
+            self.cancel_preload();
+        }
         self.change_document(document, tab.is_some());
         if let Some(watch) = self.page.borrow().watch.clone() {
             watch.inject("document.dispatchEvent(new Event('yt-navigate-finish'));");
@@ -215,6 +232,10 @@ impl WatchPlayback {
     pub fn configure(&self, settings: Map<String, Value>, foreground: bool) {
         self.settings.set(Some(settings));
         self.foreground.set(foreground);
+        #[cfg(target_os = "android")]
+        if !foreground {
+            self.cancel_preload();
+        }
         self.maybe_start();
     }
 
@@ -558,14 +579,24 @@ impl WatchPlayback {
         }
         match event {
             BrowserEvent::Navigation { document, .. } => {
+                #[cfg(target_os = "android")]
+                self.keep_preload(document);
                 self.change_document(Some((tab, document.clone())), false);
             }
             BrowserEvent::Ready { document } => {
+                #[cfg(target_os = "android")]
+                self.keep_preload(document);
                 self.change_document(Some((tab, document.clone())), false);
                 self.page.borrow_mut().bridge_ready = true;
+                #[cfg(target_os = "android")]
+                self.probe_preloaded_position();
                 self.maybe_start();
             }
-            BrowserEvent::Error { .. } => self.change_document(None, false),
+            BrowserEvent::Error { .. } => {
+                #[cfg(target_os = "android")]
+                self.cancel_preload();
+                self.change_document(None, false);
+            }
             BrowserEvent::PageMessage {
                 document,
                 origin,
@@ -752,6 +783,8 @@ impl WatchPlayback {
             self.queue_target.set(None);
         }
         page.watch = next;
+        page.startup_probe = None;
+        page.startup_position = None;
         page.bridge_ready = false;
         page.media_ready = false;
         page.displayed = retain;
@@ -782,7 +815,7 @@ impl WatchPlayback {
             (
                 watch.video_id.clone(),
                 page.pending.is_some(),
-                page.media_ready,
+                page.media_ready || page.startup_position.is_some(),
                 page.bridge_ready,
             )
         };
@@ -910,8 +943,11 @@ impl WatchPlayback {
         }
         let (position, prepared) = tokio::join!(
             async {
+                let startup = self.page.borrow_mut().startup_position.take();
                 let position = if let Some(previous) = &previous {
                     Some(previous.position)
+                } else if startup.is_some() {
+                    startup
                 } else {
                     self.probe_position(watch, attempt.token).await
                 };
@@ -919,7 +955,14 @@ impl WatchPlayback {
                 watch.native_player(true);
                 position
             },
-            self.prepare_source(&watch.video_id, &agent, quality, audio_key, selection.is_none(), fresh)
+            self.prepare_source(
+                &watch.video_id,
+                &agent,
+                quality,
+                audio_key,
+                selection.is_none(),
+                fresh
+            )
         );
         let (catalog, source, qualities) = prepared?;
         let live = catalog["live"] == true;
@@ -994,6 +1037,13 @@ impl WatchPlayback {
         allow_fallback: bool,
         fresh: bool,
     ) -> Result<(Value, PlaybackSource, Vec<VideoQuality>), CoreError> {
+        #[cfg(target_os = "android")]
+        if allow_fallback
+            && !fresh
+            && let Some(prepared) = self.preloaded_media(video_id, quality, audio_key)
+        {
+            return Ok(prepared);
+        }
         let catalog = tokio::select! {
             catalog = self.core.resolve_media(video_id.to_owned(), agent.to_owned(), fresh) => catalog?,
             () = timer(Duration::from_secs(95)) => {
@@ -1005,6 +1055,18 @@ impl WatchPlayback {
                 "The video changed during extraction.".into(),
             ));
         }
+        self.plan_catalog(catalog, agent, quality, audio_key, allow_fallback)
+            .await
+    }
+
+    async fn plan_catalog(
+        &self,
+        catalog: Value,
+        agent: &str,
+        quality: (u32, u32),
+        audio_key: &str,
+        allow_fallback: bool,
+    ) -> Result<(Value, PlaybackSource, Vec<VideoQuality>), CoreError> {
         let request = PlaybackRequest {
             catalog: &catalog,
             height: quality.0,
@@ -1053,23 +1115,46 @@ impl WatchPlayback {
         #[derive(Deserialize)]
         struct Position {
             position: Option<f64>,
+            seeking: bool,
         }
 
         let mut page = self.page.borrow_mut();
-        let Some(request) = page.position.as_ref() else {
+        let early = page
+            .startup_probe
+            .as_deref()
+            .is_some_and(|request| message["requestId"] == request);
+        let request = if early {
+            page.startup_probe.as_deref()
+        } else {
+            page.position.as_ref().map(|request| request.id.as_str())
+        };
+        let Some(request) = request else {
             return;
         };
         if let Ok(Some(position)) = self.core.state::<Option<Position>>(json!({"op":"browser_position",
-            "origin":watch.origin,"videoId":watch.video_id,"requestId":request.id,"message":message,"playback":true}))
-            && let Some(request) = page.position.take()
+            "origin":watch.origin,"videoId":watch.video_id,"requestId":request,"message":message,"playback":true}))
         {
-            let _ = request.send.send(position.position);
+            if early {
+                if !position.seeking && position.position.is_some() {
+                    if let Some(request) = page.position.take() {
+                        let _ = request.send.send(position.position);
+                    } else if page.pending.is_none() {
+                        page.startup_position = position.position;
+                        drop(page);
+                        self.maybe_start();
+                    }
+                }
+            } else if let Some(request) = page.position.take() {
+                let _ = request.send.send(position.position);
+            }
         }
     }
 
     pub fn close(&self) {
         self.queue_target.set(None);
         self.cancel_pending();
+        #[cfg(target_os = "android")]
+        self.cancel_preload();
         let offline = self
             .video
             .with_untracked(|video| video.as_ref().is_some_and(|video| video.offline));
@@ -1105,6 +1190,8 @@ impl WatchPlayback {
     fn cancel_pending(&self) {
         let (pending, position, watch) = {
             let mut page = self.page.borrow_mut();
+            page.startup_probe = None;
+            page.startup_position = None;
             (
                 page.pending.take(),
                 page.position.take(),

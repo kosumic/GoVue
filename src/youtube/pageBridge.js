@@ -33,6 +33,25 @@
         ...(playback ? { playing: video ? !video.paused && !video.ended : player?.getPlayerState?.() === 1,
           seeking: video?.seeking === true, rate: video?.playbackRate || player?.getPlaybackRate?.() || 1 } : {}) });
     },
+    probeStart(requestId, id) {
+      const address = location.href;
+      const deadline = performance.now() + 500;
+      const probe = () => {
+        if (location.href !== address || videoId() !== id) return;
+        const player = document.getElementById('movie_player');
+        const video = player?.querySelector('video');
+        const owner = player?.getVideoData?.()?.video_id || player?.getPlayerResponse?.()?.videoDetails?.videoId;
+        if (owner === id && video?.readyState >= 1 && !video.seeking &&
+            Number.isFinite(video.currentTime) && video.currentTime >= 0 &&
+            !player.classList.contains('ad-showing') && !player.classList.contains('ad-interrupting')) {
+          send({ type: 'playbackPosition', requestId, videoId: id, seconds: video.currentTime,
+            playing: !video.paused && !video.ended, seeking: false, rate: video.playbackRate || 1 });
+        } else if (performance.now() < deadline) {
+          setTimeout(probe, 40);
+        }
+      };
+      probe();
+    },
     cancelPosition(requestId) { if (positionRequest === requestId) positionRequest = null; },
     pause(requestId, id, expectedPosition) {
       if (positionRequest !== requestId || videoId() !== id || !Number.isFinite(expectedPosition)) return;

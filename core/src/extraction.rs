@@ -643,6 +643,26 @@ pub(super) fn select_preparation(root: &str, video: Option<&str>) {
     }
 }
 
+pub(super) fn prepared_media(root: &str, id: &str) -> Option<Value> {
+    if !crate::transport::startup::available(root, id) {
+        return None;
+    }
+    let job = JOBS
+        .get()?
+        .lock()
+        .ok()?
+        .get(&RequestKey::new(root, PREPARATION_REQUEST))?
+        .clone();
+    if job.prepared_video.as_deref() != Some(id)
+        || job.at.elapsed() >= CACHE_LIFETIME
+        || job.check().is_err()
+    {
+        return None;
+    }
+    let result = job.result.lock().ok()?;
+    result.as_ref()?.as_ref().ok().cloned()
+}
+
 fn claim_preparation(jobs: &mut Jobs, root: &str, id: &str, request: &str, fresh: bool) -> bool {
     let key = RequestKey::new(root, PREPARATION_REQUEST);
     if jobs
@@ -800,6 +820,9 @@ impl ExtractionWork {
                     crate::transport::startup::warm(&self.root, &catalog, &settings, || {
                         job.check().is_ok()
                     });
+                    if job.check().is_ok() {
+                        crate::changed("playback-preload");
+                    }
                 }
             })
     }

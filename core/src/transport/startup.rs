@@ -36,6 +36,12 @@ struct Prefetched {
     tracks: Vec<Track>,
 }
 
+impl Prefetched {
+    fn matches(&self, root: &str, video_id: &str) -> bool {
+        self.at.elapsed() < LIFETIME && self.root == root && self.video_id == video_id
+    }
+}
+
 static PREFETCHED: Mutex<Option<Prefetched>> = Mutex::new(None);
 static LOADING: AtomicBool = AtomicBool::new(false);
 
@@ -49,12 +55,17 @@ impl Drop for Loading {
 
 pub(crate) fn ready(root: &str, video_id: &str) -> bool {
     PREFETCHED.lock().is_ok_and(|cache| {
-        cache.as_ref().is_some_and(|prepared| {
-            prepared.complete
-                && prepared.at.elapsed() < LIFETIME
-                && prepared.root == root
-                && prepared.video_id == video_id
-        })
+        cache
+            .as_ref()
+            .is_some_and(|prepared| prepared.complete && prepared.matches(root, video_id))
+    })
+}
+
+pub(crate) fn available(root: &str, video_id: &str) -> bool {
+    PREFETCHED.lock().is_ok_and(|cache| {
+        cache
+            .as_ref()
+            .is_some_and(|prepared| prepared.matches(root, video_id))
     })
 }
 
