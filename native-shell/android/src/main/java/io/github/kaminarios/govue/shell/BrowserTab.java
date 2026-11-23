@@ -17,13 +17,13 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
 import androidx.annotation.OptIn;
-import androidx.webkit.OutcomeReceiverCompat;
 import androidx.webkit.PrefetchException;
 import androidx.webkit.Profile;
 import androidx.webkit.ScriptHandler;
 import androidx.webkit.WebMessageCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
+import androidx.webkit.WebViewOutcomeReceiver;
 
 import com.longbridge.nsh.NshComponent;
 import com.longbridge.nsh.NshComponentContext;
@@ -265,6 +265,10 @@ public final class BrowserTab implements NshComponent {
     }
 
     private void emitReady() {
+        if (active && "/watch".equals(Uri.parse(address).getPath())) {
+            Trace.beginSection("GoVue browser: watch bridge ready");
+            Trace.endSection();
+        }
         emit("ready", Collections.singletonMap("document", document()));
     }
 
@@ -374,9 +378,13 @@ public final class BrowserTab implements NshComponent {
 
     @OptIn(markerClass = Profile.ExperimentalUrlPrefetch.class)
     private void prefetchWatch(String url) {
-        if (web == null || !active || url.equals(prefetchedAddress) || urlPolicy(url) != INTERNAL
-                || !WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
-                || !WebViewFeature.isFeatureSupported(WebViewFeature.PROFILE_URL_PREFETCH)) return;
+        if (web == null || !active || url.equals(prefetchedAddress) || urlPolicy(url) != INTERNAL) return;
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+                || !WebViewFeature.isFeatureSupported(WebViewFeature.PROFILE_URL_PREFETCH)) {
+            Trace.beginSection("GoVue browser: watch prefetch unavailable");
+            Trace.endSection();
+            return;
+        }
         Uri target = Uri.parse(url);
         String origin = allowedOrigin(target);
         if (origin.isEmpty() || !origin.equals(allowedOrigin(Uri.parse(address)))
@@ -389,7 +397,7 @@ public final class BrowserTab implements NshComponent {
         Trace.beginSection("GoVue browser: prefetch watch");
         try {
             WebViewCompat.getProfile(web).prefetchUrlAsync(url, prefetch, Runnable::run,
-                    new OutcomeReceiverCompat<Void, PrefetchException>() {
+                    new WebViewOutcomeReceiver<Void, PrefetchException>() {
                         @Override
                         public void onResult(Void result) {
                             Trace.beginSection("GoVue browser: watch prefetched");
@@ -397,7 +405,10 @@ public final class BrowserTab implements NshComponent {
                         }
 
                         @Override
-                        public void onError(PrefetchException error) {}
+                        public void onError(PrefetchException error) {
+                            Trace.beginSection("GoVue browser: watch prefetch failed");
+                            Trace.endSection();
+                        }
                     });
         } catch (UnsupportedOperationException ignored) {
             // Older WebView providers can leave the watch URL to ordinary navigation.
