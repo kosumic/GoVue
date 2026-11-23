@@ -508,6 +508,16 @@ impl PlayerControls {
         let play = self.clone();
         let state = self.watch.clone();
         let paused = computed(move || !state.status().is_some_and(|status| status.playing));
+        let busy = computed({
+            let watch = self.watch.clone();
+            move || {
+                watch.preparing()
+                    || watch.status().map_or_else(
+                        || watch.video().is_some(),
+                        |status| status.state == "buffering",
+                    )
+            }
+        });
         let clock = self.watch.clone();
         let live = computed({
             let watch = self.watch.clone();
@@ -714,13 +724,32 @@ impl PlayerControls {
                             .bg(rgba(0x00000066))
                             .items_center()
                             .justify_center()
-                            .label(move || if paused.get() { "Play" } else { "Pause" })
+                            .label(move || {
+                                if busy.get() {
+                                    "Loading video"
+                                } else if paused.get() {
+                                    "Play"
+                                } else {
+                                    "Pause"
+                                }
+                            })
                             .on_press(move || play.toggle())
-                            .child(when(paused, || {
-                                ui::icon(ui::PLAY, 38.0, || rgb(0xffffff).into())
+                            .child(when(busy, || {
+                                view()
+                                    .size(px(36.0))
+                                    .rounded_full()
+                                    .border(px(3.0))
+                                    .border_color(rgb(0xffffff))
+                                    .border_b_color(rgba(0xffffff00))
+                                    .pointer_events(PointerEvents::None)
+                                    .when(!reduce_motion(), |indicator| indicator.animate_spin())
                             }))
                             .child(when(
-                                move || !paused.get(),
+                                move || !busy.get() && paused.get(),
+                                || ui::icon(ui::PLAY, 38.0, || rgb(0xffffff).into()),
+                            ))
+                            .child(when(
+                                move || !busy.get() && !paused.get(),
                                 || ui::icon(PAUSE, 31.0, || rgb(0xffffff).into()),
                             )),
                     )
